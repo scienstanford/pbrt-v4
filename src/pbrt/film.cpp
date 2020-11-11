@@ -503,7 +503,8 @@ RGBFilm::RGBFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
 }
 
 SampledWavelengths RGBFilm::SampleWavelengths(Float u) const {
-    return SampledWavelengths::SampleXYZ(u);
+    //return SampledWavelengths::SampleXYZ(u); 
+    return SampledWavelengths::SampleUniform(u); // tmp --zhenyi
 }
 
 void RGBFilm::AddSplat(const Point2f &p, SampledSpectrum L,
@@ -539,9 +540,75 @@ void RGBFilm::AddSplat(const Point2f &p, SampledSpectrum L,
 }
 
 void RGBFilm::WriteImage(ImageMetadata metadata, Float splatScale) {
+    bool spectralFlag = 1;
+    if (!spectralFlag){
     Image image = GetImage(&metadata, splatScale);
     LOG_VERBOSE("Writing image %s with bounds %s", filename, pixelBounds);
     image.Write(filename, metadata);
+    } else {
+        
+        // spectralData holds all the values in the multispectral image
+        std::unique_ptr<Float[]> spectralData(new Float[NSpectrumSamples * pixelBounds.Area()]);
+        int nDataSamples = 31;
+        int  offset = 0;
+        for(Point2i p: pixelBounds) {
+            // Get spectrum
+            const Pixel &pixel = pixels[p];
+            SampledSpectrum currSpectrum = pixel.L;
+
+    // Loop through the current spectrum and put each value into spectralData
+            for(int i = 0; i < nDataSamples; i++){
+                Float WeightSum = pixel.weightSum;
+                Float invWt = (Float)1 / WeightSum;
+                currSpectrum[i] = currSpectrum[i] * invWt;
+                spectralData[offset*nDataSamples + i] = currSpectrum[i];
+            }  
+            // bug not fixed
+            // RGB splatRGB(Float(pixel.splatRGB[0]), Float(pixel.splatRGB[1]),
+            //     Float(pixel.splatRGB[2]));
+            // RGBSpectrum splatRGBSpectrum(*RGBColorSpace::sRGB, splatRGB);
+            // SampledSpectrum splatSpectrum = splatRGBSpectrum.Sample(lambda);
+            // // SampledSpectrum splatSpectrum = splatRGBSpectrum;
+            // Float scale = 1; // not sure whehter we will use this for now, if not, will be deleted later; --zhenyi
+            // for(int i = 0; i < nDataSamples; i++){
+            //     spectralData[offset*nDataSamples + i] += splatScale * splatSpectrum[i];
+            //     spectralData[offset*nDataSamples + i] *= scale;
+            // }                 
+            ++offset;
+        };
+
+        LOG_VERBOSE("Writing image %s with bounds %s", filename, pixelBounds);
+            
+        // std::ofstream myfile;
+        int extPos = filename.find_last_of(".");
+        std::string datFilename = filename.substr(0,extPos) + ".dat"; // Filename is now going to be xxx.dat
+        std::string datFilenameInfo = filename.substr(0,extPos) + "_info.txt"; 
+        //Open file for binary writing
+        FILE * spectralDataBin;
+        FILE * dataInfo;
+        // spectral data 
+        spectralDataBin = fopen(datFilename.c_str(), "wb");
+        // spectral data information, I dont know why the numbers become incorrect when I write data information 
+        // together with sepctral data, so I just write an extra file here. -- Zhenyi
+        dataInfo = fopen(datFilenameInfo.c_str(), "wb");
+        // Write out dimensions of the image and version flag into a txt file
+        fprintf(dataInfo, "size: %d %d \nnDataSamples: %d \nversion: v4 \n", (pixelBounds.pMax.x - pixelBounds.pMin.x),(pixelBounds.pMax.y - pixelBounds.pMin.y), nDataSamples);
+        fclose(dataInfo);
+
+        //Write binary image
+        for (int i = 0; i < nDataSamples; i++)
+        {
+            for (int j = 0; j < pixelBounds.Area(); j++)
+            {
+                double r = (double)spectralData[nDataSamples * j + i];
+                fwrite(&r, 1, sizeof(r), spectralDataBin);
+            }
+        }
+        // piReadDAT expects the data to be serialized wavelength by wavelength. 
+        // In other words, you would go through all the rows and columns of wavelength 
+        // index = 1 first, then move on to all the pixels for wavelength index = 2 next, etc.
+        fclose(spectralDataBin);
+    }
 }
 
 Image RGBFilm::GetImage(ImageMetadata *metadata, Float splatScale) {

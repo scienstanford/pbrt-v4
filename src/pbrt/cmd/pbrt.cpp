@@ -168,7 +168,7 @@ int main(int argc, char *argv[]) {
             ParseArg(&argv, "log-level", &logLevel, onError) ||
             ParseArg(&argv, "mse-reference-image", &options.mseReferenceImage, onError) ||
             ParseArg(&argv, "mse-reference-out", &options.mseReferenceOutput, onError) ||
-            ParseArg(&argv, "nthreads", &options.nThreads, onError) ||
+            ParseArg(&argv, "nthreads", &options.nThreads, onError) || 
             ParseArg(&argv, "outfile", &options.imageFile, onError) ||
             ParseArg(&argv, "pixelstats", &options.recordPixelStatistics, onError) ||
             ParseArg(&argv, "quick", &options.quickRender, onError) ||

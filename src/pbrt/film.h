@@ -244,6 +244,12 @@ class RGBFilm : public FilmBase {
         for (int c = 0; c < 3; ++c)
             pixel.rgbSum[c] += weight * rgb[c];
         pixel.weightSum += weight;
+
+        // Added by zhenyi: Add spectrum values into pixel
+        for (int i = 0; i < NSpectrumSamples; ++i) {
+            int offset = std::lround(lambda[i]) - Lambda_min; 
+                pixel.L[i] += weight * L[i];
+        }
     }
 
     PBRT_CPU_GPU
@@ -262,7 +268,7 @@ class RGBFilm : public FilmBase {
         // Convert _rgb_ to output RGB color space
         rgb = outputRGBFromSensorRGB * rgb;
 
-        return rgb;
+       return rgb;
     }
 
     RGBFilm() = default;
@@ -298,6 +304,7 @@ class RGBFilm : public FilmBase {
         double rgbSum[3] = {0., 0., 0.};
         double weightSum = 0.;
         AtomicDouble splatRGB[3];
+        SampledSpectrum L;
     };
 
     // RGBFilm Private Members
