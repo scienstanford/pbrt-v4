@@ -503,8 +503,7 @@ RGBFilm::RGBFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
 }
 
 SampledWavelengths RGBFilm::SampleWavelengths(Float u) const {
-    //return SampledWavelengths::SampleXYZ(u); 
-    return SampledWavelengths::SampleUniform(u); // tmp --zhenyi
+    return SampledWavelengths::SampleUniform(u); 
 }
 
 void RGBFilm::AddSplat(const Point2f &p, SampledSpectrum L,
@@ -549,7 +548,7 @@ void RGBFilm::WriteImage(ImageMetadata metadata, Float splatScale) {
         
         // spectralData holds all the values in the multispectral image
         std::unique_ptr<Float[]> spectralData(new Float[NSpectrumSamples * pixelBounds.Area()]);
-        int nDataSamples = 31;
+        int nDataSamples = NSpectrumSamples;
         int  offset = 0;
         for(Point2i p: pixelBounds) {
             // Get spectrum

@@ -247,8 +247,7 @@ class RGBFilm : public FilmBase {
 
         // Added by zhenyi: Add spectrum values into pixel
         for (int i = 0; i < NSpectrumSamples; ++i) {
-            int offset = std::lround(lambda[i]) - Lambda_min; 
-                pixel.L[i] += weight * L[i];
+            pixel.L[i] += weight * L[i];
         }
     }
 
@@ -268,7 +267,7 @@ class RGBFilm : public FilmBase {
         // Convert _rgb_ to output RGB color space
         rgb = outputRGBFromSensorRGB * rgb;
 
-       return rgb;
+        return rgb;
     }
 
     RGBFilm() = default;
