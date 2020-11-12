@@ -220,8 +220,8 @@ class SimpleVolPathIntegrator : public RayIntegrator {
     std::string ToString() const;
 
   private:
+    // SimpleVolPathIntegrator Private Members
     int maxDepth;
-    bool sampleLights, samplePhase;
 };
 
 // VolPathIntegrator Definition
@@ -255,20 +255,23 @@ class VolPathIntegrator : public RayIntegrator {
                              const SampledSpectrum &beta,
                              const SampledSpectrum &pathPDF) const;
 
-    static void rescale(SampledSpectrum &beta, SampledSpectrum &pdfLight,
-                        SampledSpectrum &pdfUni) {
-        if (beta.MaxComponentValue() > 0x1p24f ||
-            pdfLight.MaxComponentValue() > 0x1p24f ||
-            pdfUni.MaxComponentValue() > 0x1p24f) {
-            beta *= 1.f / 0x1p24f;
-            pdfLight *= 1.f / 0x1p24f;
-            pdfUni *= 1.f / 0x1p24f;
-        } else if (beta.MaxComponentValue() < 0x1p-24f ||
-                   pdfLight.MaxComponentValue() < 0x1p-24f ||
-                   pdfUni.MaxComponentValue() < 0x1p-24f) {
-            beta *= 0x1p24f;
-            pdfLight *= 0x1p24f;
-            pdfUni *= 0x1p24f;
+    static void Rescale(SampledSpectrum &T_hat, SampledSpectrum &uniPathPDF,
+                        SampledSpectrum &lightPathPDF) {
+        if (T_hat.MaxComponentValue() > 0x1p24f ||
+            lightPathPDF.MaxComponentValue() > 0x1p24f ||
+            uniPathPDF.MaxComponentValue() > 0x1p24f) {
+            // Downscale _T_hat_, _lightPathPDF_, and _uniPathPDF_
+            T_hat *= 1.f / 0x1p24f;
+            lightPathPDF *= 1.f / 0x1p24f;
+            uniPathPDF *= 1.f / 0x1p24f;
+        }
+        // Upscale _T_hat_, _lightPathPDF_, and _uniPathPDF_ if necessary
+        if (T_hat.MaxComponentValue() < 0x1p-24f ||
+            lightPathPDF.MaxComponentValue() < 0x1p-24f ||
+            uniPathPDF.MaxComponentValue() < 0x1p-24f) {
+            T_hat *= 0x1p24f;
+            lightPathPDF *= 0x1p24f;
+            uniPathPDF *= 0x1p24f;
         }
     }
 
@@ -321,7 +324,7 @@ class LightPathIntegrator : public ImageTileIntegrator {
     std::string ToString() const;
 
   private:
-    // LightPathIntegrator Private Data
+    // LightPathIntegrator Private Members
     int maxDepth;
     std::unique_ptr<PowerLightSampler> lightSampler;
 };
@@ -424,28 +427,24 @@ class MLTIntegrator : public Integrator {
 class SPPMIntegrator : public Integrator {
   public:
     // SPPMIntegrator Public Methods
-    SPPMIntegrator(CameraHandle camera, PrimitiveHandle aggregate,
-                   std::vector<LightHandle> lights, int nIterations,
-                   int photonsPerIteration, int maxDepth, Float initialSearchRadius,
-                   bool regularize, int seed, const RGBColorSpace *colorSpace)
+    SPPMIntegrator(CameraHandle camera, SamplerHandle sampler, PrimitiveHandle aggregate,
+                   std::vector<LightHandle> lights, int photonsPerIteration, int maxDepth,
+                   Float initialSearchRadius, int seed, const RGBColorSpace *colorSpace)
         : Integrator(aggregate, lights),
           camera(camera),
+          samplerPrototype(sampler),
           initialSearchRadius(initialSearchRadius),
-          nIterations(nIterations),
           maxDepth(maxDepth),
           photonsPerIteration(photonsPerIteration > 0
                                   ? photonsPerIteration
                                   : camera.GetFilm().PixelBounds().Area()),
-          regularize(regularize),
           colorSpace(colorSpace),
           digitPermutationsSeed(seed) {}
 
-    static std::unique_ptr<SPPMIntegrator> Create(const ParameterDictionary &parameters,
-                                                  const RGBColorSpace *colorSpace,
-                                                  CameraHandle camera,
-                                                  PrimitiveHandle aggregate,
-                                                  std::vector<LightHandle> lights,
-                                                  const FileLoc *loc);
+    static std::unique_ptr<SPPMIntegrator> Create(
+        const ParameterDictionary &parameters, const RGBColorSpace *colorSpace,
+        CameraHandle camera, SamplerHandle sampler, PrimitiveHandle aggregate,
+        std::vector<LightHandle> lights, const FileLoc *loc);
 
     std::string ToString() const;
 
@@ -460,9 +459,8 @@ class SPPMIntegrator : public Integrator {
     // SPPMIntegrator Private Members
     CameraHandle camera;
     Float initialSearchRadius;
+    SamplerHandle samplerPrototype;
     int digitPermutationsSeed;
-    int nIterations;
-    bool regularize;
     int maxDepth;
     int photonsPerIteration;
     const RGBColorSpace *colorSpace;

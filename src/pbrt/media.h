@@ -15,6 +15,7 @@
 #include <pbrt/util/error.h>
 #include <pbrt/util/memory.h>
 #include <pbrt/util/parallel.h>
+#include <pbrt/util/print.h>
 #include <pbrt/util/pstd.h>
 #include <pbrt/util/scattering.h>
 #include <pbrt/util/spectrum.h>
@@ -69,14 +70,12 @@ struct MediumSample {
     // MediumSample Public Methods
     MediumSample() = default;
     PBRT_CPU_GPU
-    explicit MediumSample(const SampledSpectrum &Tmaj) : Tmaj(Tmaj) {}
-    PBRT_CPU_GPU
     MediumSample(const MediumInteraction &intr, const SampledSpectrum &Tmaj)
         : intr(intr), Tmaj(Tmaj) {}
 
     std::string ToString() const;
 
-    pstd::optional<MediumInteraction> intr;
+    MediumInteraction intr;
     SampledSpectrum Tmaj = SampledSpectrum(1.f);
 };
 
@@ -98,8 +97,9 @@ class HomogeneousMedium {
     bool IsEmissive() const { return Le_spec.MaxValue() > 0; }
 
     template <typename F>
-    PBRT_CPU_GPU void SampleTmaj(Ray ray, Float tMax, RNG &rng,
-                                 const SampledWavelengths &lambda, F callback) const {
+    PBRT_CPU_GPU SampledSpectrum SampleTmaj(Ray ray, Float tMax, RNG &rng,
+                                            const SampledWavelengths &lambda,
+                                            F callback) const {
         // Normalize ray direction for homogeneous medium sampling
         tMax *= Length(ray.d);
         ray.d = Normalize(ray.d);
@@ -112,22 +112,21 @@ class HomogeneousMedium {
 
         // Sample exponential function to find _t_ for scattering event
         if (sigma_maj[0] == 0)
-            return;
+            return FastExp(-tMax * sigma_maj);
         Float u = rng.Uniform<Float>();
         Float t = SampleExponential(u, sigma_maj[0]);
 
-        if (t >= tMax) {
-            // Return transmittance to medium exit point
-            callback(MediumSample(FastExp(-tMax * sigma_maj)));
-
-        } else {
+        if (t < tMax) {
             // Report scattering event in homogeneous medium
             SampledSpectrum Tmaj = FastExp(-t * sigma_maj);
             SampledSpectrum Le = Le_spec.Sample(lambda);
             MediumInteraction intr(ray(t), -ray.d, ray.time, sigma_a, sigma_s, sigma_maj,
                                    Le, this, &phase);
             callback(MediumSample(intr, Tmaj));
-        }
+            return SampledSpectrum(1.f);
+
+        } else
+            return FastExp(-tMax * sigma_maj);
     }
 
     std::string ToString() const;
@@ -170,15 +169,17 @@ class CuboidMedium {
     bool IsEmissive() const { return provider->IsEmissive(); }
 
     template <typename F>
-    PBRT_CPU_GPU void SampleTmaj(Ray rRender, Float raytMax, RNG &rng,
-                                 const SampledWavelengths &lambda, F callback) const {
+    PBRT_CPU_GPU SampledSpectrum SampleTmaj(Ray rRender, Float raytMax, RNG &rng,
+                                            const SampledWavelengths &lambda,
+                                            F callback) const {
+        SampledSpectrum TmajAccum(1.f);
         // Transform ray to grid density's space and compute bounds overlap
         Ray ray = renderFromMedium.ApplyInverse(rRender, &raytMax);
         raytMax *= Length(ray.d);
         ray.d = Normalize(ray.d);
         Float tMin, tMax;
         if (!mediumBounds.IntersectP(ray.o, ray.d, raytMax, &tMin, &tMax))
-            return;
+            return SampledSpectrum(1.f);
         DCHECK_LE(tMax, raytMax);
 
         // Sample spectra for grid medium scattering
@@ -230,7 +231,7 @@ class CuboidMedium {
                        ((nextCrossingT[1] < nextCrossingT[2]));
             const int cmpToAxis[8] = {2, 1, 2, 1, 2, 2, 0, 0};
             int stepAxis = cmpToAxis[bits];
-            Float t1 = nextCrossingT[stepAxis];
+            Float t1 = std::min(tMax, nextCrossingT[stepAxis]);
 
             // Sample volume scattering in current voxel
             // Get _maxDensity_ for current voxel and compute _sigma_maj_
@@ -239,14 +240,18 @@ class CuboidMedium {
             Float maxDensity = maxDensityGrid[offset];
             SampledSpectrum sigma_maj(sigma_t * maxDensity);
 
-            if (sigma_maj[0] > 0) {
+            if (sigma_maj[0] == 0)
+                TmajAccum *= FastExp(-sigma_maj * (t1 - t0));
+            else {
                 while (true) {
                     // Sample medium in current voxel
                     // Sample _t_ for scattering event and check validity
                     Float u = rng.Uniform<Float>();
                     Float t = t0 + SampleExponential(u, sigma_maj[0]);
-                    if (t >= t1)
+                    if (t >= t1) {
+                        TmajAccum *= FastExp(-sigma_maj * (t1 - t0));
                         break;
+                    }
 
                     if (t < tMax) {
                         // Compute medium properties at sampled point in grid
@@ -256,13 +261,16 @@ class CuboidMedium {
                         SampledSpectrum Le = provider->Le(p, lambda);
                         SampledSpectrum sigmap_a = sigma_a * d, sigmap_s = sigma_s * d;
 
+                        Tmaj *= TmajAccum;
+                        TmajAccum = SampledSpectrum(1.f);
+
                         // Report scattering event in grid to callback function
                         Point3f pRender = renderFromMedium(p);
                         MediumInteraction intr(pRender, -Normalize(rRender.d),
                                                rRender.time, sigmap_a, sigmap_s,
                                                sigma_maj, Le, this, &phase);
                         if (!callback(MediumSample(intr, Tmaj)))
-                            return;
+                            return TmajAccum;
                     }
                     // Update _t0_ after medium interaction
                     t0 = t;
@@ -271,13 +279,15 @@ class CuboidMedium {
 
             // Advance to next voxel in maximum density grid
             if (nextCrossingT[stepAxis] > tMax)
-                return;
+                break;
             voxel[stepAxis] += step[stepAxis];
             if (voxel[stepAxis] == voxelLimit[stepAxis])
-                return;
+                break;
             nextCrossingT[stepAxis] += deltaT[stepAxis];
             t0 = t1;
         }
+
+        return TmajAccum;
     }
 
     static CuboidMedium<Provider> *Create(const Provider *provider,
@@ -292,13 +302,13 @@ class CuboidMedium {
         }
 
         if (sig_a == nullptr) {
-            sig_a = parameters.GetOneSpectrum("sigma_a", nullptr, SpectrumType::General,
+            sig_a = parameters.GetOneSpectrum("sigma_a", nullptr, SpectrumType::Unbounded,
                                               alloc);
             if (sig_a == nullptr)
                 sig_a = alloc.new_object<ConstantSpectrum>(1.f);
         }
         if (sig_s == nullptr) {
-            sig_s = parameters.GetOneSpectrum("sigma_s", nullptr, SpectrumType::General,
+            sig_s = parameters.GetOneSpectrum("sigma_s", nullptr, SpectrumType::Unbounded,
                                               alloc);
             if (sig_s == nullptr)
                 sig_s = alloc.new_object<ConstantSpectrum>(1.f);
@@ -357,7 +367,7 @@ class UniformGridMediumProvider {
             return SampledSpectrum(densityGrid->Lookup(pp));
         else {
             RGB rgb = rgbDensityGrid->Lookup(pp);
-            return RGBSpectrum(*colorSpace, rgb).Sample(lambda);
+            return RGBUnboundedSpectrum(*colorSpace, rgb).Sample(lambda);
         }
     }
 
@@ -395,7 +405,7 @@ class UniformGridMediumProvider {
                             if (maxComponent == 0)
                                 continue;
 
-                            RGBSpectrum spec(*colorSpace, rgb);
+                            RGBUnboundedSpectrum spec(*colorSpace, rgb);
                             maxDensity = std::max(maxDensity, spec.MaxValue());
                         }
 
@@ -715,10 +725,12 @@ inline Float PhaseFunctionHandle::PDF(Vector3f wo, Vector3f wi) const {
 }
 
 template <typename F>
-void MediumHandle::SampleTmaj(Ray ray, Float tMax, RNG &rng,
-                              const SampledWavelengths &lambda, F func) const {
-    auto sampletn = [&](auto ptr) { ptr->SampleTmaj(ray, tMax, rng, lambda, func); };
-    Dispatch(sampletn);
+SampledSpectrum MediumHandle::SampleTmaj(Ray ray, Float tMax, RNG &rng,
+                                         const SampledWavelengths &lambda, F func) const {
+    auto sampletn = [&](auto ptr) {
+        return ptr->SampleTmaj(ray, tMax, rng, lambda, func);
+    };
+    return Dispatch(sampletn);
 }
 
 }  // namespace pbrt

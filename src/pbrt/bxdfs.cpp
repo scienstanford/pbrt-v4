@@ -99,7 +99,7 @@ SampledSpectrum DielectricInterfaceBxDF::f(Vector3f wo, Vector3f wi,
         // Compute $\wh$ from $\wo$ and $\wi$ for microfacet transmission
         Float etap = CosTheta(wo) > 0 ? eta : (1 / eta);
         Vector3f wh = wo + wi * etap;
-        CHECK_RARE(1e-6, LengthSquared(wh) == 0);
+        CHECK_RARE(1e-5f, LengthSquared(wh) == 0);
         if (LengthSquared(wh) == 0)
             return {};
         wh = FaceForward(Normalize(wh), Normal3f(0, 0, 1));
@@ -149,7 +149,7 @@ pstd::optional<BSDFSample> DielectricInterfaceBxDF::Sample_f(
             // Compute ray direction for specular transmission
             Vector3f wi;
             bool tir = !Refract(wo, FaceForward(Normal3f(0, 0, 1), wo), etap, &wi);
-            CHECK_RARE(1e-6, tir);
+            CHECK_RARE(1e-5f, tir);
             if (tir)
                 return {};
 
@@ -181,7 +181,7 @@ pstd::optional<BSDFSample> DielectricInterfaceBxDF::Sample_f(
         if (uc < pr / (pr + pt)) {
             // Sample reflection at non-delta dielectric interface
             Vector3f wi = Reflect(wo, wh);
-            CHECK_RARE(1e-6, Dot(wo, wh) <= 0);
+            CHECK_RARE(1e-5f, Dot(wo, wh) <= 0);
             if (!SameHemisphere(wo, wi) || Dot(wo, wh) <= 0)
                 return {};
             // Compute PDF of direction $\wi$ for microfacet reflection
@@ -201,7 +201,7 @@ pstd::optional<BSDFSample> DielectricInterfaceBxDF::Sample_f(
             Float etap = CosTheta(wo) > 0 ? eta : (1 / eta);
             Vector3f wi;
             bool tir = !Refract(wo, (Normal3f)wh, etap, &wi);
-            CHECK_RARE(1e-6, tir);
+            CHECK_RARE(1e-5f, tir);
             if (SameHemisphere(wo, wi))
                 return {};
             if (tir || wi.z == 0)
@@ -240,15 +240,15 @@ Float DielectricInterfaceBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
             return 0;
         // Compute half-angle vector _wh_ for dielectric reflection PDF
         Vector3f wh = wo + wi;
-        CHECK_RARE(1e-6, LengthSquared(wh) == 0);
-        CHECK_RARE(1e-6, Dot(wo, wh) < 0);
+        CHECK_RARE(1e-5f, LengthSquared(wh) == 0);
+        CHECK_RARE(1e-5f, Dot(wo, wh) < 0);
         if (LengthSquared(wh) == 0 || Dot(wo, wh) <= 0)
             return 0;
         wh = Normalize(wh);
 
         // Compute Fresnel factor and probabilities for dielectric reflection PDF
         Float F = FrDielectric(Dot(wi, FaceForward(wh, Vector3f(0, 0, 1))), eta);
-        CHECK_RARE(1e-6, F == 0);
+        CHECK_RARE(1e-5f, F == 0);
         Float pr = F, pt = 1 - F;
         if (!(sampleFlags & BxDFReflTransFlags::Transmission))
             pt = 0;
@@ -262,7 +262,7 @@ Float DielectricInterfaceBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
         // Compute $\wh$ for dielectric transmission PDF
         Float etap = CosTheta(wo) > 0 ? eta : (1 / eta);
         Vector3f wh = wo + wi * etap;
-        CHECK_RARE(1e-6, LengthSquared(wh) == 0);
+        CHECK_RARE(1e-5f, LengthSquared(wh) == 0);
         if (LengthSquared(wh) == 0)
             return 0;
         wh = Normalize(wh);
@@ -274,7 +274,7 @@ Float DielectricInterfaceBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
         Float pr = F, pt = 1 - F;
         if (pt == 0)
             return 0;
-        CHECK_RARE(1e-6, (1 - F) == 0);
+        CHECK_RARE(1e-5f, (1 - F) == 0);
         if (!(sampleFlags & BxDFReflTransFlags::Reflection))
             pr = 0;
 
@@ -565,14 +565,14 @@ Float HairBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
     return pdf;
 }
 
-RGBSpectrum HairBxDF::SigmaAFromConcentration(Float ce, Float cp) {
+RGBUnboundedSpectrum HairBxDF::SigmaAFromConcentration(Float ce, Float cp) {
     RGB eumelaninSigmaA(0.419f, 0.697f, 1.37f);
     RGB pheomelaninSigmaA(0.187f, 0.4f, 1.05f);
     RGB sigma_a = ce * eumelaninSigmaA + cp * pheomelaninSigmaA;
 #ifdef PBRT_IS_GPU_CODE
-    return RGBSpectrum(*RGBColorSpace_sRGB, sigma_a);
+    return RGBUnboundedSpectrum(*RGBColorSpace_sRGB, sigma_a);
 #else
-    return RGBSpectrum(*RGBColorSpace::sRGB, sigma_a);
+    return RGBUnboundedSpectrum(*RGBColorSpace::sRGB, sigma_a);
 #endif
 }
 
@@ -591,6 +591,11 @@ std::string HairBxDF::ToString() const {
     return StringPrintf("[ HairBxDF h: %f gamma_o: %f eta: %f beta_m: %f beta_n: %f "
                         "v[0]: %f s: %f sigma_a: %s ]",
                         h, gamma_o, eta, beta_m, beta_n, v[0], s, sigma_a);
+}
+
+std::string LayeredBxDFConfig::ToString() const {
+    return StringPrintf("[ LayeredBxDFConfig maxDepth: %d nSamples: %d twoSided: %d",
+                        maxDepth, nSamples, twoSided);
 }
 
 // *****************************************************************************
@@ -1053,7 +1058,7 @@ SampledSpectrum MeasuredBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) co
     for (int i = 0; i < pbrt::NSpectrumSamples; ++i) {
         Float params_fr[3] = {phi_i, theta_i, lambda[i]};
         fr[i] = brdf->spectra.Evaluate(sample, params_fr);
-        CHECK_RARE(1e-6, fr[i] < 0);
+        CHECK_RARE(1e-5f, fr[i] < 0);
         fr[i] = std::max<Float>(0, fr[i]);
     }
 
@@ -1101,7 +1106,7 @@ pstd::optional<BSDFSample> MeasuredBxDF::Sample_f(Vector3f wo, Float uc, Point2f
     for (int i = 0; i < pbrt::NSpectrumSamples; ++i) {
         Float params_fr[3] = {phi_i, theta_i, lambda[i]};
         fr[i] = brdf->spectra.Evaluate(sample, params_fr);
-        CHECK_RARE(1e-6, fr[i] < 0);
+        CHECK_RARE(1e-5f, fr[i] < 0);
         fr[i] = std::max<Float>(0, fr[i]);
     }
 
