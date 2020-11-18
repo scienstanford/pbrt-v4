@@ -359,17 +359,6 @@ bool Integrator::IntersectP(const Ray &ray, Float tMax) const {
         return false;
 }
 
-std::string Integrator::ToString() const {
-    std::string s = StringPrintf("[ Scene aggregate: %s sceneBounds: %s lights[%d]: [ ",
-                                 aggregate, sceneBounds, lights.size());
-    for (const auto &l : lights)
-        s += StringPrintf("%s, ", l.ToString());
-    s += StringPrintf("] infiniteLights[%d]: [ ", infiniteLights.size());
-    for (const auto &l : infiniteLights)
-        s += StringPrintf("%s, ", l.ToString());
-    return s + " ]";
-}
-
 SampledSpectrum Integrator::Tr(const Interaction &p0, const Interaction &p1,
                                const SampledWavelengths &lambda, RNG &rng) const {
     auto rescale = [](SampledSpectrum &Tr, SampledSpectrum &pdf) {
@@ -423,6 +412,17 @@ SampledSpectrum Integrator::Tr(const Interaction &p0, const Interaction &p1,
     }
     PBRT_DBG("%s\n", StringPrintf("Tr from %s to %s = %s", p0.pi, p1.pi, Tr).c_str());
     return Tr / pdf.Average();
+}
+
+std::string Integrator::ToString() const {
+    std::string s = StringPrintf("[ Scene aggregate: %s sceneBounds: %s lights[%d]: [ ",
+                                 aggregate, sceneBounds, lights.size());
+    for (const auto &l : lights)
+        s += StringPrintf("%s, ", l.ToString());
+    s += StringPrintf("] infiniteLights[%d]: [ ", infiniteLights.size());
+    for (const auto &l : infiniteLights)
+        s += StringPrintf("%s, ", l.ToString());
+    return s + " ]";
 }
 
 // SimplePathIntegrator Method Definitions
@@ -1550,13 +1550,10 @@ struct EndpointInteraction : Interaction {
                       "Expect both union members have same size");
     }
 
-    EndpointInteraction(LightHandle light, const Ray &r, const Interaction &intr)
+    EndpointInteraction(LightHandle light, const Interaction &intr)
         : Interaction(intr), light(light) {}
     EndpointInteraction(LightHandle light, const Ray &r)
         : Interaction(r.o, r.time, r.medium), light(light) {}
-
-    EndpointInteraction(const Interaction &it, LightHandle light)
-        : Interaction(it), light(light) {}
     EndpointInteraction(const Ray &ray)
         : Interaction(ray(1), Normal3f(-ray.d), ray.time, ray.medium), light(nullptr) {}
 };
@@ -1596,13 +1593,14 @@ struct Vertex {
                                       const SampledSpectrum &beta);
     static inline Vertex CreateCamera(CameraHandle camera, const Interaction &it,
                                       const SampledSpectrum &beta);
+
     static inline Vertex CreateLight(LightHandle light, const Ray &ray,
                                      const SampledSpectrum &Le, Float pdf);
-    static inline Vertex CreateLight(LightHandle light, const Ray &ray,
-                                     const Interaction &intr, const SampledSpectrum &Le,
-                                     Float pdf);
+    static inline Vertex CreateLight(LightHandle light, const Interaction &intr,
+                                     const SampledSpectrum &Le, Float pdf);
     static inline Vertex CreateLight(const EndpointInteraction &ei,
                                      const SampledSpectrum &beta, Float pdf);
+
     static inline Vertex CreateMedium(const MediumInteraction &mi,
                                       const SampledSpectrum &beta, Float pdf,
                                       const Vertex &prev);
@@ -1697,10 +1695,10 @@ struct Vertex {
                 Le += light.Le(Ray(p(), -w), lambda);
             return Le;
 
-        } else {
-            return si.areaLight ? si.areaLight.L(si.p(), si.n, si.uv, w, lambda)
-                                : SampledSpectrum(0.);
-        }
+        } else if (si.areaLight)
+            return si.areaLight.L(si.p(), si.n, si.uv, w, lambda);
+        else
+            return SampledSpectrum(0.f);
     }
 
     std::string ToString() const {
@@ -1756,7 +1754,7 @@ struct Vertex {
     Float PDF(const Integrator &integrator, const Vertex *prev,
               const Vertex &next) const {
         if (type == VertexType::Light)
-            return PdfLight(integrator, next);
+            return PDFLight(integrator, next);
         // Compute directions to preceding and next vertex
         Vector3f wn = next.p() - p();
         if (LengthSquared(wn) == 0)
@@ -1786,17 +1784,18 @@ struct Vertex {
         return ConvertDensity(pdf, next);
     }
 
-    Float PdfLight(const Integrator &integrator, const Vertex &v) const {
+    Float PDFLight(const Integrator &integrator, const Vertex &v) const {
         Vector3f w = v.p() - p();
         Float invDist2 = 1 / LengthSquared(w);
         w *= std::sqrt(invDist2);
+        // Compute sampling density _pdf_ for light type
         Float pdf;
         if (IsInfiniteLight()) {
             // Compute planar sampling density for infinite light sources
             Point3f worldCenter;
             Float worldRadius;
             integrator.SceneBounds().BoundingSphere(&worldCenter, &worldRadius);
-            pdf = 1 / (Pi * worldRadius * worldRadius);
+            pdf = 1 / (Pi * Sqr(worldRadius));
 
         } else if (IsOnSurface()) {
             // Compute sampling density at emissive surface
@@ -1809,22 +1808,20 @@ struct Vertex {
             pdf = pdfDir * invDist2;
 
         } else {
-            // Get pointer _light_ to the light source at the vertex
+            // Compute sampling density for non-infinite light sources
             CHECK(type == VertexType::Light);
             CHECK(ei.light != nullptr);
-            LightHandle light = ei.light;
-
-            // Compute sampling density for non-infinite light sources
             Float pdfPos, pdfDir;
-            light.PDF_Le(Ray(p(), w, time()), &pdfPos, &pdfDir);
+            ei.light.PDF_Le(Ray(p(), w, time()), &pdfPos, &pdfDir);
             pdf = pdfDir * invDist2;
         }
+
         if (v.IsOnSurface())
             pdf *= AbsDot(v.ng(), w);
         return pdf;
     }
 
-    Float PdfLightOrigin(const std::vector<LightHandle> &infiniteLights, const Vertex &v,
+    Float PDFLightOrigin(const std::vector<LightHandle> &infiniteLights, const Vertex &v,
                          LightSamplerHandle lightSampler) {
         Vector3f w = v.p() - p();
         if (LengthSquared(w) == 0)
@@ -1834,25 +1831,14 @@ struct Vertex {
             // Return solid angle density for infinite light sources
             return InfiniteLightDensity(infiniteLights, lightSampler, w);
 
-        } else if (IsOnSurface()) {
-            // Return probability for emissive surface
-            if (type == VertexType::Light)
-                CHECK(ei.light.Is<DiffuseAreaLight>());  // since that's all we've
-                                                         // got currently...
-            LightHandle light = (type == VertexType::Light) ? ei.light : si.areaLight;
-            Float pdfChoice = lightSampler.PDF(light);
-            Float pdfPos, pdfDir;
-            light.PDF_Le(ei, w, &pdfPos, &pdfDir);
-            return pdfPos * pdfChoice;
-
         } else {
-            // Return solid angle density for non-infinite light sources
-            Float pdfPos, pdfDir;
-            CHECK(IsLight());
-            LightHandle light = type == VertexType::Light ? ei.light : si.areaLight;
-            CHECK(light != nullptr);
-            Float pdfChoice = lightSampler.PDF(light);
-            light.PDF_Le(Ray(p(), w, time()), &pdfPos, &pdfDir);
+            // Return solid angle density for non-infinite light source
+            LightHandle light = (type == VertexType::Light) ? ei.light : si.areaLight;
+            Float pdfPos, pdfDir, pdfChoice = lightSampler.PDF(light);
+            if (IsOnSurface())
+                light.PDF_Le(ei, w, &pdfPos, &pdfDir);
+            else
+                light.PDF_Le(Ray(p(), w, time()), &pdfPos, &pdfDir);
             return pdfPos * pdfChoice;
         }
     }
@@ -1876,10 +1862,9 @@ inline Vertex Vertex::CreateLight(LightHandle light, const Ray &ray,
     return v;
 }
 
-inline Vertex Vertex::CreateLight(LightHandle light, const Ray &ray,
-                                  const Interaction &intr, const SampledSpectrum &Le,
-                                  Float pdf) {
-    Vertex v(VertexType::Light, EndpointInteraction(light, ray, intr), Le);
+inline Vertex Vertex::CreateLight(LightHandle light, const Interaction &intr,
+                                  const SampledSpectrum &Le, Float pdf) {
+    Vertex v(VertexType::Light, EndpointInteraction(light, intr), Le);
     v.pdfFwd = pdf;
     return v;
 }
@@ -1934,26 +1919,30 @@ int GenerateLightSubpath(const Integrator &integrator, SampledWavelengths &lambd
                          SamplerHandle sampler, CameraHandle camera,
                          ScratchBuffer &scratchBuffer, int maxDepth, Float time,
                          LightSamplerHandle lightSampler, Vertex *path, bool regularize) {
+    // Generate light subpath and initialize _path_ vertices
     if (maxDepth == 0)
         return 0;
     // Sample initial ray for light subpath
+    // Sample light for BDPT light subpath
     pstd::optional<SampledLight> sampledLight = lightSampler.Sample(sampler.Get1D());
     if (!sampledLight)
         return 0;
     LightHandle light = sampledLight->light;
-    Float lightPDF = sampledLight->pdf;
+    Float lightSamplePDF = sampledLight->pdf;
+
     pstd::optional<LightLeSample> les =
         light.SampleLe(sampler.Get2D(), sampler.Get2D(), lambda, time);
     if (!les || les->pdfPos == 0 || les->pdfDir == 0 || !les->L)
         return 0;
     RayDifferential ray(les->ray);
 
-    // Generate first vertex on light subpath and start random walk
-    path[0] = les->intr ? Vertex::CreateLight(light, ray, *les->intr, les->L,
-                                              les->pdfPos * lightPDF)
-                        : Vertex::CreateLight(light, ray, les->L, les->pdfPos * lightPDF);
-    SampledSpectrum beta =
-        les->L * les->AbsCosTheta(ray.d) / (lightPDF * les->pdfPos * les->pdfDir);
+    // Generate first vertex of light subpath
+    Float lightPDF = lightSamplePDF * les->pdfPos;
+    path[0] = les->intr ? Vertex::CreateLight(light, *les->intr, les->L, lightPDF)
+                        : Vertex::CreateLight(light, ray, les->L, lightPDF);
+
+    // Follow light subpath random walk
+    SampledSpectrum beta = les->L * les->AbsCosTheta(ray.d) / (lightPDF * les->pdfDir);
     PBRT_DBG("%s\n",
              StringPrintf(
                  "Starting light subpath. Ray: %s, Le %s, beta %s, pdfPos %f, pdfDir %f",
@@ -1985,49 +1974,44 @@ int RandomWalk(const Integrator &integrator, SampledWavelengths &lambda,
                int maxDepth, TransportMode mode, Vertex *path, bool regularize) {
     if (maxDepth == 0)
         return 0;
+    // Follow random walk to initialize BDPT path vertices
     int bounces = 0;
     bool anyNonSpecularBounces = false;
-    // Declare variables for forward and reverse probability densities
-    Float pdfFwd = pdf, pdfRev = 0;
-
+    Float pdfFwd = pdf;
     while (true) {
         // Attempt to create the next subpath vertex in _path_
-        PBRT_DBG("%s\n",
-                 StringPrintf("Random walk. Bounces %d, beta %s, pdfFwd %f, pdfRef %f",
-                              bounces, beta, pdfFwd, pdfRev)
-                     .c_str());
+        PBRT_DBG("%s\n", StringPrintf("Random walk. Bounces %d, beta %s, pdfFwd %f",
+                                      bounces, beta, pdfFwd)
+                             .c_str());
         if (!beta)
             break;
+        bool scattered = false, terminated = false;
         // Trace a ray and sample the medium, if any
         Vertex &vertex = path[bounces], &prev = path[bounces - 1];
         pstd::optional<ShapeIntersection> si = integrator.Intersect(ray);
-        bool scattered = false, terminated = false;
         if (ray.medium) {
+            // Sample participating medium for _RandomWalk()_ ray
             Float tMax = si ? si->tHit : Infinity;
             RNG rng(Hash(ray.d.x), Hash(ray.d.y));
-            ray.medium.SampleTmaj(
-                ray, tMax, rng, lambda, [&](const MediumSample &mediumSample) {
-                    const SampledSpectrum &Tmaj = mediumSample.Tmaj;
-                    const MediumInteraction &intr = mediumSample.intr;
-                    const SampledSpectrum &sigma_a = intr.sigma_a;
-                    const SampledSpectrum &sigma_s = intr.sigma_s;
-
-                    Float pAbsorb = sigma_a[0] / intr.sigma_maj[0];
-                    Float pScatter = sigma_s[0] / intr.sigma_maj[0];
+            SampledSpectrum Tmaj = ray.medium.SampleTmaj(
+                ray, tMax, rng, lambda, [&](const MediumSample &ms) {
+                    const MediumInteraction &intr = ms.intr;
+                    // Compute medium event probabilities for interaction
+                    Float pAbsorb = intr.sigma_a[0] / intr.sigma_maj[0];
+                    Float pScatter = intr.sigma_s[0] / intr.sigma_maj[0];
                     Float pNull = std::max<Float>(0, 1 - pAbsorb - pScatter);
-                    DCHECK_GE(1 - pAbsorb - pScatter, -1e-6);
 
+                    // Randomly sample medium event for _RandomRalk()_ ray
                     Float um = sampler.Get1D();
                     int mode = SampleDiscrete({pAbsorb, pScatter, pNull}, um);
-
                     if (mode == 0) {
-                        // absorption; done
+                        // Handle absorption for _RandomWalk()_ ray
                         terminated = true;
                         return false;
-                    } else if (mode == 1) {
-                        // scatter
-                        beta *= Tmaj * sigma_s / (Tmaj * sigma_s).Average();
 
+                    } else if (mode == 1) {
+                        // Handle scattering for _RandomWalk()_ ray
+                        beta *= ms.Tmaj * intr.sigma_s / (ms.Tmaj[0] * intr.sigma_s[0]);
                         // Record medium interaction in _path_ and compute forward density
                         vertex = Vertex::CreateMedium(intr, beta, pdfFwd, prev);
                         if (++bounces >= maxDepth) {
@@ -2043,31 +2027,34 @@ int RandomWalk(const Integrator &integrator, SampledWavelengths &lambda,
                             terminated = true;
                             return false;
                         }
-                        pdfFwd = pdfRev = ps->pdf;
-                        beta *= ps->p / pdfFwd;
+                        // Update path state and previous path verex after medium
+                        // scattering
+                        pdfFwd = ps->pdf;
+                        beta *= ps->p / ps->pdf;
                         ray = intr.SpawnRay(ps->wi);
                         anyNonSpecularBounces = true;
-
-                        // Compute reverse area density at preceding vertex
-                        prev.pdfRev = vertex.ConvertDensity(pdfRev, prev);
+                        prev.pdfRev = vertex.ConvertDensity(ps->pdf, prev);
 
                         scattered = true;
                         return false;
-                    } else {
-                        // null scatter
-                        SampledSpectrum sigma_n = intr.sigma_n();
 
-                        beta *= Tmaj * sigma_n / (Tmaj * sigma_n).Average();
+                    } else {
+                        // Handle null scattering for _RandomWalk()_ ray
+                        SampledSpectrum sigma_n = intr.sigma_n();
+                        beta *= ms.Tmaj * sigma_n / (ms.Tmaj[0] * sigma_n[0]);
                         return true;
                     }
                 });
+            // Update _beta_ for medium transmittance
+            if (!scattered)
+                beta *= Tmaj / Tmaj[0];
         }
 
         if (terminated)
             return bounces;
         if (scattered)
             continue;
-        // Handle surface interaction for path generation
+        // Handle escaped rays after no medium scattering event
         if (!si) {
             // Capture escaped rays when tracing from the camera
             if (mode == TransportMode::Radiance) {
@@ -2077,6 +2064,8 @@ int RandomWalk(const Integrator &integrator, SampledWavelengths &lambda,
 
             break;
         }
+
+        // Handle surface interaction for path generation
         SurfaceInteraction &isect = si->intr;
         // Get BSDF and skip over medium boundaries
         BSDF bsdf = isect.GetBSDF(ray, lambda, camera, scratchBuffer, sampler);
@@ -2097,7 +2086,7 @@ int RandomWalk(const Integrator &integrator, SampledWavelengths &lambda,
 
         if (++bounces >= maxDepth)
             break;
-        // Sample BSDF at current vertex and compute reverse probability
+        // Sample BSDF at current vertex
         Vector3f wo = isect.wo;
         Float u = sampler.Get1D();
         pstd::optional<BSDFSample> bs = bsdf.Sample_f(wo, u, sampler.Get2D(), mode);
@@ -2106,9 +2095,12 @@ int RandomWalk(const Integrator &integrator, SampledWavelengths &lambda,
         pdfFwd = bs->pdf;
         anyNonSpecularBounces |= !bs->IsSpecular();
         beta *= bs->f * AbsDot(bs->wi, isect.shading.n) / bs->pdf;
+        ray = isect.SpawnRay(ray, bsdf, bs->wi, bs->flags);
+
+        // Compute path probabilities at surface vertex
         // TODO: confirm. I believe that !mode is right. Interestingly,
         // it makes no difference in the test suite either way.
-        pdfRev = bsdf.PDF(bs->wi, wo, !mode);
+        Float pdfRev = bsdf.PDF(bs->wi, wo, !mode);
         if (bs->IsSpecular()) {
             vertex.delta = true;
             pdfRev = pdfFwd = 0;
@@ -2116,9 +2108,6 @@ int RandomWalk(const Integrator &integrator, SampledWavelengths &lambda,
         PBRT_DBG("%s\n",
                  StringPrintf("Random walk beta after shading normal correction %s", beta)
                      .c_str());
-        ray = isect.SpawnRay(ray, bsdf, bs->wi, bs->flags);
-
-        // Compute reverse area density at preceding vertex
         prev.pdfRev = vertex.ConvertDensity(pdfRev, prev);
     }
     return bounces;
@@ -2171,14 +2160,14 @@ Float MISWeight(const Integrator &integrator, Vertex *lightVertices,
     ScopedAssignment<Float> a4;
     if (pt)
         a4 = {&pt->pdfRev, s > 0 ? qs->PDF(integrator, qsMinus, *pt)
-                                 : pt->PdfLightOrigin(integrator.infiniteLights, *ptMinus,
+                                 : pt->PDFLightOrigin(integrator.infiniteLights, *ptMinus,
                                                       lightSampler)};
 
     // Update reverse density of vertex $\pt{}_{t-2}$
     ScopedAssignment<Float> a5;
     if (ptMinus)
         a5 = {&ptMinus->pdfRev, s > 0 ? pt->PDF(integrator, qs, *ptMinus)
-                                      : pt->PdfLight(integrator, *ptMinus)};
+                                      : pt->PDFLight(integrator, *ptMinus)};
 
     // Update reverse density of vertices $\pq{}_{s-1}$ and $\pq{}_{s-2}$
     ScopedAssignment<Float> a6;
@@ -2259,7 +2248,7 @@ void BDPTIntegrator::Render() {
 
 SampledSpectrum BDPTIntegrator::Li(RayDifferential ray, SampledWavelengths &lambda,
                                    SamplerHandle sampler, ScratchBuffer &scratchBuffer,
-                                   VisibleSurface *visibleSurface) const {
+                                   VisibleSurface *) const {
     // Trace the camera and light subpaths
     Vertex *cameraVertices = scratchBuffer.Alloc<Vertex[]>(maxDepth + 2);
     int nCamera = GenerateCameraSubpath(*this, ray, lambda, sampler, scratchBuffer,
@@ -2340,8 +2329,6 @@ SampledSpectrum ConnectBDPT(const Integrator &integrator, SampledWavelengths &la
                 if (qs.IsOnSurface())
                     L *= AbsDot(cs->wi, qs.ns());
                 DCHECK(!L.HasNaNs());
-                // Only check visibility after we know that the path would
-                // make a non-zero contribution.
                 if (L) {
                     RNG rng(Hash(cs->pRaster), Hash(cs->pLens));
                     L *= integrator.Tr(cs->pRef, cs->pLens, lambda, rng);
@@ -2361,17 +2348,24 @@ SampledSpectrum ConnectBDPT(const Integrator &integrator, SampledWavelengths &la
                 Float lightPDF = sampledLight->pdf;
 
                 LightSampleContext ctx;
-                if (pt.IsOnSurface())
-                    ctx = LightSampleContext(pt.GetInteraction().AsSurface());
-                else
+                if (pt.IsOnSurface()) {
+                    const SurfaceInteraction &si = pt.GetInteraction().AsSurface();
+                    ctx = LightSampleContext(si);
+                    // Try to nudge the light sampling position to correct side of the
+                    // surface
+                    if (pt.bsdf.HasReflection() && !pt.bsdf.HasTransmission())
+                        ctx.pi = si.OffsetRayOrigin(si.wo);
+                    else if (pt.bsdf.HasTransmission() && !pt.bsdf.HasReflection())
+                        ctx.pi = si.OffsetRayOrigin(-si.wo);
+                } else
                     ctx = LightSampleContext(pt.GetInteraction());
                 pstd::optional<LightLiSample> lightWeight =
                     light.SampleLi(ctx, sampler.Get2D(), lambda);
-                if (lightWeight) {
-                    EndpointInteraction ei(lightWeight->pLight, light);
+                if (lightWeight && lightWeight->L && lightWeight->pdf > 0) {
+                    EndpointInteraction ei(light, lightWeight->pLight);
                     sampled = Vertex::CreateLight(
                         ei, lightWeight->L / (lightWeight->pdf * lightPDF), 0);
-                    sampled.pdfFwd = sampled.PdfLightOrigin(integrator.infiniteLights, pt,
+                    sampled.pdfFwd = sampled.PDFLightOrigin(integrator.infiniteLights, pt,
                                                             lightSampler);
                     L = pt.beta * pt.f(sampled, TransportMode::Radiance) * sampled.beta;
                     if (pt.IsOnSurface())
@@ -2425,10 +2419,9 @@ SampledSpectrum ConnectBDPT(const Integrator &integrator, SampledWavelengths &la
 
 std::string BDPTIntegrator::ToString() const {
     return StringPrintf("[ BDPTIntegrator maxDepth: %d visualizeStrategies: %s "
-                        "visualizeWeights: %s lightSampleStrategy: %s regularize: %s "
-                        "lightSampler: %s ]",
-                        maxDepth, visualizeStrategies, visualizeWeights,
-                        lightSampleStrategy, regularize, lightSampler);
+                        "visualizeWeights: %s regularize: %s lightSampler: %s ]",
+                        maxDepth, visualizeStrategies, visualizeWeights, regularize,
+                        lightSampler);
 }
 
 std::unique_ptr<BDPTIntegrator> BDPTIntegrator::Create(
@@ -2444,11 +2437,10 @@ std::unique_ptr<BDPTIntegrator> BDPTIntegrator::Create(
         maxDepth = 5;
     }
 
-    std::string lightStrategy = parameters.GetOneString("lightsampler", "power");
     bool regularize = parameters.GetOneBool("regularize", false);
     return std::make_unique<BDPTIntegrator>(camera, sampler, aggregate, lights, maxDepth,
                                             visualizeStrategies, visualizeWeights,
-                                            lightStrategy, regularize);
+                                            regularize);
 }
 
 STAT_PERCENT("Integrator/Acceptance rate", acceptedMutations, totalMutations);
@@ -2478,12 +2470,15 @@ SampledSpectrum MLTIntegrator::L(ScratchBuffer &scratchBuffer, MLTSampler &sampl
 
     // Generate a camera subpath with exactly _t_ vertices
     Vertex *cameraVertices = scratchBuffer.Alloc<Vertex[]>(t);
+    // Compute camera sample for MLT camera path
     Bounds2f sampleBounds = camera.GetFilm().SampleBounds();
     *pRaster = sampleBounds.Lerp(sampler.Get2D());
     CameraSample cameraSample;
     cameraSample.pFilm = *pRaster;
     cameraSample.time = sampler.Get1D();
     cameraSample.pLens = sampler.Get2D();
+
+    // Generate camera ray for MLT camera path
     pstd::optional<CameraRayDifferential> crd =
         camera.GenerateRayDifferential(cameraSample, *lambda);
     if (!crd || !crd->weight)
@@ -2510,7 +2505,7 @@ SampledSpectrum MLTIntegrator::L(ScratchBuffer &scratchBuffer, MLTSampler &sampl
     SampledSpectrum L = ConnectBDPT(*this, *lambda, lightVertices, cameraVertices, s, t,
                                     lightSampler, camera, &sampler, &pRasterNew) *
                         nStrategies;
-    if (pRasterNew.has_value())
+    if (pRasterNew)
         *pRaster = *pRasterNew;
     return L;
 }
@@ -2554,15 +2549,16 @@ void MLTIntegrator::Render() {
     int nBootstrapSamples = nBootstrap * (maxDepth + 1);
     std::vector<Float> bootstrapWeights(nBootstrapSamples, 0);
     if (!lights.empty()) {
-        // Allocate scratch buffers for bootstrap samples
-        std::vector<ScratchBuffer> bootstrapScratchBuffers;
+        // Allocate scratch buffers for MLT samples
+        std::vector<ScratchBuffer> threadScratchBuffers;
         for (int i = 0; i < MaxThreadIndex(); ++i)
-            bootstrapScratchBuffers.push_back(ScratchBuffer(65536));
+            threadScratchBuffers.push_back(ScratchBuffer(65536));
 
+        // Generate bootstrap samples in parallel
         ProgressReporter progress(nBootstrap, "Generating bootstrap paths",
                                   Options->quiet);
         ParallelFor(0, nBootstrap, [&](int64_t start, int64_t end) {
-            ScratchBuffer &scratchBuffer = bootstrapScratchBuffers[ThreadIndex];
+            ScratchBuffer &scratchBuffer = threadScratchBuffers[ThreadIndex];
             for (int64_t i = start; i < end; ++i) {
                 // Generate _i_th bootstrap sample
                 for (int depth = 0; depth <= maxDepth; ++depth) {
@@ -2571,12 +2567,10 @@ void MLTIntegrator::Render() {
                                        largeStepProbability, nSampleStreams);
                     threadSampler = &sampler;
                     threadDepth = depth;
-
                     Point2f pRaster;
                     SampledWavelengths lambda;
                     bootstrapWeights[rngIndex] =
-                        L(scratchBuffer, sampler, depth, &pRaster, &lambda).Average();
-
+                        C(L(scratchBuffer, sampler, depth, &pRaster, &lambda), lambda);
                     scratchBuffer.Reset();
                 }
             }
@@ -2614,23 +2608,25 @@ void MLTIntegrator::Render() {
             });
     }
 
-    // Run _nChains_ Markov chains in parallel
+    // Follow _nChains_ Markov chains to render image
     FilmHandle film = camera.GetFilm();
     int64_t nTotalMutations =
         (int64_t)mutationsPerPixel * (int64_t)film.SampleBounds().Area();
     if (!lights.empty()) {
-        // Allocate scratch buffers for MLT Markov chains
+        // Allocate scratch buffers for MLT samples
         std::vector<ScratchBuffer> threadScratchBuffers;
         for (int i = 0; i < MaxThreadIndex(); ++i)
             threadScratchBuffers.push_back(ScratchBuffer(65536));
 
         ProgressReporter progress(nChains, "Rendering", Options->quiet);
+        // Run _nChains_ Markov chains in parallel
         ParallelFor(0, nChains, [&](int i) {
+            ScratchBuffer &scratchBuffer = threadScratchBuffers[ThreadIndex];
+            // Compute number of mutations to apply in current Markov chain
             int64_t nChainMutations =
                 std::min((i + 1) * nTotalMutations / nChains, nTotalMutations) -
                 i * nTotalMutations / nChains;
-            // Follow {i}th Markov chain for _nChainMutations_
-            ScratchBuffer &scratchBuffer = threadScratchBuffers[ThreadIndex];
+
             // Select initial state from the set of bootstrap samples
             RNG rng(i);
             int bootstrapIndex = bootstrapTable.Sample(rng.Uniform<Float>());
@@ -2650,19 +2646,23 @@ void MLTIntegrator::Render() {
             for (int64_t j = 0; j < nChainMutations; ++j) {
                 StatsReportPixelStart(Point2i(pCurrent));
                 sampler.StartIteration();
+                // Generate proposed sample and compute its radiance
                 Point2f pProposed;
                 SampledWavelengths lambdaProposed;
                 SampledSpectrum LProposed =
                     L(scratchBuffer, sampler, depth, &pProposed, &lambdaProposed);
+
                 // Compute acceptance probability for proposed sample
-                Float accept =
-                    std::min<Float>(1, LProposed.Average() / LCurrent.Average());
+                Float accept = std::min<Float>(
+                    1, C(LProposed, lambdaProposed) / C(LCurrent, lambdaCurrent));
 
                 // Splat both current and proposed samples to _film_
                 if (accept > 0)
-                    film.AddSplat(pProposed, LProposed * accept / LProposed.Average(),
+                    film.AddSplat(pProposed,
+                                  LProposed * accept / C(LProposed, lambdaProposed),
                                   lambdaProposed);
-                film.AddSplat(pCurrent, LCurrent * (1 - accept) / LCurrent.Average(),
+                film.AddSplat(pCurrent,
+                              LCurrent * (1 - accept) / C(LCurrent, lambdaCurrent),
                               lambdaCurrent);
 
                 // Accept or reject the proposal
@@ -2685,6 +2685,7 @@ void MLTIntegrator::Render() {
             ++finishedChains;
             progress.Update(1);
         });
+
         progress.Done();
     }
 

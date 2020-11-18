@@ -487,7 +487,7 @@ class MLTSampler {
     MLTSampler(int mutationsPerPixel, int rngSequenceIndex, Float sigma,
                Float largeStepProbability, int streamCount)
         : mutationsPerPixel(mutationsPerPixel),
-          rng(rngSequenceIndex),
+          rng(MixBits(rngSequenceIndex)),
           sigma(sigma),
           largeStepProbability(largeStepProbability),
           streamCount(streamCount) {}
@@ -570,8 +570,8 @@ class MLTSampler {
     // MLTSampler Private Members
     int mutationsPerPixel;
     RNG rng;
-    const Float sigma, largeStepProbability;
-    const int streamCount;
+    Float sigma, largeStepProbability;
+    int streamCount;
     pstd::vector<PrimarySample> X;
     int64_t currentIteration = 0;
     bool largeStep = true;

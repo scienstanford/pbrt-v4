@@ -338,11 +338,11 @@ class CuboidMedium {
 class UniformGridMediumProvider {
   public:
     // UniformGridMediumProvider Public Methods
-    UniformGridMediumProvider(const Bounds3f &bounds,
-                              pstd::optional<SampledGrid<Float>> densityGrid,
-                              pstd::optional<SampledGrid<RGB>> rgbDensityGrid,
-                              const RGBColorSpace *colorSpace, SpectrumHandle Le,
-                              SampledGrid<Float> LeScaleGrid, Allocator alloc);
+    UniformGridMediumProvider(
+        const Bounds3f &bounds, pstd::optional<SampledGrid<Float>> densityGrid,
+        pstd::optional<SampledGrid<RGBUnboundedSpectrum>> rgbDensityGrid,
+        const RGBColorSpace *colorSpace, SpectrumHandle Le,
+        SampledGrid<Float> LeScaleGrid, Allocator alloc);
 
     static UniformGridMediumProvider *Create(const ParameterDictionary &parameters,
                                              const FileLoc *loc, Allocator alloc);
@@ -365,15 +365,15 @@ class UniformGridMediumProvider {
         Point3f pp = Point3f(bounds.Offset(p));
         if (densityGrid)
             return SampledSpectrum(densityGrid->Lookup(pp));
-        else {
-            RGB rgb = rgbDensityGrid->Lookup(pp);
-            return RGBUnboundedSpectrum(*colorSpace, rgb).Sample(lambda);
-        }
+        else
+            return rgbDensityGrid->Lookup(pp, [=] PBRT_CPU_GPU(RGBUnboundedSpectrum s) {
+                return s.Sample(lambda);
+            });
     }
 
     pstd::vector<Float> GetMaxDensityGrid(Allocator alloc, Point3i *res) const {
         // Set _gridResolution_ and allocate _maxGrid_
-        *res = Point3i(4, 4, 4);
+        *res = Point3i(16, 16, 16);
         pstd::vector<Float> maxGrid(alloc);
         maxGrid.resize(res->x * res->y * res->z);
 
@@ -381,36 +381,10 @@ class UniformGridMediumProvider {
         auto getMaxDensity = [&](const Bounds3f &bounds) -> Float {
             if (densityGrid)
                 return densityGrid->MaximumValue(bounds);
-            else {
-                // Compute maximum density of RGB density over _bounds_
-                int nx = rgbDensityGrid->xSize();
-                int ny = rgbDensityGrid->ySize();
-                int nz = rgbDensityGrid->zSize();
-                Point3f ps[2] = {
-                    Point3f(bounds.pMin.x * nx - .5f, bounds.pMin.y * ny - .5f,
-                            bounds.pMin.z * nz - .5f),
-                    Point3f(bounds.pMax.x * nx - .5f, bounds.pMax.y * ny - .5f,
-                            bounds.pMax.z * nz - .5f)};
-                Point3i pi[2] = {Max(Point3i(Floor(ps[0])), Point3i(0, 0, 0)),
-                                 Min(Point3i(Floor(ps[1])) + Vector3i(1, 1, 1),
-                                     Point3i(nx - 1, ny - 1, nz - 1))};
-
-                Float maxDensity = 0;
-                for (int z = pi[0].z; z <= pi[1].z; ++z)
-                    for (int y = pi[0].y; y <= pi[1].y; ++y)
-                        for (int x = pi[0].x; x <= pi[1].x; ++x) {
-                            RGB rgb = rgbDensityGrid->Lookup(Point3i(x, y, z));
-
-                            Float maxComponent = std::max({rgb.r, rgb.g, rgb.b});
-                            if (maxComponent == 0)
-                                continue;
-
-                            RGBUnboundedSpectrum spec(*colorSpace, rgb);
-                            maxDensity = std::max(maxDensity, spec.MaxValue());
-                        }
-
-                return maxDensity * 1.025f;
-            }
+            else
+                return rgbDensityGrid->MaximumValue(
+                    bounds,
+                    [] PBRT_CPU_GPU(RGBUnboundedSpectrum s) { return s.MaxValue(); });
         };
 
         // Compute maximum density for each _maxGrid_ cell
@@ -431,7 +405,7 @@ class UniformGridMediumProvider {
     // UniformGridMediumProvider Private Members
     Bounds3f bounds;
     pstd::optional<SampledGrid<Float>> densityGrid;
-    pstd::optional<SampledGrid<RGB>> rgbDensityGrid;
+    pstd::optional<SampledGrid<RGBUnboundedSpectrum>> rgbDensityGrid;
     const RGBColorSpace *colorSpace;
     DenselySampledSpectrum Le_spec;
     SampledGrid<Float> LeScaleGrid;
