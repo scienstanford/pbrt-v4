@@ -539,8 +539,7 @@ void RGBFilm::AddSplat(const Point2f &p, SampledSpectrum L,
 }
 
 void RGBFilm::WriteImage(ImageMetadata metadata, Float splatScale) {
-    bool spectralFlag = 1;
-    if (!spectralFlag){
+    if (!Options->enableSpectrumOutput){
     Image image = GetImage(&metadata, splatScale);
     LOG_VERBOSE("Writing image %s with bounds %s", filename, pixelBounds);
     image.Write(filename, metadata);

@@ -22,6 +22,7 @@ struct BasicPBRTOptions {
     int seed = 0;
     bool quiet = false;
     bool disablePixelJitter = false, disableWavelengthJitter = false;
+    bool enableSpectrumOutput = false;
     bool forceDiffuse = false;
     RenderingCoordinateSystem renderingSpace = RenderingCoordinateSystem::CameraWorld;
 };
