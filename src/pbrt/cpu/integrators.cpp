@@ -580,8 +580,10 @@ void LightPathIntegrator::EvaluatePixelSample(const Point2i &pPixel, int sampleI
 
     // Sample point on light source for light path
     Float time = camera.SampleTime(sampler.Get1D());
+    const Point2f uv0Light(sampler.Get2D());
+    const Point2f uv1Light(sampler.Get2D());
     pstd::optional<LightLeSample> les =
-        light.SampleLe(sampler.Get2D(), sampler.Get2D(), lambda, time);
+        light.SampleLe(uv0Light, uv1Light, lambda, time);
     if (!les || les->pdfPos == 0 || les->pdfDir == 0 || !les->L)
         return;
 
@@ -649,7 +651,7 @@ void LightPathIntegrator::EvaluatePixelSample(const Point2i &pPixel, int sampleI
         if (!bs)
             break;
         beta *= bs->f * AbsDot(bs->wi, isect.shading.n) / bs->pdf;
-        ray = isect.SpawnRay(ray, bsdf, bs->wi, bs->flags);
+        ray = isect.SpawnRay(ray, bsdf, bs->wi, bs->flags, bs->eta);
     }
 }
 
@@ -792,11 +794,10 @@ SampledSpectrum PathIntegrator::Li(RayDifferential ray, SampledWavelengths &lamb
         specularBounce = bs->IsSpecular();
         anyNonSpecularBounces |= !bs->IsSpecular();
         if (bs->IsTransmission())
-            etaScale *= Sqr(bsdf.eta);
+            etaScale *= Sqr(bs->eta);
         prevIntrCtx = si->intr;
 
-        ray = isect.SpawnRay(ray, bsdf, bs->wi, bs->flags);
-        
+        ray = isect.SpawnRay(ray, bsdf, bs->wi, bs->flags, bs->eta);
         // Possibly terminate the path with Russian roulette
         SampledSpectrum rrBeta = beta * etaScale;
         if (rrBeta.MaxComponentValue() < 1 && depth > 1) {
@@ -896,7 +897,9 @@ SampledSpectrum SimpleVolPathIntegrator::Li(RayDifferential ray,
         bool scattered = false, terminated = false;
         if (ray.medium) {
             // Sample medium scattering using delta tracking
-            RNG rng(Hash(sampler.Get1D()), Hash(sampler.Get1D()));
+            const Float h0 = Hash(sampler.Get1D());
+            const Float h1 = Hash(sampler.Get1D());
+            RNG rng(h0, h1);
             Float tMax = si ? si->tHit : Infinity;
             ray.medium.SampleTmaj(ray, tMax, rng, lambda, [&](const MediumSample &ms) {
                 const MediumInteraction &intr = ms.intr;
@@ -959,10 +962,14 @@ SampledSpectrum SimpleVolPathIntegrator::Li(RayDifferential ray,
         BSDF bsdf = si->intr.GetBSDF(ray, lambda, camera, buf, sampler);
         if (!bsdf)
             si->intr.SkipIntersection(&ray, si->tHit);
-        else if (bsdf.Sample_f(-ray.d, sampler.Get1D(), sampler.Get2D()))
-            ErrorExit("SimpleVolPathIntegrator doesn't support surface scattering.");
-        else
-            break;
+        else {
+            const Float uBSDF = sampler.Get1D();
+            const Point2f vwBSDF = sampler.Get2D();
+            if (bsdf.Sample_f(-ray.d, uBSDF, vwBSDF))
+                ErrorExit("SimpleVolPathIntegrator doesn't support surface scattering.");
+            else
+                break;
+        }
     }
     return L;
 }
@@ -985,7 +992,7 @@ STAT_COUNTER("Integrator/Surface interactions", surfaceInteractions);
 // VolPathIntegrator Method Definitions
 SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &lambda,
                                       SamplerHandle sampler, ScratchBuffer &scratchBuffer,
-                                      VisibleSurface *) const {
+                                      VisibleSurface *visibleSurf) const {
     // Declare state variables for volumetric path
     SampledSpectrum L(0.f), T_hat(1.f), uniPathPDF(1.f), lightPathPDF(1.f);
     bool specularBounce = false, anyNonSpecularBounces = false;
@@ -1006,7 +1013,9 @@ SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &l
             // Sample the participating medium
             bool scattered = false, terminated = false;
             Float tMax = si ? si->tHit : Infinity;
-            RNG rng(Hash(sampler.Get1D()), Hash(sampler.Get1D()));
+            const Float h0 = Hash(sampler.Get1D());
+            const Float h1 = Hash(sampler.Get1D());
+            RNG rng(h0, h1);
             SampledSpectrum Tmaj = ray.medium.SampleTmaj(
                 ray, tMax, rng, lambda, [&](const MediumSample &mediumSample) {
                     // Handle medium scattering event for ray
@@ -1146,6 +1155,27 @@ SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &l
             continue;
         }
 
+        // Initialize _visibleSurf_ at first intersection
+        if (depth == 0 && visibleSurf != nullptr) {
+            // Estimate BSDF's albedo
+            constexpr int nRhoSamples = 16;
+            SampledSpectrum rho(0.f);
+            for (int i = 0; i < nRhoSamples; ++i) {
+                // Generate sample for hemispherical-directional reflectance
+                Float uc = RadicalInverse(0, i + 1);
+                Point2f u(RadicalInverse(1, i + 1), RadicalInverse(2, i + 1));
+
+                // Estimate one term of $\rho_\roman{hd}$
+                pstd::optional<BSDFSample> bs = bsdf.Sample_f(si->intr.wo, uc, u);
+                if (bs)
+                    rho += bs->f * AbsDot(bs->wi, si->intr.shading.n) / bs->pdf;
+            }
+            SampledSpectrum albedo = rho / nRhoSamples;
+
+            *visibleSurf =
+                VisibleSurface(si->intr, camera.GetCameraTransform(), albedo, lambda);
+        }
+
         // Terminate path if maximum depth reached
         if (depth++ >= maxDepth)
             return L;
@@ -1189,13 +1219,15 @@ SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &l
         specularBounce = bs->IsSpecular();
         anyNonSpecularBounces |= !bs->IsSpecular();
         if (bs->IsTransmission())
-            etaScale *= Sqr(bsdf.eta);
-        ray = isect.SpawnRay(ray, bsdf, bs->wi, bs->flags);
+            etaScale *= Sqr(bs->eta);
+        ray = isect.SpawnRay(ray, bsdf, bs->wi, bs->flags, bs->eta);
 
         // Account for attenuated subsurface scattering, if applicable
         BSSRDFHandle bssrdf = isect.GetBSSRDF(ray, lambda, camera, scratchBuffer);
         if (bssrdf && bs->IsTransmission()) {
             // Sample BSSRDF probe segment to find exit point
+            const Float uBSSRDF = sampler.Get1D();
+            const Point2f vwBSSRDF = sampler.Get2D();
             pstd::optional<BSSRDFProbeSegment> probeSeg =
                 bssrdf.SampleSp(sampler.Get1D(), sampler.Get2D());
             if (!probeSeg)
@@ -1930,8 +1962,10 @@ int GenerateLightSubpath(const Integrator &integrator, SampledWavelengths &lambd
     LightHandle light = sampledLight->light;
     Float lightSamplePDF = sampledLight->pdf;
 
+    const Point2f uv0Light(sampler.Get2D());
+    const Point2f uv1Light(sampler.Get2D());
     pstd::optional<LightLeSample> les =
-        light.SampleLe(sampler.Get2D(), sampler.Get2D(), lambda, time);
+        light.SampleLe(uv0Light, uv1Light, lambda, time);
     if (!les || les->pdfPos == 0 || les->pdfDir == 0 || !les->L)
         return 0;
     RayDifferential ray(les->ray);
@@ -2095,7 +2129,7 @@ int RandomWalk(const Integrator &integrator, SampledWavelengths &lambda,
         pdfFwd = bs->pdf;
         anyNonSpecularBounces |= !bs->IsSpecular();
         beta *= bs->f * AbsDot(bs->wi, isect.shading.n) / bs->pdf;
-        ray = isect.SpawnRay(ray, bsdf, bs->wi, bs->flags);
+        ray = isect.SpawnRay(ray, bsdf, bs->wi, bs->flags, bs->eta);
 
         // Compute path probabilities at surface vertex
         // TODO: confirm. I believe that !mode is right. Interestingly,
@@ -2955,7 +2989,7 @@ void SPPMIntegrator::Render() {
                         break;
                     specularBounce = bs->IsSpecular();
                     if (bs->IsTransmission())
-                        etaScale *= Sqr(bsdf.eta);
+                        etaScale *= Sqr(bs->eta);
 
                     beta *= bs->f * AbsDot(bs->wi, isect.shading.n) / bs->pdf;
                     bsdfPDF = bs->pdfIsProportional ? bsdf.PDF(wo, bs->wi) : bs->pdf;
@@ -2967,7 +3001,7 @@ void SPPMIntegrator::Render() {
                             break;
                         beta /= 1 - q;
                     }
-                    ray = isect.SpawnRay(ray, bsdf, bs->wi, bs->flags);
+                    ray = isect.SpawnRay(ray, bsdf, bs->wi, bs->flags, bs->eta);
                     prevIntrCtx = LightSampleContext(isect);
                 }
             }
@@ -3057,11 +3091,11 @@ void SPPMIntegrator::Render() {
                 };
 
                 auto Sample2D = [&]() {
-                    Point2f u(
+                    Point2f u{
                         ScrambledRadicalInverse(haltonDim, haltonIndex,
                                                 (*digitPermutations)[haltonDim]),
                         ScrambledRadicalInverse(haltonDim + 1, haltonIndex,
-                                                (*digitPermutations)[haltonDim + 1]));
+                                                (*digitPermutations)[haltonDim + 1])};
                     haltonDim += 2;
                     return u;
                 };

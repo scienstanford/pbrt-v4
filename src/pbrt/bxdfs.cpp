@@ -158,7 +158,8 @@ pstd::optional<BSDFSample> DielectricInterfaceBxDF::Sample_f(
             if (mode == TransportMode::Radiance)
                 ft /= Sqr(etap);
 
-            return BSDFSample(ft, wi, pt / (pr + pt), BxDFFlags::SpecularTransmission);
+            return BSDFSample(ft, wi, pt / (pr + pt), BxDFFlags::SpecularTransmission,
+                              etap);
         }
 
     } else {
@@ -224,7 +225,7 @@ pstd::optional<BSDFSample> DielectricInterfaceBxDF::Sample_f(
             Float pdf = mfDistrib.PDF(wo, wh) * dwh_dwi * pt / (pr + pt);
             CHECK(!IsNaN(pdf));
 
-            return BSDFSample(f, wi, pdf, BxDFFlags::GlossyTransmission);
+            return BSDFSample(f, wi, pdf, BxDFFlags::GlossyTransmission, etap);
         }
     }
 }
@@ -455,7 +456,7 @@ pstd::optional<BSDFSample> HairBxDF::Sample_f(Vector3f wo, Float uc, Point2f u,
 
     // Sample $M_p$ to compute $\thetai$
     Float cosTheta = 1 + v[p] * std::log(std::max<Float>(u[0], 1e-5) +
-                                         (1 - u[0]) * std::exp(-2 / v[p]));
+                                         (1 - u[0]) * FastExp(-2 / v[p]));
     Float sinTheta = SafeSqrt(1 - Sqr(cosTheta));
     Float cosPhi = std::cos(2 * Pi * u[1]);
     Float sinTheta_i = -cosTheta * sinThetap_o + sinTheta * cosPhi * cosThetap_o;
