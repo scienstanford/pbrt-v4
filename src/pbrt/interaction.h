@@ -283,6 +283,10 @@ class SurfaceInteraction : public Interaction {
     LightHandle areaLight;
     Vector3f dpdx, dpdy;
     Float dudx = 0, dvdx = 0, dudy = 0, dvdy = 0;
+    
+    // added by zhenyi in order to do pixel-wise classification 
+    uint32_t materialId = 0;
+    uint32_t instanceId = 0;
 };
 
 }  // namespace pbrt

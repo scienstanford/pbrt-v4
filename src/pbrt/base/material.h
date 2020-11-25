@@ -42,7 +42,7 @@ class MaterialHandle
   public:
     // Material Interface
     using TaggedPointer::TaggedPointer;
-
+    
     static MaterialHandle Create(
         const std::string &name, const TextureParameterDictionary &parameters,
         /*const */ std::map<std::string, MaterialHandle> &namedMaterials,
@@ -68,6 +68,8 @@ class MaterialHandle
 
     PBRT_CPU_GPU inline bool IsTransparent() const;
     PBRT_CPU_GPU inline bool HasSubsurfaceScattering() const;
+        
+    uint32_t materialId; // added by zhenyi
 };
 
 }  // namespace pbrt

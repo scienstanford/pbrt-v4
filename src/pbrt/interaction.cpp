@@ -162,7 +162,7 @@ BSDF SurfaceInteraction::GetBSDF(const RayDifferential &ray, SampledWavelengths 
     // Return unset _BSDF_ if surface has a null material
     if (!material)
         return {};
-
+        
     // Evaluate bump map and compute shading normal
     FloatTextureHandle displacement = material.GetDisplacement();
     if (displacement) {

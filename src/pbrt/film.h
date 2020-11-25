@@ -146,6 +146,7 @@ class VisibleSurface {
     Float time = 0;
     Float dzdx = 0, dzdy = 0;
     SampledSpectrum albedo;
+    int materialId;
 };
 
 // FilmBaseParameters Definition
@@ -383,6 +384,8 @@ class GBufferFilm : public FilmBase {
         Normal3f nSum, nsSum;
         double albedoSum[3] = {0., 0., 0.};
         VarianceEstimator<Float> varianceEstimator[3];
+        SampledSpectrum L; 
+        float materialId;
     };
 
     // GBufferFilm Private Members

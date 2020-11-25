@@ -184,6 +184,7 @@ VisibleSurface::VisibleSurface(const SurfaceInteraction &si,
     time = si.time;
     dzdx = cameraFromRender(si.dpdx).z;
     dzdy = cameraFromRender(si.dpdy).z;
+    materialId  = si.material.materialId;
 }
 
 std::string VisibleSurface::ToString() const {
@@ -503,7 +504,7 @@ RGBFilm::RGBFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
 }
 
 SampledWavelengths RGBFilm::SampleWavelengths(Float u) const {
-    return SampledWavelengths::SampleUniform(u); 
+    return SampledWavelengths::SampleUniform(u); // modified by zhenyi; it was SampleXYZ.
 }
 
 void RGBFilm::AddSplat(const Point2f &p, SampledSpectrum L,
@@ -681,11 +682,19 @@ void GBufferFilm::AddSample(const Point2i &pFilm, SampledSpectrum L,
         RGB albedoRGB = albedo.ToRGB(lambda, *colorSpace);
         for (int c = 0; c < 3; ++c)
             p.albedoSum[c] += weight * albedoRGB[c];
+
     }
 
     for (int c = 0; c < 3; ++c)
         p.rgbSum[c] += rgb[c] * weight;
     p.weightSum += weight;
+
+    // Added by zhenyi: Add spectrum values into pixel
+    for (int i = 0; i < NSpectrumSamples; ++i) {
+        p.L[i] += weight * L[i];
+    }
+    // Added by zhenyi: add material ID;
+    p.materialId = visibleSurface->materialId;
 }
 
 GBufferFilm::GBufferFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
@@ -702,7 +711,7 @@ GBufferFilm::GBufferFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
 }
 
 SampledWavelengths GBufferFilm::SampleWavelengths(Float u) const {
-    return SampledWavelengths::SampleXYZ(u);
+    return SampledWavelengths::SampleUniform(u); // modified by zhenyi; it was SampleXYZ.
 }
 
 void GBufferFilm::AddSplat(const Point2f &p, SampledSpectrum v,
@@ -763,7 +772,8 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
                  "Variance.B",
                  "RelativeVariance.R",
                  "RelativeVariance.G",
-                 "RelativeVariance.B"});
+                 "RelativeVariance.B",
+                 "materialId"});
 
     ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
     ImageChannelDesc pDesc = image.GetChannelDesc({"Px", "Py", "Pz"});
@@ -776,7 +786,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
         image.GetChannelDesc({"Variance.R", "Variance.G", "Variance.B"});
     ImageChannelDesc relVarianceDesc = image.GetChannelDesc(
         {"RelativeVariance.R", "RelativeVariance.G", "RelativeVariance.B"});
-
+    ImageChannelDesc materialId = image.GetChannelDesc({"materialId"});
     ParallelFor2D(pixelBounds, [&](Point2i p) {
         Pixel &pixel = pixels[p];
         RGB rgb(pixel.rgbSum[0], pixel.rgbSum[1], pixel.rgbSum[2]);
@@ -821,6 +831,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
                           {pixel.varianceEstimator[0].RelativeVariance(),
                            pixel.varianceEstimator[1].RelativeVariance(),
                            pixel.varianceEstimator[2].RelativeVariance()});
+        image.SetChannels(pOffset, materialId, {pixel.materialId});
     });
 
     metadata->pixelBounds = pixelBounds;

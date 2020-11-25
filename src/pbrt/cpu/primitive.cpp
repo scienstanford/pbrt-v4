@@ -71,7 +71,7 @@ pstd::optional<ShapeIntersection> GeometricPrimitive::Intersect(const Ray &r,
             }
         }
     }
-
+    
     // Initialize _SurfaceInteraction_ after _Shape_ intersection
     si->intr.SetIntersectionProperties(material, areaLight, &mediumInterface, r.medium);
 

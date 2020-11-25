@@ -754,7 +754,7 @@ SampledSpectrum PathIntegrator::Li(RayDifferential ray, SampledWavelengths &lamb
                     rho += bs->f * AbsDot(bs->wi, si->intr.shading.n) / bs->pdf;
             }
             SampledSpectrum albedo = rho / nRhoSamples;
-
+            
             *visibleSurf =
                 VisibleSurface(si->intr, camera.GetCameraTransform(), albedo, lambda);
         }
@@ -796,7 +796,7 @@ SampledSpectrum PathIntegrator::Li(RayDifferential ray, SampledWavelengths &lamb
         prevIntrCtx = si->intr;
 
         ray = isect.SpawnRay(ray, bsdf, bs->wi, bs->flags);
-
+        
         // Possibly terminate the path with Russian roulette
         SampledSpectrum rrBeta = beta * etaScale;
         if (rrBeta.MaxComponentValue() < 1 && depth > 1) {

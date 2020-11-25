@@ -526,6 +526,7 @@ MaterialHandle MaterialHandle::Create(
 
     parameters.ReportUnused();
     ++nMaterialsCreated;
+    material.materialId = nMaterialsCreated;
     return material;
 }
 
