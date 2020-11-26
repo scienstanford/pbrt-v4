@@ -69,6 +69,13 @@ class GPUPathIntegrator {
     RayQueue *CurrentRayQueue(int depth) { return rayQueues[depth & 1]; }
     RayQueue *NextRayQueue(int depth) { return rayQueues[(depth + 1) & 1]; }
 
+    void IntersectClosest(RayQueue *rayQueue, EscapedRayQueue *escapedRayQueue,
+                          HitAreaLightQueue *hitAreaLightQueue,
+                          MaterialEvalQueue *basicEvalMaterialQueue,
+                          MaterialEvalQueue *universalEvalMaterialQueue,
+                          MediumSampleQueue *mediumSampleQueue,
+                          RayQueue *nextRayQueue) const;
+
     // GPUPathIntegrator Member Variables
     bool initializeVisibleSurface;
     bool haveSubsurface;
@@ -96,6 +103,9 @@ class GPUPathIntegrator {
     LightHandle envLight;
     LightSamplerHandle lightSampler;
 
+    int maxDepth;
+    bool regularize;
+
     int scanlinesPerPass, maxQueueSize;
 
     SOA<PixelSampleState> pixelSampleState;
@@ -104,9 +114,6 @@ class GPUPathIntegrator {
 
     MediumSampleQueue *mediumSampleQueue = nullptr;
     MediumScatterQueue *mediumScatterQueue = nullptr;
-
-    int maxDepth;
-    bool regularize;
 
     EscapedRayQueue *escapedRayQueue = nullptr;
 

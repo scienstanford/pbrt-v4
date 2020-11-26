@@ -24,11 +24,12 @@ void GPUPathIntegrator::GenerateRaySamples(int depth, int sampleIndex) {
 
 template <typename Sampler>
 void GPUPathIntegrator::GenerateRaySamples(int depth, int sampleIndex) {
+    // Generate description string _desc_ for ray sample generation
     std::string desc = std::string("Generate ray samples - ") + Sampler::Name();
+
     RayQueue *rayQueue = CurrentRayQueue(depth);
     ForAllQueued(
-        desc.c_str(), rayQueue, maxQueueSize,
-        PBRT_GPU_LAMBDA(const RayWorkItem w, int index) {
+        desc.c_str(), rayQueue, maxQueueSize, PBRT_GPU_LAMBDA(const RayWorkItem w) {
             // Generate samples for ray segment at current sample index
             // Find first sample dimension
             int dimension = 5 + 7 * depth;

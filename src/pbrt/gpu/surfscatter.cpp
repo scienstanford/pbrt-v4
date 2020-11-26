@@ -78,7 +78,7 @@ void GPUPathIntegrator::EvaluateMaterialAndBSDF(TextureEvaluator texEval,
     RayQueue *nextRayQueue = NextRayQueue(depth);
     ForAllQueued(
         name.c_str(), evalQueue->Get<MaterialEvalWorkItem<Material>>(), maxQueueSize,
-        PBRT_GPU_LAMBDA(const MaterialEvalWorkItem<Material> w, int index) {
+        PBRT_GPU_LAMBDA(const MaterialEvalWorkItem<Material> w) {
             // Evaluate material and BSDF for ray intersection
             // Apply bump mapping if material has a displacement texture
             Normal3f ns = w.ns;
@@ -104,7 +104,7 @@ void GPUPathIntegrator::EvaluateMaterialAndBSDF(TextureEvaluator texEval,
             if (regularize && w.anyNonSpecularBounces)
                 bsdf.Regularize();
 
-            // Initialize _VisibleSurface_ at first intersection, if necessary
+            // Initialize _VisibleSurface_ at first intersection if necessary
             if (depth == 0 && initializeVisibleSurface) {
                 SurfaceInteraction intr;
                 intr.pi = w.pi;
@@ -141,7 +141,7 @@ void GPUPathIntegrator::EvaluateMaterialAndBSDF(TextureEvaluator texEval,
                 // Compute updated path throughput and PDFs and enqueue indirect ray
                 Vector3f wi = bsdfSample->wi;
                 SampledSpectrum T_hat = w.T_hat * bsdfSample->f * AbsDot(wi, ns);
-                SampledSpectrum uniPathPDF = w.uniPathPDF, lightPathPDF = uniPathPDF;
+                SampledSpectrum uniPathPDF = w.uniPathPDF, lightPathPDF = w.uniPathPDF;
 
                 PBRT_DBG("%s f*cos[0] %f bsdfSample->pdf %f f*cos/pdf %f\n", BxDF::Name(),
                          bsdfSample->f[0] * AbsDot(wi, ns), bsdfSample->pdf,
@@ -184,18 +184,19 @@ void GPUPathIntegrator::EvaluateMaterialAndBSDF(TextureEvaluator texEval,
                     } else {
                         // Initialize spawned ray and enqueue for next ray depth
                         Ray ray = SpawnRay(w.pi, w.n, w.time, wi);
+                        // Initialize _ray_ medium if media are present
                         if (haveMedia)
                             ray.medium = Dot(ray.d, w.n) > 0 ? w.mediumInterface.outside
                                                              : w.mediumInterface.inside;
+
                         bool anyNonSpecularBounces =
                             !bsdfSample->IsSpecular() || w.anyNonSpecularBounces;
-                        LightSampleContext ctx(
-                            w.pi, w.n,
-                            ns);  // Note: slightly different than context below. Problem?
-                        nextRayQueue->PushIndirect(ray, ctx, T_hat, uniPathPDF,
-                                                   lightPathPDF, lambda, etaScale,
-                                                   bsdfSample->IsSpecular(),
-                                                   anyNonSpecularBounces, w.pixelIndex);
+                        // NOTE: slightly different than context below. Problem?
+                        LightSampleContext ctx(w.pi, w.n, ns);
+                        nextRayQueue->PushIndirectRay(
+                            ray, ctx, T_hat, uniPathPDF, lightPathPDF, lambda, etaScale,
+                            bsdfSample->IsSpecular(), anyNonSpecularBounces,
+                            w.pixelIndex);
 
                         PBRT_DBG(
                             "Spawned indirect ray at depth %d from w.index %d. "
@@ -214,7 +215,7 @@ void GPUPathIntegrator::EvaluateMaterialAndBSDF(TextureEvaluator texEval,
 
             // Sample light and enqueue shadow ray at intersection point
             if (bsdf.IsNonSpecular()) {
-                // Choose a light source using the LightSampler.
+                // Choose a light source using the _LightSampler_
                 LightSampleContext ctx(w.pi, w.n, ns);
                 if (bsdf.HasReflection() && !bsdf.HasTransmission())
                     ctx.pi = OffsetRayOrigin(ctx.pi, w.n, wo);
@@ -229,18 +230,17 @@ void GPUPathIntegrator::EvaluateMaterialAndBSDF(TextureEvaluator texEval,
                 // Remarkably, this substantially improves L1 cache hits with
                 // CoatedDiffuseBxDF and gives about a 60% perf. benefit.
                 __syncthreads();
-
-                // And now sample the light source itself.
+                // Sample light source and evaluate BSDF for direct lighting
                 pstd::optional<LightLiSample> ls = light.SampleLi(
                     ctx, raySamples.direct.u, lambda, LightSamplingMode::WithMIS);
                 if (!ls || !ls->L || ls->pdf == 0)
                     return;
-
                 Vector3f wi = ls->wi;
                 SampledSpectrum f = bsdf.f<BxDF>(wo, wi);
                 if (!f)
                     return;
 
+                // Compute path throughput and path PDFs for light sample
                 SampledSpectrum T_hat = w.T_hat * f * AbsDot(wi, ns);
                 PBRT_DBG("w.T_hat %f %f %f %f f %f %f %f %f dot %f\n", w.T_hat[0],
                          w.T_hat[1], w.T_hat[2], w.T_hat[3], f[0], f[1], f[2], f[3],
@@ -252,7 +252,6 @@ void GPUPathIntegrator::EvaluateMaterialAndBSDF(TextureEvaluator texEval,
                     index, depth, T_hat[0], T_hat[1], T_hat[2], T_hat[3], f[0], f[1],
                     f[2], f[3], ls->L[0], ls->L[1], ls->L[2], ls->L[3], ls->pdf);
 
-                // Compute light and BSDF PDFs for MIS.
                 Float lightPDF = ls->pdf * sampledLight->pdf;
                 // This causes uniPathPDF to be zero for the shadow ray, so that
                 // part of MIS just becomes a no-op.
@@ -260,9 +259,10 @@ void GPUPathIntegrator::EvaluateMaterialAndBSDF(TextureEvaluator texEval,
                 SampledSpectrum uniPathPDF = w.uniPathPDF * bsdfPDF;
                 SampledSpectrum lightPathPDF = w.uniPathPDF * lightPDF;
 
+                // Enqueue shadow ray with tentative radiance contribution
                 SampledSpectrum Ld = SafeDiv(T_hat * ls->L, lambda.PDF());
-
                 Ray ray = SpawnRayTo(w.pi, w.n, w.time, ls->pLight.pi, ls->pLight.n);
+                // Initialize _ray_ medium if media are present
                 if (haveMedia)
                     ray.medium = Dot(ray.d, w.n) > 0 ? w.mediumInterface.outside
                                                      : w.mediumInterface.inside;

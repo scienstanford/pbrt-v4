@@ -124,8 +124,8 @@ extern "C" __global__ void __raygen__findClosest() {
             PBRT_DBG("Adding ray to escapedRayQueue ray index %d pixel index %d\n", rayIndex,
                      r.pixelIndex);
             params.escapedRayQueue->Push(EscapedRayWorkItem{
-                r.T_hat, r.uniPathPDF, r.lightPathPDF, r.lambda, ray.o, ray.d, r.prevIntrCtx,
-                (int)r.isSpecularBounce, r.pixelIndex});
+                ray.o, ray.d, r.lambda, r.pixelIndex, (int)r.isSpecularBounce,
+                r.T_hat, r.uniPathPDF, r.lightPathPDF, r.prevIntrCtx});
         }
     }
 }
@@ -198,7 +198,7 @@ static __forceinline__ __device__ void ProcessClosestIntersection(
         PBRT_DBG("Enqueuing into medium transition queue: ray index %d pixel index %d \n",
                  rayIndex, r.pixelIndex);
         Ray newRay = intr.SpawnRay(r.ray.d);
-        params.nextRayQueue->PushIndirect(
+        params.nextRayQueue->PushIndirectRay(
             newRay, r.prevIntrCtx, r.T_hat, r.uniPathPDF, r.lightPathPDF, r.lambda,
             r.etaScale, r.isSpecularBounce, r.anyNonSpecularBounces, r.pixelIndex);
         return;
@@ -210,8 +210,9 @@ static __forceinline__ __device__ void ProcessClosestIntersection(
         Ray ray = r.ray;
         // TODO: intr.wo == -ray.d?
         params.hitAreaLightQueue->Push(HitAreaLightWorkItem{
-            intr.areaLight, r.lambda, r.T_hat, r.uniPathPDF, r.lightPathPDF, intr.p(), intr.n,
-            intr.uv, intr.wo, r.prevIntrCtx, (int)r.isSpecularBounce, r.pixelIndex});
+            intr.areaLight, intr.p(), intr.n, intr.uv, intr.wo, r.lambda,
+            r.T_hat, r.uniPathPDF, r.lightPathPDF, r.prevIntrCtx,
+            (int)r.isSpecularBounce, r.pixelIndex});
     }
 
     FloatTextureHandle displacement = material.GetDisplacement();
@@ -229,9 +230,9 @@ static __forceinline__ __device__ void ProcessClosestIntersection(
         q->Push(MaterialEvalWorkItem<Material>{
             ptr, intr.pi, intr.n, intr.shading.n,
             intr.shading.dpdu, intr.shading.dpdv, intr.shading.dndu, intr.shading.dndv,
-            intr.uv, r.lambda, r.anyNonSpecularBounces,
-            r.T_hat, r.uniPathPDF, intr.wo, intr.time, r.etaScale,
-            getPayload<ClosestHitContext>()->mediumInterface, r.pixelIndex});
+                intr.uv, r.lambda, r.anyNonSpecularBounces, intr.wo, r.pixelIndex,
+                r.T_hat, r.uniPathPDF, r.etaScale,
+                getPayload<ClosestHitContext>()->mediumInterface, intr.time});
     };
     material.Dispatch(enqueue);
 
@@ -356,12 +357,12 @@ extern "C" __global__ void __raygen__shadow() {
                  sr.Ld[0], sr.Ld[1], sr.Ld[2], sr.Ld[3],
                  sr.uniPathPDF[0], sr.uniPathPDF[1], sr.uniPathPDF[2], sr.uniPathPDF[3],
                  sr.lightPathPDF[0], sr.lightPathPDF[1], sr.lightPathPDF[2], sr.lightPathPDF[3]);
+
+        SampledSpectrum Lpixel = params.pixelSampleState->L[sr.pixelIndex];
+        params.pixelSampleState->L[sr.pixelIndex] = Lpixel + Ld;
     } else {
         PBRT_DBG("Shadow ray was occluded\n");
-        Ld = SampledSpectrum(0.);
     }
-
-    params.shadowRayQueue->Ld[index] = Ld;
 }
 
 extern "C" __global__ void __miss__shadow() {
@@ -502,17 +503,17 @@ extern "C" __global__ void __raygen__shadow_Tr() {
              T_ray[2] / (sr.uniPathPDF * uniPathPDF + sr.lightPathPDF * lightPathPDF).Average(),
              T_ray[3] / (sr.uniPathPDF * uniPathPDF + sr.lightPathPDF * lightPathPDF).Average());
 
-    if (!T_ray)
-        Ld = SampledSpectrum(0.f);
-    else
+    if (T_ray) {
         // FIXME/reconcile: this takes lightPathPDF as input while
         // e.g. VolPathIntegrator::SampleLd() does not...
         Ld *= T_ray / (sr.uniPathPDF * uniPathPDF + sr.lightPathPDF * lightPathPDF).Average();
 
-    PBRT_DBG("Setting final Ld for shadow ray index %d pixel index %d = as %f %f %f %f\n",
-             index, sr.pixelIndex, Ld[0], Ld[1], Ld[2], Ld[3]);
+        PBRT_DBG("Setting final Ld for shadow ray index %d pixel index %d = as %f %f %f %f\n",
+                 index, sr.pixelIndex, Ld[0], Ld[1], Ld[2], Ld[3]);
 
-    params.shadowRayQueue->Ld[index] = Ld;
+        SampledSpectrum Lpixel = params.pixelSampleState->L[sr.pixelIndex];
+        params.pixelSampleState->L[sr.pixelIndex] = Lpixel + Ld;
+    }
 }
 
 extern "C" __global__ void __miss__shadow_Tr() {

@@ -346,7 +346,7 @@ void GPUPathIntegrator::Render() {
 
             // Trace rays and estimate radiance up to maximum ray depth
             for (int depth = 0; true; ++depth) {
-                // Reset ray queues before tracing rays
+                // Reset queues before tracing rays
                 RayQueue *nextQueue = NextRayQueue(depth);
                 GPUDo(
                     "Reset queues before tracing rays", PBRT_GPU_LAMBDA() {
@@ -373,10 +373,10 @@ void GPUPathIntegrator::Render() {
                 // Follow active ray paths and accumulate radiance estimates
                 GenerateRaySamples(depth, sampleIndex);
                 // Find closest intersections along active rays
-                accel->IntersectClosest(maxQueueSize, escapedRayQueue, hitAreaLightQueue,
-                                        basicEvalMaterialQueue,
-                                        universalEvalMaterialQueue, mediumSampleQueue,
-                                        CurrentRayQueue(depth), NextRayQueue(depth));
+                IntersectClosest(CurrentRayQueue(depth), escapedRayQueue,
+                                 hitAreaLightQueue, basicEvalMaterialQueue,
+                                 universalEvalMaterialQueue, mediumSampleQueue,
+                                 NextRayQueue(depth));
 
                 if (depth > 0) {
                     // As above, with the indexing...
@@ -432,10 +432,22 @@ void GPUPathIntegrator::Render() {
     GPUWait();
 }
 
+void GPUPathIntegrator::IntersectClosest(RayQueue *rayQueue,
+                                         EscapedRayQueue *escapedRayQueue,
+                                         HitAreaLightQueue *hitAreaLightQueue,
+                                         MaterialEvalQueue *basicEvalMaterialQueue,
+                                         MaterialEvalQueue *universalEvalMaterialQueue,
+                                         MediumSampleQueue *mediumSampleQueue,
+                                         RayQueue *nextRayQueue) const {
+    accel->IntersectClosest(maxQueueSize, escapedRayQueue, hitAreaLightQueue,
+                            basicEvalMaterialQueue, universalEvalMaterialQueue,
+                            mediumSampleQueue, rayQueue, nextRayQueue);
+}
+
 void GPUPathIntegrator::HandleEscapedRays(int depth) {
     ForAllQueued(
         "Handle escaped rays", escapedRayQueue, maxQueueSize,
-        PBRT_GPU_LAMBDA(const EscapedRayWorkItem w, int index) {
+        PBRT_GPU_LAMBDA(const EscapedRayWorkItem w) {
             // Update pixel radiance for escaped ray
             SampledSpectrum Le = envLight.Le(Ray(w.rayo, w.rayd), w.lambda);
             if (!Le)
@@ -474,10 +486,9 @@ void GPUPathIntegrator::HandleEscapedRays(int depth) {
 void GPUPathIntegrator::HandleRayFoundEmission(int depth) {
     ForAllQueued(
         "Handle emitters hit by indirect rays", hitAreaLightQueue, maxQueueSize,
-        PBRT_GPU_LAMBDA(const HitAreaLightWorkItem w, int index) {
+        PBRT_GPU_LAMBDA(const HitAreaLightWorkItem w) {
             // Find emitted radiance from surface that ray hit
-            LightHandle areaLight = w.areaLight;
-            SampledSpectrum Le = areaLight.L(w.p, w.n, w.uv, w.wo, w.lambda);
+            SampledSpectrum Le = w.areaLight.L(w.p, w.n, w.uv, w.wo, w.lambda);
             if (!Le)
                 return;
             PBRT_DBG("Got Le %f %f %f %f from hit area light at depth %d\n", Le[0], Le[1],
@@ -490,16 +501,13 @@ void GPUPathIntegrator::HandleRayFoundEmission(int depth) {
             } else {
                 // Compute MIS-weighted radiance contribution from area light
                 Vector3f wi = -w.wo;
-
                 LightSampleContext ctx = w.prevIntrCtx;
-
-                Float lightChoicePDF = lightSampler.PDF(ctx, areaLight);
+                Float lightChoicePDF = lightSampler.PDF(ctx, w.areaLight);
                 Float lightPDF = lightChoicePDF *
-                                 areaLight.PDF_Li(ctx, wi, LightSamplingMode::WithMIS);
+                                 w.areaLight.PDF_Li(ctx, wi, LightSamplingMode::WithMIS);
 
                 SampledSpectrum uniPathPDF = w.uniPathPDF;
                 SampledSpectrum lightPathPDF = w.lightPathPDF * lightPDF;
-
                 L = w.T_hat * Le / (uniPathPDF + lightPathPDF).Average();
             }
             L = SafeDiv(L, w.lambda.PDF());
@@ -515,25 +523,11 @@ void GPUPathIntegrator::HandleRayFoundEmission(int depth) {
 
 void GPUPathIntegrator::TraceShadowRays(int depth) {
     if (haveMedia)
-        accel->IntersectShadowTr(maxQueueSize, shadowRayQueue);
+        accel->IntersectShadowTr(maxQueueSize, shadowRayQueue, &pixelSampleState);
     else
-        accel->IntersectShadow(maxQueueSize, shadowRayQueue);
+        accel->IntersectShadow(maxQueueSize, shadowRayQueue, &pixelSampleState);
 
-    // Add contribution if light was visible
-    ForAllQueued(
-        "Incorporate shadow ray contribution", shadowRayQueue, maxQueueSize,
-        PBRT_GPU_LAMBDA(const ShadowRayWorkItem sr, int index) {
-            if (!sr.Ld)
-                return;
-
-            SampledSpectrum Lpixel = pixelSampleState.L[sr.pixelIndex];
-
-            PBRT_DBG("Adding shadow ray Ld %f %f %f %f at pixel index %d \n", sr.Ld[0],
-                     sr.Ld[1], sr.Ld[2], sr.Ld[3], sr.pixelIndex);
-
-            pixelSampleState.L[sr.pixelIndex] = Lpixel + sr.Ld;
-        });
-
+    // Reset shadow ray queue
     GPUDo(
         "Reset shadowRayQueue", PBRT_GPU_LAMBDA() {
             stats->shadowRays[depth] += shadowRayQueue->Size();
