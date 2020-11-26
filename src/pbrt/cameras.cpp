@@ -18,8 +18,11 @@
 #include <pbrt/util/parallel.h>
 #include <pbrt/util/print.h>
 #include <pbrt/util/stats.h>
+#include <ext/json.hpp> // added by zhenyi
 
 #include <algorithm>
+
+using json = nlohmann::json;
 
 namespace pbrt {
 

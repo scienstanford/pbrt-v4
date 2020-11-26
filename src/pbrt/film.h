@@ -146,7 +146,7 @@ class VisibleSurface {
     Float time = 0;
     Float dzdx = 0, dzdy = 0;
     SampledSpectrum albedo;
-    int materialId;
+    int materialId; // added by zhenyi
 };
 
 // FilmBaseParameters Definition
@@ -322,6 +322,10 @@ class GBufferFilm : public FilmBase {
     // GBufferFilm Public Methods
     GBufferFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
                 Float maxComponentValue = Infinity, bool writeFP16 = true,
+                bool writeRadiance = true, bool writeAlbedo = true, bool writePosition = true,
+                bool writeDz = true, bool writeMaterial = true, bool writeInstance = true,
+                bool writeNormal = true, bool writeNs = true, bool writeVariance = true,
+                bool writeRelativeVariance = true,
                 Allocator alloc = {});
 
     static GBufferFilm *Create(const ParameterDictionary &parameters, Float exposureTime,
@@ -385,7 +389,7 @@ class GBufferFilm : public FilmBase {
         double albedoSum[3] = {0., 0., 0.};
         VarianceEstimator<Float> varianceEstimator[3];
         SampledSpectrum L; 
-        float materialId;
+        float materialId; // added by zhenyi
     };
 
     // GBufferFilm Private Members
@@ -393,6 +397,18 @@ class GBufferFilm : public FilmBase {
     const RGBColorSpace *colorSpace;
     Float maxComponentValue;
     bool writeFP16;
+    // added by zhenyi------
+    bool writeRadiance; 
+    bool writeAlbedo;
+    bool writePosition;
+    bool writeDz;
+    bool writeMaterial;
+    bool writeInstance;
+    bool writeNormal;
+    bool writeNs;
+    bool writeVariance;
+    bool writeRelativeVariance;    
+    // ------------------------
     Float filterIntegral;
     SquareMatrix<3> outputRGBFromSensorRGB;
 };

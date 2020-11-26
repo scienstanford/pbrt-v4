@@ -27,6 +27,9 @@
 #include <pbrt/util/spectrum.h>
 #include <pbrt/util/stats.h>
 #include <pbrt/util/transform.h>
+#include <iostream> 
+#include <vector>
+using namespace std; 
 
 namespace pbrt {
 
@@ -184,7 +187,7 @@ VisibleSurface::VisibleSurface(const SurfaceInteraction &si,
     time = si.time;
     dzdx = cameraFromRender(si.dpdx).z;
     dzdy = cameraFromRender(si.dpdy).z;
-    materialId  = si.material.materialId;
+    materialId  = si.material.materialId; // added by zhenyi
 }
 
 std::string VisibleSurface::ToString() const {
@@ -698,12 +701,27 @@ void GBufferFilm::AddSample(const Point2i &pFilm, SampledSpectrum L,
 }
 
 GBufferFilm::GBufferFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
-                         Float maxComponentValue, bool writeFP16, Allocator alloc)
+                         Float maxComponentValue, bool writeFP16, 
+                         bool writeRadiance, bool writeAlbedo, bool writePosition,
+                         bool writeDz, bool writeMaterial, bool writeInstance,
+                         bool writeNormal, bool writeNs, bool writeVariance,
+                         bool writeRelativeVariance,
+                         Allocator alloc)
     : FilmBase(p),
       pixels(pixelBounds, alloc),
       colorSpace(colorSpace),
       maxComponentValue(maxComponentValue),
       writeFP16(writeFP16),
+      writeRadiance(writeRadiance),
+      writeAlbedo(writeAlbedo),
+      writePosition(writePosition),
+      writeDz(writeDz),
+      writeMaterial(writeMaterial),
+      writeInstance(writeInstance),
+      writeNormal(writeNormal),
+      writeNs(writeNs),
+      writeVariance(writeVariance),
+      writeRelativeVariance(writeRelativeVariance),
       filterIntegral(filter.Integral()) {
     CHECK(!pixelBounds.IsEmpty());
     filmPixelMemory += pixelBounds.Area() * sizeof(Pixel);
@@ -749,44 +767,91 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     // Convert image to RGB and compute final pixel values
     LOG_VERBOSE("Converting image to RGB and computing final weighted pixel values");
     PixelFormat format = writeFP16 ? PixelFormat::Half : PixelFormat::Float;
-    Image image(format, Point2i(pixelBounds.Diagonal()),
-                {"R",
-                 "G",
-                 "B",
-                 "Albedo.R",
-                 "Albedo.G",
-                 "Albedo.B",
-                 "Px",
-                 "Py",
-                 "Pz",
-                 "dzdx",
-                 "dzdy",
-                 "Nx",
-                 "Ny",
-                 "Nz",
-                 "Nsx",
-                 "Nsy",
-                 "Nsz",
-                 "Variance.R",
-                 "Variance.G",
-                 "Variance.B",
-                 "RelativeVariance.R",
-                 "RelativeVariance.G",
-                 "RelativeVariance.B",
-                 "materialId"});
+    // added by zhenyi
+    //---------------------Provide options to select output type---------------------------------
+    // create channel names
+    // string RGBChannelNames[3]= {"R", "G", "B"};
+    string RadianceChannelNames[31] = {"Radiance.C01", "Radiance.C02","Radiance.C03", "Radiance.C04", "Radiance.C05",
+                                    "Radiance.C06", "Radiance.C07", "Radiance.C08", "Radiance.C09", "Radiance.C10",
+                                    "Radiance.C11", "Radiance.C12", "Radiance.C13", "Radiance.C14", "Radiance.C15",
+                                    "Radiance.C16", "Radiance.C17", "Radiance.C18", "Radiance.C19", "Radiance.C20",
+                                    "Radiance.C21", "Radiance.C22", "Radiance.C23", "Radiance.C24", "Radiance.C25",
+                                    "Radiance.C26", "Radiance.C27", "Radiance.C28", "Radiance.C29", "Radiance.C30",
+                                    "Radiance.C31"};
+    string AlbedoChannelNames[3] = {"Albedo.R", "Albedo.G", "Albedo.B"};
+    string PositionChannelNames[3] = {"Px", "Py", "Pz"};
+    string MaterialChannelNames[1] = {"MaterialId"};
+    string InstanceChannelNames[1] = {"InstanceId"};
+    string NormalChannelNames[3] = {"Nx", "Ny", "Nz"};
+    string NsChannelNames[3] = {"Nsx", "Nsy", "Nxz"};
+    string DzChannelNames[2] = {"Dzx", "Dzy"};
+    string VarianceChannelNames[3] = {"Variance.R", "Variance.G", "Variance.B"};
+    string RelativeVarianceChannelNames[3] = {"RelativeVariance.R", "RelativeVariance.G", "RelativeVariance.B"};
+    // check channel flag; 
+    // Only RGB is exported by default; Others are optional;
+    vector<string> channelNames = {"R", "G", "B"};
+    
+    if (writeRadiance)
+    {
+        for (int i = 0; i < 31; i++) {
+            channelNames.push_back(RadianceChannelNames[i]);
+        }
+    }
+    if (writeAlbedo)
+    {
+        for (int i = 0; i < 3; i++) {
+            channelNames.push_back(AlbedoChannelNames[i]);
+        }
+    }
+    if (writePosition)
+    {
+        for (int i = 0; i < 3; i++) {
+            channelNames.push_back(PositionChannelNames[i]);
+        }
+    }
+    if (writeMaterial)
+    {
+        channelNames.push_back(MaterialChannelNames[0]);
+    }
+    if (writeInstance)
+    {
+        channelNames.push_back(InstanceChannelNames[0]);
+    }
+    if (writeDz)
+    {
+        for (int i = 0; i < 2; i++) {
+            channelNames.push_back(DzChannelNames[i]);
+        }
+    }
+    if (writeNs)
+    {
+        for (int i = 0; i < 3; i++) {
+            channelNames.push_back(NsChannelNames[i]);
+        }
+    }
+    if (writeNormal)
+    {
+        for (int i = 0; i < 3; i++) {
+            channelNames.push_back(NormalChannelNames[i]);
+        }
+    }
+    if (writeVariance)
+    {
+        for (int i = 0; i < 3; i++) {
+            channelNames.push_back(VarianceChannelNames[i]);
+        }
+    }
+    if (writeRelativeVariance)
+    {
+        for (int i = 0; i < 3; i++) {
+            channelNames.push_back(RelativeVarianceChannelNames[i]);
+        }
+    }
+    
 
-    ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
-    ImageChannelDesc pDesc = image.GetChannelDesc({"Px", "Py", "Pz"});
-    ImageChannelDesc dzDesc = image.GetChannelDesc({"dzdx", "dzdy"});
-    ImageChannelDesc nDesc = image.GetChannelDesc({"Nx", "Ny", "Nz"});
-    ImageChannelDesc nsDesc = image.GetChannelDesc({"Nsx", "Nsy", "Nsz"});
-    ImageChannelDesc albedoRgbDesc =
-        image.GetChannelDesc({"Albedo.R", "Albedo.G", "Albedo.B"});
-    ImageChannelDesc varianceDesc =
-        image.GetChannelDesc({"Variance.R", "Variance.G", "Variance.B"});
-    ImageChannelDesc relVarianceDesc = image.GetChannelDesc(
-        {"RelativeVariance.R", "RelativeVariance.G", "RelativeVariance.B"});
-    ImageChannelDesc materialId = image.GetChannelDesc({"materialId"});
+    Image image(format, Point2i(pixelBounds.Diagonal()), channelNames); // added by zhenyi
+
+    ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"}); 
     ParallelFor2D(pixelBounds, [&](Point2i p) {
         Pixel &pixel = pixels[p];
         RGB rgb(pixel.rgbSum[0], pixel.rgbSum[1], pixel.rgbSum[2]);
@@ -796,12 +861,14 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
         Float weightSum = pixel.weightSum;
         Point3f pt = pixel.pSum;
         Float dzdx = pixel.dzdxSum, dzdy = pixel.dzdySum;
+        SampledSpectrum L = pixel.L;
         if (weightSum != 0) {
             rgb /= weightSum;
             albedoRgb /= weightSum;
             pt /= weightSum;
             dzdx /= weightSum;
             dzdy /= weightSum;
+            L /=weightSum;
         }
 
         // Add splat value at pixel
@@ -811,27 +878,77 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
         rgb = outputRGBFromSensorRGB * rgb;
 
         Point2i pOffset(p.x - pixelBounds.pMin.x, p.y - pixelBounds.pMin.y);
-        image.SetChannels(pOffset, rgbDesc, {rgb[0], rgb[1], rgb[2]});
-        image.SetChannels(pOffset, albedoRgbDesc,
-                          {albedoRgb[0], albedoRgb[1], albedoRgb[2]});
+
 
         Normal3f n =
             LengthSquared(pixel.nSum) > 0 ? Normalize(pixel.nSum) : Normal3f(0, 0, 0);
         Normal3f ns =
             LengthSquared(pixel.nsSum) > 0 ? Normalize(pixel.nsSum) : Normal3f(0, 0, 0);
-        image.SetChannels(pOffset, pDesc, {pt.x, pt.y, pt.z});
-        image.SetChannels(pOffset, dzDesc, {std::abs(dzdx), std::abs(dzdy)});
-        image.SetChannels(pOffset, nDesc, {n.x, n.y, n.z});
-        image.SetChannels(pOffset, nsDesc, {ns.x, ns.y, ns.z});
-        image.SetChannels(
-            pOffset, varianceDesc,
-            {pixel.varianceEstimator[0].Variance(), pixel.varianceEstimator[1].Variance(),
-             pixel.varianceEstimator[2].Variance()});
-        image.SetChannels(pOffset, relVarianceDesc,
-                          {pixel.varianceEstimator[0].RelativeVariance(),
-                           pixel.varianceEstimator[1].RelativeVariance(),
-                           pixel.varianceEstimator[2].RelativeVariance()});
-        image.SetChannels(pOffset, materialId, {pixel.materialId});
+
+        image.SetChannels(pOffset, rgbDesc, {rgb[0], rgb[1], rgb[2]});
+        //  set channels values based on users options --zhenyi
+        if (writeAlbedo)
+        {
+            ImageChannelDesc albedoRgbDesc = image.GetChannelDesc(AlbedoChannelNames);
+            image.SetChannels(pOffset, albedoRgbDesc,
+                            {albedoRgb[0], albedoRgb[1], albedoRgb[2]});
+        }
+        if (writeRadiance)
+        {
+            ImageChannelDesc radianceDesc = image.GetChannelDesc(RadianceChannelNames);
+            image.SetChannels(pOffset, radianceDesc, {L[16], L[17], L[18], L[19], L[20],
+                                L[21], L[22], L[23], L[24], L[25], L[26],
+                                L[27], L[28], L[29], L[30], 
+                                L[0], L[1], L[2], L[3], L[4], L[5], 
+                                L[6], L[7], L[8], L[9], L[10], L[11], 
+                                L[12], L[13], L[14], L[15]});
+        }
+        if (writePosition)
+        {
+            ImageChannelDesc pDesc = image.GetChannelDesc(PositionChannelNames);
+            image.SetChannels(pOffset, pDesc, {pt.x, pt.y, pt.z});
+        }
+        if (writeMaterial)
+        {
+            ImageChannelDesc materialDesc = image.GetChannelDesc(MaterialChannelNames);
+            image.SetChannels(pOffset, materialDesc, {pixel.materialId});
+        }
+        if (writeInstance)
+        {
+            // ImageChannelDesc instanceDesc = image.GetChannelDesc(InstanceChannelNames);
+            // image.SetChannels(pOffset, instanceDesc, {pixel.instanceId});
+        }
+        if (writeDz)
+        {
+            ImageChannelDesc dzDesc = image.GetChannelDesc(DzChannelNames);
+            image.SetChannels(pOffset, dzDesc, {std::abs(dzdx), std::abs(dzdy)});
+        }
+        if (writeNs)
+        {
+            ImageChannelDesc nsDesc = image.GetChannelDesc(NsChannelNames);
+            image.SetChannels(pOffset, nsDesc, {ns.x, ns.y, ns.z});
+        }
+        if (writeNormal)
+        {
+            ImageChannelDesc nDesc = image.GetChannelDesc(NormalChannelNames);
+            image.SetChannels(pOffset, nDesc, {n.x, n.y, n.z});
+        }
+        if (writeVariance)
+        {
+            ImageChannelDesc varianceDesc = image.GetChannelDesc(VarianceChannelNames);
+            image.SetChannels(
+                pOffset, varianceDesc,
+                {pixel.varianceEstimator[0].Variance(), pixel.varianceEstimator[1].Variance(),
+                pixel.varianceEstimator[2].Variance()});
+        }
+        if (writeRelativeVariance)
+        {
+            ImageChannelDesc relVarianceDesc = image.GetChannelDesc(RelativeVarianceChannelNames);
+            image.SetChannels(pOffset, relVarianceDesc,
+                            {pixel.varianceEstimator[0].RelativeVariance(),
+                            pixel.varianceEstimator[1].RelativeVariance(),
+                            pixel.varianceEstimator[2].RelativeVariance()});
+        }
     });
 
     metadata->pixelBounds = pixelBounds;
@@ -853,6 +970,19 @@ GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
                                  Allocator alloc) {
     Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
     bool writeFP16 = parameters.GetOneBool("savefp16", true);
+    // added by zhenyi
+    //---------------------------------------------------------------
+    bool writeRadiance = parameters.GetOneBool("saveRadiance", true); 
+    bool writeAlbedo = parameters.GetOneBool("saveAlbedo", false);
+    bool writePosition = parameters.GetOneBool("savePosition", false);
+    bool writeDz = parameters.GetOneBool("saveDz", false);
+    bool writeMaterial = parameters.GetOneBool("saveMaterial", false);
+    bool writeInstance = parameters.GetOneBool("saveInstance", false);
+    bool writeNormal = parameters.GetOneBool("saveNormal", false);
+    bool writeNs = parameters.GetOneBool("saveNs", false);
+    bool writeVariance = parameters.GetOneBool("saveVariance", false);
+    bool writeRelativeVariance = parameters.GetOneBool("saveRelativeVariance", false);
+    //-----------------------------------------------------------------
 
     PixelSensor *sensor =
         PixelSensor::Create(parameters, colorSpace, exposureTime, loc, alloc);
@@ -864,7 +994,11 @@ GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
                   filmBaseParameters.filename);
 
     return alloc.new_object<GBufferFilm>(filmBaseParameters, colorSpace,
-                                         maxComponentValue, writeFP16, alloc);
+                                         maxComponentValue, writeFP16,
+                                         writeRadiance, writeAlbedo, writePosition,
+                                         writeDz, writeMaterial, writeInstance,
+                                         writeNormal, writeNs, writeVariance,
+                                         writeRelativeVariance, alloc);
 }
 
 FilmHandle FilmHandle::Create(const std::string &name,

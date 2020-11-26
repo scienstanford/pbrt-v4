@@ -526,7 +526,7 @@ MaterialHandle MaterialHandle::Create(
 
     parameters.ReportUnused();
     ++nMaterialsCreated;
-    material.materialId = nMaterialsCreated;
+    material.materialId = nMaterialsCreated; // added by zhenyi
     return material;
 }
 
