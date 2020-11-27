@@ -37,7 +37,7 @@ class Ray {
     Vector3f d;
     Float time = 0;
     MediumHandle medium = nullptr;
-    float wavelength; // added by zhenyi for ca
+    float wavelength; // zhenyi for ca
 };
 
 // RayDifferential Definition

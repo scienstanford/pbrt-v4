@@ -146,7 +146,7 @@ class VisibleSurface {
     Float time = 0;
     Float dzdx = 0, dzdy = 0;
     SampledSpectrum albedo;
-    int materialId; // added by zhenyi
+    int materialId; // zhenyi
 };
 
 // FilmBaseParameters Definition
@@ -246,7 +246,7 @@ class RGBFilm : public FilmBase {
             pixel.rgbSum[c] += weight * rgb[c];
         pixel.weightSum += weight;
 
-        // Added by zhenyi: Add spectrum values into pixel
+        // zhenyi: Add spectrum values into pixel
         for (int i = 0; i < NSpectrumSamples; ++i) {
             pixel.L[i] += weight * L[i];
         }
@@ -389,7 +389,7 @@ class GBufferFilm : public FilmBase {
         double albedoSum[3] = {0., 0., 0.};
         VarianceEstimator<Float> varianceEstimator[3];
         SampledSpectrum L; 
-        float materialId; // added by zhenyi
+        float materialId; // zhenyi
     };
 
     // GBufferFilm Private Members
@@ -397,7 +397,7 @@ class GBufferFilm : public FilmBase {
     const RGBColorSpace *colorSpace;
     Float maxComponentValue;
     bool writeFP16;
-    // added by zhenyi------
+    // zhenyi------
     bool writeRadiance; 
     bool writeAlbedo;
     bool writePosition;

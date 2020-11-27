@@ -187,7 +187,7 @@ VisibleSurface::VisibleSurface(const SurfaceInteraction &si,
     time = si.time;
     dzdx = cameraFromRender(si.dpdx).z;
     dzdy = cameraFromRender(si.dpdy).z;
-    materialId  = si.material.materialId; // added by zhenyi
+    materialId  = si.material.materialId; // zhenyi
 }
 
 std::string VisibleSurface::ToString() const {
@@ -692,11 +692,11 @@ void GBufferFilm::AddSample(const Point2i &pFilm, SampledSpectrum L,
         p.rgbSum[c] += rgb[c] * weight;
     p.weightSum += weight;
 
-    // Added by zhenyi: Add spectrum values into pixel
+    // zhenyi: Add spectrum values into pixel
     for (int i = 0; i < NSpectrumSamples; ++i) {
         p.L[i] += weight * L[i];
     }
-    // Added by zhenyi: add material ID;
+    // zhenyi: add material ID;
     p.materialId = visibleSurface->materialId;
 }
 
@@ -767,7 +767,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     // Convert image to RGB and compute final pixel values
     LOG_VERBOSE("Converting image to RGB and computing final weighted pixel values");
     PixelFormat format = writeFP16 ? PixelFormat::Half : PixelFormat::Float;
-    // added by zhenyi
+    // zhenyi
     //---------------------Provide options to select output type---------------------------------
     // create channel names
     // string RGBChannelNames[3]= {"R", "G", "B"};
@@ -849,7 +849,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     }
     
 
-    Image image(format, Point2i(pixelBounds.Diagonal()), channelNames); // added by zhenyi
+    Image image(format, Point2i(pixelBounds.Diagonal()), channelNames); // zhenyi
 
     ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"}); 
     ParallelFor2D(pixelBounds, [&](Point2i p) {
@@ -970,7 +970,7 @@ GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
                                  Allocator alloc) {
     Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
     bool writeFP16 = parameters.GetOneBool("savefp16", true);
-    // added by zhenyi
+    // zhenyi
     //---------------------------------------------------------------
     bool writeRadiance = parameters.GetOneBool("saveRadiance", true); 
     bool writeAlbedo = parameters.GetOneBool("saveAlbedo", false);

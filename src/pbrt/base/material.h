@@ -69,7 +69,7 @@ class MaterialHandle
     PBRT_CPU_GPU inline bool IsTransparent() const;
     PBRT_CPU_GPU inline bool HasSubsurfaceScattering() const;
         
-    uint32_t materialId; // added by zhenyi
+    uint32_t materialId; // zhenyi
 };
 
 }  // namespace pbrt
