@@ -55,7 +55,6 @@ Rendering options:
                                and come from error message text.)
   --disable-pixel-jitter       Always sample pixels at their centers.
   --disable-wavelength-jitter  Always sample the same %d wavelengths of light.
-  --enable-spectrum-output     Write spectrum out.
   --display-server <addr:port> Connect to display server at given address and port
                                to display the image as it's being rendered.
   --force-diffuse              Convert all materials to be diffuse.)"
@@ -162,8 +161,6 @@ int main(int argc, char *argv[]) {
             ParseArg(&argv, "disable-pixel-jitter", &options.disablePixelJitter,
                      onError) ||
             ParseArg(&argv, "disable-wavelength-jitter", &options.disableWavelengthJitter,
-                     onError) ||
-            ParseArg(&argv, "enable-spectrum-output", &options.enableSpectrumOutput,
                      onError) ||
             ParseArg(&argv, "display-server", &options.displayServer, onError) ||
             ParseArg(&argv, "force-diffuse", &options.forceDiffuse, onError) ||

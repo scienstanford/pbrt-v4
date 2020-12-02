@@ -19,11 +19,10 @@ std::string PBRTOptions::ToString() const {
         "[ PBRTOptions nThreads: %d seed: %d quickRender: %s quiet: %s "
         "recordPixelStatistics: %s upgrade: %s disablePixelJitter: %s "
         "disableWavelengthJitter: %s forceDiffuse: %s useGPU: %s "
-        "enableSpectrumOutput: %s "
         "imageFile: %s mseReferenceImage: %s mseReferenceOutput: %s "
         "debugStart: %s displayServer: %s cropWindow: %s pixelBounds: %s ]",
         nThreads, seed, quickRender, quiet, recordPixelStatistics, upgrade,
-        disablePixelJitter, disableWavelengthJitter, forceDiffuse, useGPU, enableSpectrumOutput,imageFile,
+        disablePixelJitter, disableWavelengthJitter, forceDiffuse, useGPU, imageFile,
         mseReferenceImage, mseReferenceOutput, debugStart, displayServer, cropWindow,
         pixelBounds);
 }
