@@ -21,7 +21,7 @@ enum class RenderingCoordinateSystem { Camera, CameraWorld, World };
 struct BasicPBRTOptions {
     int seed = 0;
     bool quiet = false;
-    bool disablePixelJitter = false, disableWavelengthJitter = false;
+    bool disablePixelJitter = false, disableWavelengthJitter = true; // zhenyi: change to true 
     bool forceDiffuse = false;
     RenderingCoordinateSystem renderingSpace = RenderingCoordinateSystem::CameraWorld;
 };
