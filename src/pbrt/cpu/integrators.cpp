@@ -20,6 +20,7 @@
 #include <pbrt/util/check.h>
 #include <pbrt/util/color.h>
 #include <pbrt/util/colorspace.h>
+#include <pbrt/util/containers.h>
 #include <pbrt/util/display.h>
 #include <pbrt/util/error.h>
 #include <pbrt/util/file.h>
@@ -386,7 +387,7 @@ SampledSpectrum Integrator::Tr(const Interaction &p0, const Interaction &p1,
             Point3f pExit = ray(si ? si->tHit : (1 - ShadowEpsilon));
             ray.d = pExit - ray.o;
 
-            ray.medium.SampleTmaj(ray, 1.f, rng, lambda,
+            ray.medium.SampleTmaj(ray, 1.f, rng.Uniform<Float>(), rng, lambda,
                                   [&](const MediumSample &ms) -> bool {
                                       const SampledSpectrum &Tmaj = ms.Tmaj;
 
@@ -900,7 +901,9 @@ SampledSpectrum SimpleVolPathIntegrator::Li(RayDifferential ray,
             uint64_t hash1 = Hash(sampler.Get1D());
             RNG rng(hash0, hash1);
             Float tMax = si ? si->tHit : Infinity;
-            ray.medium.SampleTmaj(ray, tMax, rng, lambda, [&](const MediumSample &ms) {
+            Float u = sampler.Get1D();
+            Float uMode = sampler.Get1D();
+            ray.medium.SampleTmaj(ray, tMax, u, rng, lambda, [&](const MediumSample &ms) {
                 const MediumInteraction &intr = ms.intr;
                 // Compute medium event probabilities for interaction
                 Float pAbsorb = intr.sigma_a[0] / intr.sigma_maj[0];
@@ -908,7 +911,7 @@ SampledSpectrum SimpleVolPathIntegrator::Li(RayDifferential ray,
                 Float pNull = std::max<Float>(0, 1 - pAbsorb - pScatter);
 
                 // Randomly sample medium scattering event for delta tracking
-                int mode = SampleDiscrete({pAbsorb, pScatter, pNull}, sampler.Get1D());
+                int mode = SampleDiscrete({pAbsorb, pScatter, pNull}, uMode);
                 if (mode == 0) {
                     // Handle absorption event for delta tracking
                     L += SafeDiv(beta * intr.Le, lambda.PDF());
@@ -939,6 +942,7 @@ SampledSpectrum SimpleVolPathIntegrator::Li(RayDifferential ray,
 
                 } else {
                     // Handle null scattering event for delta tracking
+                    uMode = rng.Uniform<Float>();
                     return true;
                 }
             });
@@ -1016,7 +1020,8 @@ SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &l
             uint64_t hash1 = Hash(sampler.Get1D());
             RNG rng(hash0, hash1);
             SampledSpectrum Tmaj = ray.medium.SampleTmaj(
-                ray, tMax, rng, lambda, [&](const MediumSample &mediumSample) {
+                ray, tMax, sampler.Get1D(), rng, lambda,
+                [&](const MediumSample &mediumSample) {
                     // Handle medium scattering event for ray
                     if (!T_hat) {
                         terminated = true;
@@ -1376,7 +1381,8 @@ SampledSpectrum VolPathIntegrator::SampleLd(const Interaction &intr, const BSDF 
         if (lightRay.medium != nullptr) {
             Float tMax = si ? si->tHit : (1 - ShadowEpsilon);
             SampledSpectrum Tmaj = lightRay.medium.SampleTmaj(
-                lightRay, tMax, rng, lambda, [&](const MediumSample &mediumSample) {
+                lightRay, tMax, rng.Uniform<Float>(), rng, lambda,
+                [&](const MediumSample &mediumSample) {
                     // Update ray transmittance estimate at sampled point
                     // Update _T_ray_ and PDFs using ratio-tracking estimator
                     const MediumInteraction &intr = mediumSample.intr;
@@ -2024,8 +2030,9 @@ int RandomWalk(const Integrator &integrator, SampledWavelengths &lambda,
             // Sample participating medium for _RandomWalk()_ ray
             Float tMax = si ? si->tHit : Infinity;
             RNG rng(Hash(ray.d.x), Hash(ray.d.y));
+            Float u = sampler.Get1D();
             SampledSpectrum Tmaj = ray.medium.SampleTmaj(
-                ray, tMax, rng, lambda, [&](const MediumSample &ms) {
+                ray, tMax, u, rng, lambda, [&](const MediumSample &ms) {
                     const MediumInteraction &intr = ms.intr;
                     // Compute medium event probabilities for interaction
                     Float pAbsorb = intr.sigma_a[0] / intr.sigma_maj[0];
@@ -3355,6 +3362,216 @@ std::unique_ptr<SPPMIntegrator> SPPMIntegrator::Create(
                                             colorSpace);
 }
 
+// FunctionIntegrator Method Definitions
+FunctionIntegrator::FunctionIntegrator(std::function<Float(Point2f)> func,
+                                       const std::string &outputFilename,
+                                       CameraHandle camera, SamplerHandle sampler)
+    : Integrator(nullptr, {}),
+      func(func),
+      outputFilename(outputFilename),
+      camera(camera),
+      baseSampler(sampler) {}
+
+namespace funcs {
+
+static Float step(Point2f p) {
+    return (p.x < 0.5) ? 2 : 0;
+}
+static Float diagonal(Point2f p) {
+    return (p.x + p.y < 1) ? 2 : 0;
+}
+static Float disk(Point2f p) {
+    return Distance(p, Point2f(0.5, 0.5)) < 0.5 ? (1 / (Pi * Sqr(0.5))) : 0;
+}
+static Float checkerboard(Point2f p) {
+    int freq = 10;
+    Point2i pi(p * freq);
+    return ((pi.x & 1) ^ (pi.y & 1)) ? 2 : 0;
+}
+static Float rotatedCheckerboard(Point2f p) {
+    Float angle = Radians(45);
+    Float nrm = 1.0169844966464572;
+    return checkerboard({p.x * std::cos(angle) - p.y * std::sin(angle),
+                         p.x * std::sin(angle) + p.y * std::cos(angle)}) /
+           nrm;
+}
+static Float gaussian(Point2f p) {
+    Float mu = 0.5, sigma = 0.5;
+    Float nrm = Sqr(GaussianIntegral(0, 1, mu, sigma));
+    return Gaussian(p.x, mu, sigma) * Gaussian(p.y, mu, sigma) / nrm;
+}
+
+}  // namespace funcs
+
+std::unique_ptr<FunctionIntegrator> FunctionIntegrator::Create(
+    const ParameterDictionary &parameters, CameraHandle camera, SamplerHandle sampler,
+    const FileLoc *loc) {
+    std::string funcName = parameters.GetOneString("function", "step");
+    std::string defaultOut = Options->imageFile.empty()
+                                 ? StringPrintf("%s-mse.txt", funcName)
+                                 : Options->imageFile;
+    std::string outputFilename = parameters.GetOneString("filename", defaultOut);
+
+    std::function<Float(Point2f)> func;
+    if (funcName == "step")
+        func = funcs::step;
+    else if (funcName == "diagonal")
+        func = funcs::diagonal;
+    else if (funcName == "disk")
+        func = funcs::disk;
+    else if (funcName == "checkerboard")
+        func = funcs::checkerboard;
+    else if (funcName == "rotatedcheckerboard")
+        func = funcs::rotatedCheckerboard;
+    else if (funcName == "gaussian")
+        func = funcs::gaussian;
+
+    if (!func)
+        ErrorExit(loc, "%s: function for FunctionIntegrator unknown", funcName);
+
+    if (sampler.Is<SobolSampler>())
+        ErrorExit(loc, "\"sobol\" sampler should be replaced with \"paddedsobol\" for "
+                       "the \"function\" integrator.");
+
+    return std::make_unique<FunctionIntegrator>(func, outputFilename, camera, sampler);
+}
+
+void FunctionIntegrator::Render() {
+    std::string result;
+    Bounds2i pixelBounds = camera.GetFilm().PixelBounds();
+    int nPixels = pixelBounds.Area();
+    Array2D<double> sumv(pixelBounds);
+    int nSamples = baseSampler.SamplesPerPixel();
+    ProgressReporter prog(nSamples, "Sampling", Options->quiet);
+    Float firstMSE = 0;
+
+    bool isHalton = baseSampler.Is<HaltonSampler>();
+    bool isStratified = baseSampler.Is<StratifiedSampler>();
+    std::vector<Float> cpRot[2];
+    std::vector<DigitPermutation> digitPermutations[2];
+    std::vector<uint64_t> owenHash[2];
+    if (isHalton) {
+        RNG rng;
+        for (int d = 0; d < 2; ++d) {
+            cpRot[d].resize(nPixels);
+            for (int i = 0; i < nPixels; ++i)
+                cpRot[d][i] = rng.Uniform<Float>();
+
+            digitPermutations[d].resize(nPixels);
+            for (int i = 0; i < nPixels; ++i)
+                digitPermutations[d][i] =
+                    DigitPermutation(d == 0 ? 2 : 3, rng.Uniform<uint32_t>(), {});
+
+            owenHash[d].resize(nPixels);
+            for (int i = 0; i < nPixels; ++i)
+                owenHash[d][i] = rng.Uniform<uint64_t>();
+        }
+    }
+
+    std::vector<SamplerHandle> threadSamplers = baseSampler.Clone(MaxThreadIndex());
+    for (int sampleIndex = 0; sampleIndex < nSamples; ++sampleIndex) {
+        if (isStratified) {
+            int spp = sampleIndex + 1;
+            int factor = int(std::sqrt(spp));
+            while ((spp % factor) != 0)
+                --factor;
+
+            ParallelFor2D(pixelBounds, [&](Point2i pPixel) {
+                int pixelIndex = (pPixel.x - pixelBounds.pMin.x) +
+                                 (pPixel.y - pixelBounds.pMin.y) *
+                                     (pixelBounds.pMax.x - pixelBounds.pMin.x);
+                RNG rng(pixelIndex, MixBits(sampleIndex + 1));
+
+                Float v = 0;
+                int nx = factor, ny = spp / factor;
+                for (int x = 0; x < nx; ++x) {
+                    for (int y = 0; y < ny; ++y) {
+                        Point2f u{(x + rng.Uniform<Float>()) / nx,
+                                  (y + rng.Uniform<Float>()) / ny};
+                        v += func(u);
+                    }
+                }
+                // Need spp factor to cancel out division in sumSE computation.
+                sumv[pPixel] = v * spp / (nx * ny);
+            });
+        } else {
+            ParallelFor2D(pixelBounds, [&](Point2i pPixel) {
+                SamplerHandle &sampler = threadSamplers[ThreadIndex];
+                sampler.StartPixelSample(pPixel, sampleIndex, 0);
+
+                Point2f u;
+                if (isHalton) {
+                    int pixelIndex = (pPixel.x - pixelBounds.pMin.x) +
+                                     (pPixel.y - pixelBounds.pMin.y) *
+                                         (pixelBounds.pMax.x - pixelBounds.pMin.x);
+                    CHECK_GE(pixelIndex, 0);
+                    CHECK_LT(pixelIndex, nPixels);
+
+                    switch (baseSampler.Cast<HaltonSampler>()->GetRandomizeStrategy()) {
+                    case RandomizeStrategy::None:
+                        u = Point2f(RadicalInverse(0, sampleIndex),
+                                    RadicalInverse(1, sampleIndex));
+                        break;
+                    case RandomizeStrategy::CranleyPatterson:
+                        u = Point2f(RadicalInverse(0, sampleIndex),
+                                    RadicalInverse(1, sampleIndex)) +
+                            Vector2f(cpRot[0][pixelIndex], cpRot[1][pixelIndex]);
+                        if (u.x >= 1)
+                            u.x -= 1;
+                        if (u.y >= 1)
+                            u.y -= 1;
+                        break;
+                    case RandomizeStrategy::PermuteDigits:
+                        u = Point2f(
+                            ScrambledRadicalInverse(0, sampleIndex,
+                                                    digitPermutations[0][pixelIndex]),
+                            ScrambledRadicalInverse(1, sampleIndex,
+                                                    digitPermutations[1][pixelIndex]));
+                        break;
+                    case RandomizeStrategy::Owen:
+                        u = Point2f(OwenScrambledRadicalInverse(0, sampleIndex,
+                                                                owenHash[0][pixelIndex]),
+                                    OwenScrambledRadicalInverse(1, sampleIndex,
+                                                                owenHash[1][pixelIndex]));
+                        break;
+                    default:
+                        LOG_FATAL("Unhandled randomization strategy");
+                    }
+                } else
+                    u = sampler.Get2D();
+                sumv[pPixel] += func(u);
+            });
+        }
+
+        // Compute average MSE/variance
+        double sumSE = 0;
+        for (double v : sumv)
+            sumSE += Sqr(v / (sampleIndex + 1) - 1);
+        Float mse = sumSE / nPixels;
+
+        if (sampleIndex == 0)
+            firstMSE = mse;
+        result += StringPrintf("%d %f %f\n", sampleIndex + 1, mse, firstMSE / mse);
+        prog.Update();
+    }
+
+    // Make sure that it's basically one...
+    double sum = std::accumulate(sumv.begin(), sumv.end(), 0.);
+    double avg = sum / (double(sumv.size()) * double(nSamples));
+    if (avg < 0.999 || avg > 1.001)
+        Warning("Average estimate is %f, which is suspiciously far from 1.", avg);
+
+    prog.Done();
+
+    WriteFile(outputFilename, result);
+}
+
+std::string FunctionIntegrator::ToString() const {
+    return StringPrintf(
+        "[ FunctionIntegrator outputFilename: %s camera: %s baseSampler: %s ]",
+        outputFilename, camera, baseSampler);
+}
+
 std::unique_ptr<Integrator> Integrator::Create(
     const std::string &name, const ParameterDictionary &parameters, CameraHandle camera,
     SamplerHandle sampler, PrimitiveHandle aggregate, std::vector<LightHandle> lights,
@@ -3363,6 +3580,8 @@ std::unique_ptr<Integrator> Integrator::Create(
     if (name == "path")
         integrator =
             PathIntegrator::Create(parameters, camera, sampler, aggregate, lights, loc);
+    else if (name == "function")
+        integrator = FunctionIntegrator::Create(parameters, camera, sampler, loc);
     else if (name == "simplepath")
         integrator = SimplePathIntegrator::Create(parameters, camera, sampler, aggregate,
                                                   lights, loc);
