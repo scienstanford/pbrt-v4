@@ -21,3 +21,6 @@
 	path = src/ext/openvdb
 	url = https://github.com/AcademySoftwareFoundation/openvdb.git
 	branch = feature/nanovdb
+[submodule "src/ext/eigen"]
+	path = src/ext/eigen
+	url = https://gitlab.com/libeigen/eigen.git
