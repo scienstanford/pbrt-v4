@@ -843,18 +843,16 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
 
         rgb = outputRGBFromSensorRGB * rgb;
 
-<<<<<<< HEAD
         // Add splat value at pixel for radiance
         for (int c = 0; c < NSpectrumSamples; ++c)
             L[c] += splatScale * pixel.L[c] / filterIntegral;
-=======
+
         if (writeFP16 && std::max({rgb.r, rgb.g, rgb.b}) > 65504) {
             if (rgb.r > 65504) rgb.r = 65504;
             if (rgb.g > 65504) rgb.g = 65504;
             if (rgb.b > 65504) rgb.b = 65504;
             ++nClamped;
         }
->>>>>>> upstream/master
 
         Point2i pOffset(p.x - pixelBounds.pMin.x, p.y - pixelBounds.pMin.y);
 
@@ -949,7 +947,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
             new_basis.col(i) = basis.col(i);
         }
 
-<<<<<<< HEAD
+
         MatrixXf coef = spectralData * new_basis;
         
         // write basis and coef out in a binary file
@@ -979,11 +977,11 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
         }
         fclose(basisData);
     }
-=======
+
     if (nClamped.load() > 0)
         Warning("%d pixel values clamped to maximum fp16 value.", nClamped.load());
 
->>>>>>> upstream/master
+
     metadata->pixelBounds = pixelBounds;
     metadata->fullResolution = fullResolution;
     metadata->colorSpace = colorSpace;
