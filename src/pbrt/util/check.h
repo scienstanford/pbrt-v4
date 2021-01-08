@@ -54,7 +54,7 @@ void PrintStackTrace();
 
 #endif  // PBRT_IS_GPU_CODE
 
-#ifndef NDEBUG
+#ifdef PBRT_DEBUG_BUILD
 
 #define DCHECK(x) (CHECK(x))
 #define DCHECK_EQ(a, b) CHECK_EQ(a, b)
@@ -66,15 +66,22 @@ void PrintStackTrace();
 
 #else
 
-#define DCHECK(x)
-#define DCHECK_EQ(a, b)
-#define DCHECK_NE(a, b)
-#define DCHECK_GT(a, b)
-#define DCHECK_GE(a, b)
-#define DCHECK_LT(a, b)
-#define DCHECK_LE(a, b)
+#define EMPTY_CHECK \
+    do {            \
+    } while (false) /* swallow semicolon */
 
-#endif
+// Use an empty check (rather than expanding the macros to nothing) to swallow the
+// semicolon at the end, and avoid empty if-statements.
+#define DCHECK(x) EMPTY_CHECK
+
+#define DCHECK_EQ(a, b) EMPTY_CHECK
+#define DCHECK_NE(a, b) EMPTY_CHECK
+#define DCHECK_GT(a, b) EMPTY_CHECK
+#define DCHECK_GE(a, b) EMPTY_CHECK
+#define DCHECK_LT(a, b) EMPTY_CHECK
+#define DCHECK_LE(a, b) EMPTY_CHECK
+
+#endif  // !defined(NDEBUG)
 
 #define CHECK_RARE_TO_STRING(x) #x
 #define CHECK_RARE_EXPAND_AND_TO_STRING(x) CHECK_RARE_TO_STRING(x)
@@ -104,10 +111,10 @@ void PrintStackTrace();
             ++numTrue;                                                                  \
     } while (0)
 
-#ifdef NDEBUG
-#define DCHECK_RARE(freq, condition)
-#else
+#ifdef PBRT_DEBUG_BUILD
 #define DCHECK_RARE(freq, condition) CHECK_RARE(freq, condition)
+#else
+#define DCHECK_RARE(freq, condition)
 #endif  // NDEBUG
 
 #endif  // PBRT_IS_GPU_CODE

@@ -28,6 +28,7 @@
 #include <nanovdb/util/CudaDeviceBuffer.h>
 #endif  // PBRT_BUILD_GPU_RENDERER
 
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -102,6 +103,7 @@ class HomogeneousMedium {
                                             F callback) const {
         // Normalize ray direction for homogeneous medium sampling
         tMax *= Length(ray.d);
+        if (std::isinf(tMax)) tMax = std::numeric_limits<Float>::max();
         ray.d = Normalize(ray.d);
 
         // Compute _SampledSpectrum_ scattering properties for medium
@@ -379,9 +381,9 @@ class UniformGridMediumProvider {
         // Define _getMaxDensity_ lambda
         auto getMaxDensity = [&](const Bounds3f &bounds) -> Float {
             if (densityGrid)
-                return densityGrid->MaximumValue(bounds);
+                return densityGrid->MaxValue(bounds);
             else
-                return rgbDensityGrid->MaximumValue(
+                return rgbDensityGrid->MaxValue(
                     bounds,
                     [] PBRT_CPU_GPU(RGBUnboundedSpectrum s) { return s.MaxValue(); });
         };

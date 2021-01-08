@@ -46,8 +46,6 @@ class Integrator {
 
     virtual std::string ToString() const = 0;
 
-    const Bounds3f &SceneBounds() const { return sceneBounds; }
-
     virtual void Render() = 0;
 
     pstd::optional<ShapeIntersection> Intersect(const Ray &ray,
@@ -62,27 +60,22 @@ class Integrator {
                        const SampledWavelengths &lambda, RNG &rng) const;
 
     // Integrator Public Members
-    std::vector<LightHandle> lights;
     PrimitiveHandle aggregate;
+    std::vector<LightHandle> lights;
     std::vector<LightHandle> infiniteLights;
 
   protected:
     // Integrator Private Methods
     Integrator(PrimitiveHandle aggregate, std::vector<LightHandle> lights)
-        : lights(lights), aggregate(aggregate) {
-        // Integrator Constructor Implementation
-        if (aggregate)
-            sceneBounds = aggregate.Bounds();
-
+        : aggregate(aggregate), lights(lights) {
+        // Integrator constructor implementation
+        Bounds3f sceneBounds = aggregate.Bounds();
         for (auto &light : lights) {
             light.Preprocess(sceneBounds);
             if (light.Type() == LightType::Infinite)
                 infiniteLights.push_back(light);
         }
     }
-
-    // Integrator Private Members
-    Bounds3f sceneBounds;
 };
 
 // ImageTileIntegrator Definition
@@ -95,7 +88,7 @@ class ImageTileIntegrator : public Integrator {
 
     void Render();
 
-    virtual void EvaluatePixelSample(const Point2i &pPixel, int sampleIndex,
+    virtual void EvaluatePixelSample(Point2i pPixel, int sampleIndex,
                                      SamplerHandle sampler,
                                      ScratchBuffer &scratchBuffer) = 0;
 
@@ -113,8 +106,8 @@ class RayIntegrator : public ImageTileIntegrator {
                   std::vector<LightHandle> lights)
         : ImageTileIntegrator(camera, sampler, aggregate, lights) {}
 
-    void EvaluatePixelSample(const Point2i &pPixel, int sampleIndex,
-                             SamplerHandle sampler, ScratchBuffer &scratchBuffer) final;
+    void EvaluatePixelSample(Point2i pPixel, int sampleIndex, SamplerHandle sampler,
+                             ScratchBuffer &scratchBuffer) final;
 
     virtual SampledSpectrum Li(RayDifferential ray, SampledWavelengths &lambda,
                                SamplerHandle sampler, ScratchBuffer &scratchBuffer,
@@ -315,8 +308,8 @@ class LightPathIntegrator : public ImageTileIntegrator {
     LightPathIntegrator(int maxDepth, CameraHandle camera, SamplerHandle sampler,
                         PrimitiveHandle aggregate, std::vector<LightHandle> lights);
 
-    void EvaluatePixelSample(const Point2i &pPixel, int sampleIndex,
-                             SamplerHandle sampler, ScratchBuffer &scratchBuffer);
+    void EvaluatePixelSample(Point2i pPixel, int sampleIndex, SamplerHandle sampler,
+                             ScratchBuffer &scratchBuffer);
 
     static std::unique_ptr<LightPathIntegrator> Create(
         const ParameterDictionary &parameters, CameraHandle camera, SamplerHandle sampler,

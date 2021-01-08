@@ -160,7 +160,7 @@ void ImageTileIntegrator::Render() {
     if (Options->recordPixelStatistics)
         StatsEnablePixelStats(pixelBounds,
                               RemoveExtension(camera.GetFilm().GetFilename()));
-    // Handle MSE referene image, if provided
+    // Handle MSE reference image, if provided
     pstd::optional<Image> referenceImage;
     FILE *mseOutFile = nullptr;
     if (!Options->mseReferenceImage.empty()) {
@@ -241,59 +241,66 @@ void ImageTileIntegrator::Render() {
         waveEnd = std::min(spp, waveEnd + nextWaveSize);
         if (!referenceImage)
             nextWaveSize = std::min(2 * nextWaveSize, 64);
+        if (waveStart == spp) progress.Done();
 
-        // Write current image to disk
-        LOG_VERBOSE("Writing image with spp = %d", waveStart);
-        ImageMetadata metadata;
-        metadata.renderTimeSeconds = progress.ElapsedSeconds();
-        metadata.samplesPerPixel = waveStart;
-        if (referenceImage) {
-            ImageMetadata filmMetadata;
-            Image filmImage = camera.GetFilm().GetImage(&filmMetadata, 1.f / waveStart);
-            ImageChannelValues mse =
-                filmImage.MSE(filmImage.AllChannelsDesc(), *referenceImage);
-            fprintf(mseOutFile, "%d, %.9g\n", waveStart, mse.Average());
-            metadata.MSE = mse.Average();
-            fflush(mseOutFile);
+        // Optionally write current image to disk
+        if (waveStart == spp || Options->writePartialImages || referenceImage) {
+            LOG_VERBOSE("Writing image with spp = %d", waveStart);
+            ImageMetadata metadata;
+            metadata.renderTimeSeconds = progress.ElapsedSeconds();
+            metadata.samplesPerPixel = waveStart;
+            if (referenceImage) {
+                ImageMetadata filmMetadata;
+                Image filmImage =
+                    camera.GetFilm().GetImage(&filmMetadata, 1.f / waveStart);
+                ImageChannelValues mse =
+                    filmImage.MSE(filmImage.AllChannelsDesc(), *referenceImage);
+                fprintf(mseOutFile, "%d, %.9g\n", waveStart, mse.Average());
+                metadata.MSE = mse.Average();
+                fflush(mseOutFile);
+            }
+            if (waveStart == spp || Options->writePartialImages) {
+                camera.InitMetadata(&metadata);
+                camera.GetFilm().WriteImage(metadata, 1.0f / waveStart);
+            }
         }
+<<<<<<< HEAD
         camera.InitMetadata(&metadata);
         // only write out data at find spp; --zhenyi
         // we might set another global flag to check whether we are writing out basis        
         if (waveStart == spp)
             camera.GetFilm().WriteImage(metadata, 1.0f / waveStart);
+=======
+>>>>>>> upstream/master
     }
 
     if (mseOutFile)
         fclose(mseOutFile);
-    progress.Done();
     DisconnectFromDisplayServer();
     LOG_VERBOSE("Rendering finished");
 }
 
 // RayIntegrator Method Definitions
-void RayIntegrator::EvaluatePixelSample(const Point2i &pPixel, int sampleIndex,
+void RayIntegrator::EvaluatePixelSample(Point2i pPixel, int sampleIndex,
                                         SamplerHandle sampler,
                                         ScratchBuffer &scratchBuffer) {
-    // Initialize _CameraSample_ for current sample
-    FilterHandle filter = camera.GetFilm().GetFilter();
-    CameraSample cameraSample = GetCameraSample(sampler, pPixel, filter);
-
     // Sample wavelengths for the ray
-    Float lu = RadicalInverse(1, sampleIndex) + BlueNoise(47, pPixel);
-    if (lu >= 1)
-        lu -= 1;
+    Float lu = sampler.Get1D();
     if (Options->disableWavelengthJitter)
         lu = 0.5;
     SampledWavelengths lambda = camera.GetFilm().SampleWavelengths(lu);
+
+    // Initialize _CameraSample_ for current sample
+    FilterHandle filter = camera.GetFilm().GetFilter();
+    CameraSample cameraSample = GetCameraSample(sampler, pPixel, filter);
 
     // Generate camera ray for current sample
     pstd::optional<CameraRayDifferential> cameraRay =
         camera.GenerateRayDifferential(cameraSample, lambda);
 
+    // Trace _cameraRay_ if valid
     SampledSpectrum L(0.);
     VisibleSurface visibleSurface;
-    bool initializeVisibleSurface = camera.GetFilm().UsesVisibleSurface();
-    // Trace _cameraRay_ if valid
     if (cameraRay) {
         // Double check that the ray's direction is normalized.
         DCHECK_GT(Length(cameraRay->ray.d), .999f);
@@ -306,6 +313,7 @@ void RayIntegrator::EvaluatePixelSample(const Point2i &pPixel, int sampleIndex,
 
         ++nCameraRays;
         // Evaluate radiance along camera ray
+        bool initializeVisibleSurface = camera.GetFilm().UsesVisibleSurface();
         L = cameraRay->weight * Li(cameraRay->ray, lambda, sampler, scratchBuffer,
                                    initializeVisibleSurface ? &visibleSurface : nullptr);
 
@@ -419,8 +427,8 @@ SampledSpectrum Integrator::Tr(const Interaction &p0, const Interaction &p1,
 }
 
 std::string Integrator::ToString() const {
-    std::string s = StringPrintf("[ Scene aggregate: %s sceneBounds: %s lights[%d]: [ ",
-                                 aggregate, sceneBounds, lights.size());
+    std::string s = StringPrintf("[ Integrator aggregate: %s lights[%d]: [ ", aggregate,
+                                 lights.size());
     for (const auto &l : lights)
         s += StringPrintf("%s, ", l.ToString());
     s += StringPrintf("] infiniteLights[%d]: [ ", infiniteLights.size());
@@ -561,16 +569,11 @@ LightPathIntegrator::LightPathIntegrator(int maxDepth, CameraHandle camera,
     lightSampler = std::make_unique<PowerLightSampler>(lights, Allocator());
 }
 
-void LightPathIntegrator::EvaluatePixelSample(const Point2i &pPixel, int sampleIndex,
+void LightPathIntegrator::EvaluatePixelSample(Point2i pPixel, int sampleIndex,
                                               SamplerHandle sampler,
                                               ScratchBuffer &scratchBuffer) {
-    // Consume first two dimensions from sampler
-    (void)sampler.Get2D();
-
     // Sample wavelengths for the ray
-    Float lu = RadicalInverse(1, sampleIndex) + BlueNoise(47, pPixel);
-    if (lu >= 1)
-        lu -= 1;
+    Float lu = sampler.Get1D();
     if (Options->disableWavelengthJitter)
         lu = 0.5;
     SampledWavelengths lambda = camera.GetFilm().SampleWavelengths(lu);
@@ -1831,9 +1834,10 @@ struct Vertex {
         Float pdf;
         if (IsInfiniteLight()) {
             // Compute planar sampling density for infinite light sources
+            Bounds3f sceneBounds = integrator.aggregate.Bounds();
             Point3f worldCenter;
             Float worldRadius;
-            integrator.SceneBounds().BoundingSphere(&worldCenter, &worldRadius);
+            sceneBounds.BoundingSphere(&worldCenter, &worldRadius);
             pdf = 1 / (Pi * Sqr(worldRadius));
 
         } else if (IsOnSurface()) {
