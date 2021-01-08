@@ -792,6 +792,8 @@ add_custom_command (OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_srgb.cpp
 ######################
 # Main renderer
 
+include_directories (src/ext/eigen)
+
 add_executable (pbrt_exe src/pbrt/cmd/pbrt.cpp)
 add_executable (pbrt::pbrt_exe ALIAS pbrt_exe)
 
@@ -900,7 +902,6 @@ target_compile_options(pbrt_test PUBLIC ${PBRT_CXX_FLAGS})
 add_sanitizers (pbrt_test)
 
 add_test (pbrt_unit_test pbrt_test)
-
 ###############################
 # Installation
 

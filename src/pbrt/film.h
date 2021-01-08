@@ -322,7 +322,8 @@ class GBufferFilm : public FilmBase {
     // GBufferFilm Public Methods
     GBufferFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
                 Float maxComponentValue = Infinity, bool writeFP16 = true,
-                bool writeRadiance = true, bool writeAlbedo = true, bool writePosition = true,
+                bool writeRadiance = true, bool writeBasis = true, int nbasis = 3, 
+                bool writeAlbedo = true, bool writePosition = true,
                 bool writeDz = true, bool writeMaterial = true, bool writeInstance = true,
                 bool writeNormal = true, bool writeNs = true, bool writeVariance = true,
                 bool writeRelativeVariance = true,
@@ -398,7 +399,9 @@ class GBufferFilm : public FilmBase {
     Float maxComponentValue;
     bool writeFP16;
     // zhenyi------
-    bool writeRadiance; 
+    bool writeRadiance;
+    bool writeBasis; 
+    int nbasis;
     bool writeAlbedo;
     bool writePosition;
     bool writeDz;

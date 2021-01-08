@@ -257,7 +257,10 @@ void ImageTileIntegrator::Render() {
             fflush(mseOutFile);
         }
         camera.InitMetadata(&metadata);
-        camera.GetFilm().WriteImage(metadata, 1.0f / waveStart);
+        // only write out data at find spp; --zhenyi
+        // we might set another global flag to check whether we are writing out basis        
+        if (waveStart == spp)
+            camera.GetFilm().WriteImage(metadata, 1.0f / waveStart);
     }
 
     if (mseOutFile)

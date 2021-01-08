@@ -29,7 +29,12 @@
 #include <pbrt/util/transform.h>
 #include <iostream> 
 #include <vector>
+#include <Eigen/Dense>
+
+
 using namespace std; 
+using namespace Eigen;
+
 
 namespace pbrt {
 
@@ -637,7 +642,8 @@ void GBufferFilm::AddSample(const Point2i &pFilm, SampledSpectrum L,
 
 GBufferFilm::GBufferFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
                          Float maxComponentValue, bool writeFP16, 
-                         bool writeRadiance, bool writeAlbedo, bool writePosition,
+                         bool writeRadiance, bool writeBasis, int nbasis,
+                         bool writeAlbedo, bool writePosition,
                          bool writeDz, bool writeMaterial, bool writeInstance,
                          bool writeNormal, bool writeNs, bool writeVariance,
                          bool writeRelativeVariance,
@@ -648,6 +654,8 @@ GBufferFilm::GBufferFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
       maxComponentValue(maxComponentValue),
       writeFP16(writeFP16),
       writeRadiance(writeRadiance),
+      writeBasis(writeBasis),
+      nbasis(nbasis),
       writeAlbedo(writeAlbedo),
       writePosition(writePosition),
       writeDz(writeDz),
@@ -702,6 +710,8 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     // Convert image to RGB and compute final pixel values
     LOG_VERBOSE("Converting image to RGB and computing final weighted pixel values");
     PixelFormat format = writeFP16 ? PixelFormat::Half : PixelFormat::Float;
+    // Only RGB is exported by default; Others are optional;
+    vector<string> channelNames = {"R", "G", "B"};
     // zhenyi
     //---------------------Provide options to select output type---------------------------------
     // create channel names
@@ -713,6 +723,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
                                     "Radiance.C21", "Radiance.C22", "Radiance.C23", "Radiance.C24", "Radiance.C25",
                                     "Radiance.C26", "Radiance.C27", "Radiance.C28", "Radiance.C29", "Radiance.C30",
                                     "Radiance.C31"};
+    string BasisChannelNames[5] = {"Coef.C01", "Coef.C02", "Coef.C03", "Coef.C04", "Coef.C05"};
     string AlbedoChannelNames[3] = {"Albedo.R", "Albedo.G", "Albedo.B"};
     string PositionChannelNames[3] = {"Px", "Py", "Pz"};
     string MaterialChannelNames[1] = {"MaterialId"};
@@ -723,13 +734,16 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     string VarianceChannelNames[3] = {"Variance.R", "Variance.G", "Variance.B"};
     string RelativeVarianceChannelNames[3] = {"RelativeVariance.R", "RelativeVariance.G", "RelativeVariance.B"};
     // check channel flag; 
-    // Only RGB is exported by default; Others are optional;
-    vector<string> channelNames = {"R", "G", "B"};
-    
     if (writeRadiance)
     {
         for (int i = 0; i < 31; i++) {
             channelNames.push_back(RadianceChannelNames[i]);
+        }
+    }
+    if (writeBasis)
+    {
+        for (int i = 0; i < 5; i++) {
+            channelNames.push_back(BasisChannelNames[i]);
         }
     }
     if (writeAlbedo)
@@ -782,11 +796,16 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
             channelNames.push_back(RelativeVarianceChannelNames[i]);
         }
     }
-    
 
     Image image(format, Point2i(pixelBounds.Diagonal()), channelNames); // zhenyi
-
     ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"}); 
+
+    // initialize a matrix for storing spectral data
+    int num_x = pixelBounds.pMax[0];
+    int num_y = pixelBounds.pMax[1];
+    // float spectralData[num_x * num_y][NSpectrumSamples];
+    MatrixXf spectralData(num_x * num_y, NSpectrumSamples);
+
     ParallelFor2D(pixelBounds, [&](Point2i p) {
         Pixel &pixel = pixels[p];
         RGB rgb(pixel.rgbSum[0], pixel.rgbSum[1], pixel.rgbSum[2]);
@@ -811,6 +830,10 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
             rgb[c] += splatScale * pixel.splatRGB[c] / filterIntegral;
 
         rgb = outputRGBFromSensorRGB * rgb;
+
+        // Add splat value at pixel for radiance
+        for (int c = 0; c < NSpectrumSamples; ++c)
+            L[c] += splatScale * pixel.L[c] / filterIntegral;
 
         Point2i pOffset(p.x - pixelBounds.pMin.x, p.y - pixelBounds.pMin.y);
 
@@ -837,6 +860,16 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
                                 L[0], L[1], L[2], L[3], L[4], L[5], 
                                 L[6], L[7], L[8], L[9], L[10], L[11], 
                                 L[12], L[13], L[14], L[15]});
+        }
+        if (writeBasis)
+        {
+            int thisIndex = pOffset.y + num_y * pOffset.x;
+            for (int wave = 0; wave <15; wave++)
+            {      
+                spectralData(thisIndex, wave) = L[wave+16];
+                spectralData(thisIndex, wave+15) = L[wave];   
+            }
+            spectralData(thisIndex, 30) = L[15]; 
         }
         if (writePosition)
         {
@@ -885,7 +918,45 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
                             pixel.varianceEstimator[2].RelativeVariance()});
         }
     });
+    // if writeSpectralBasis is enabled, coefficients file needs to written out seperately
+    if (writeBasis) {
+        Eigen::BDCSVD<MatrixXf> svd(spectralData, ComputeThinV);
+        MatrixXf basis = svd.matrixV();
+        MatrixXf new_basis(basis.rows(), nbasis);
 
+        for (int i = 0; i < nbasis; ++i) {    
+            new_basis.col(i) = basis.col(i);
+        }
+
+        MatrixXf coef = spectralData * new_basis;
+        
+        // write basis and coef out in a binary file
+        int extPos = filename.find_last_of(".");
+        string basisFilename = filename.substr(0,extPos) + "_basis.dat";
+        FILE * basisData;
+        basisData = fopen(basisFilename.c_str(), "wb");
+        
+        ParallelFor2D(pixelBounds, [&](Point2i p) {
+            Point2i pOffset(p.x - pixelBounds.pMin.x, p.y - pixelBounds.pMin.y);
+            for (int col = 0; col < nbasis; ++col) {
+                string thisName = BasisChannelNames[col];
+                ImageChannelDesc basisDesc = image.GetChannelDesc(BasisChannelNames);
+                int this_row = pOffset.y + num_y * pOffset.x;
+                image.SetChannel(p, basisDesc.offset[col], coef(this_row, col));
+            }
+        });
+        
+        //Write binary basis
+        for (int col = 0; col < nbasis; col++)
+        {
+            for (int b_row = 0; b_row < new_basis.rows(); b_row++)
+            {
+                float b = new_basis(b_row, col);
+                fwrite(&b, 1, sizeof(b), basisData);
+            }
+        }
+        fclose(basisData);
+    }
     metadata->pixelBounds = pixelBounds;
     metadata->fullResolution = fullResolution;
     metadata->colorSpace = colorSpace;
@@ -908,6 +979,8 @@ GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
     // zhenyi
     //---------------------------------------------------------------
     bool writeRadiance = parameters.GetOneBool("saveRadiance", true); 
+    bool writeBasis = parameters.GetOneBool("saveRadianceAsBasis", true); 
+    int nbasis = parameters.GetOneInt("numBasis", 3);
     bool writeAlbedo = parameters.GetOneBool("saveAlbedo", false);
     bool writePosition = parameters.GetOneBool("savePosition", false);
     bool writeDz = parameters.GetOneBool("saveDz", false);
@@ -930,7 +1003,8 @@ GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
 
     return alloc.new_object<GBufferFilm>(filmBaseParameters, colorSpace,
                                          maxComponentValue, writeFP16,
-                                         writeRadiance, writeAlbedo, writePosition,
+                                         writeRadiance, writeBasis, nbasis, 
+                                         writeAlbedo, writePosition,
                                          writeDz, writeMaterial, writeInstance,
                                          writeNormal, writeNs, writeVariance,
                                          writeRelativeVariance, alloc);
