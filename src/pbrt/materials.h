@@ -117,10 +117,11 @@ PBRT_CPU_GPU void Bump(TextureEvaluator texEval, FloatTextureHandle displacement
 
     } else {
         // Sample normal map to compute shading normal
+        WrapMode2D wrap(WrapMode::Repeat);
         Point2f uv(ctx.uv[0], 1 - ctx.uv[1]);
-        Vector3f ns(2 * normalMap->BilerpChannel(uv, 0) - 1,
-                    2 * normalMap->BilerpChannel(uv, 1) - 1,
-                    2 * normalMap->BilerpChannel(uv, 2) - 1);
+        Vector3f ns(2 * normalMap->BilerpChannel(uv, 0, wrap) - 1,
+                    2 * normalMap->BilerpChannel(uv, 1, wrap) - 1,
+                    2 * normalMap->BilerpChannel(uv, 2, wrap) - 1);
         ns = Normalize(ns);
         Frame frame = Frame::FromZ(ctx.shading.n);
         ns = frame.FromLocal(ns);
@@ -142,13 +143,14 @@ class DielectricMaterial {
     DielectricMaterial(FloatTextureHandle uRoughness, FloatTextureHandle vRoughness,
                        FloatTextureHandle etaF, SpectrumTextureHandle etaS,
                        FloatTextureHandle displacement, Image *normalMap,
-                       bool remapRoughness)
+                       SpectrumTextureHandle tint, bool remapRoughness)
         : displacement(displacement),
           normalMap(normalMap),
           uRoughness(uRoughness),
           vRoughness(vRoughness),
           etaF(etaF),
           etaS(etaS),
+          tint(tint),
           remapRoughness(remapRoughness) {
         CHECK((bool)etaF ^ (bool)etaS);
     }
@@ -157,7 +159,7 @@ class DielectricMaterial {
 
     template <typename TextureEvaluator>
     PBRT_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
-        return texEval.CanEvaluate({etaF, uRoughness, vRoughness}, {etaS});
+        return texEval.CanEvaluate({etaF, uRoughness, vRoughness}, {etaS, tint});
     }
 
     PBRT_CPU_GPU
@@ -166,7 +168,8 @@ class DielectricMaterial {
     const Image *GetNormalMap() const { return normalMap; }
 
     static DielectricMaterial *Create(const TextureParameterDictionary &parameters,
-                                      const FileLoc *loc, Allocator alloc);
+                                      Image *normalMap, const FileLoc *loc,
+                                      Allocator alloc);
 
     std::string ToString() const;
 
@@ -199,7 +202,8 @@ class DielectricMaterial {
         TrowbridgeReitzDistribution distrib(urough, vrough);
 
         // Return BSDF for dielectric material
-        *bxdf = DielectricInterfaceBxDF(eta, distrib);
+        SampledSpectrum t = tint ? texEval(tint, ctx, lambda) : SampledSpectrum(1.f);
+        *bxdf = DielectricInterfaceBxDF(eta, t, distrib);
         return BSDF(ctx.wo, ctx.n, ctx.ns, ctx.dpdus, bxdf);
     }
 
@@ -209,6 +213,7 @@ class DielectricMaterial {
     Image *normalMap;
     FloatTextureHandle uRoughness, vRoughness, etaF;
     SpectrumTextureHandle etaS;
+    SpectrumTextureHandle tint;
     bool remapRoughness;
 };
 
@@ -258,7 +263,8 @@ class ThinDielectricMaterial {
     const Image *GetNormalMap() const { return normalMap; }
 
     static ThinDielectricMaterial *Create(const TextureParameterDictionary &parameters,
-                                          const FileLoc *loc, Allocator alloc);
+                                          Image *normalMap, const FileLoc *loc,
+                                          Allocator alloc);
 
     template <typename TextureEvaluator>
     PBRT_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
@@ -340,7 +346,7 @@ class MixMaterial {
         if (amt >= 1)
             return materials[1];
 
-        Float u = uint32_t(Hash(ctx.p, ctx.wo)) * 0x1p-32;
+        Float u = uint32_t(Hash(ctx.p, ctx.wo, materials[0], materials[1])) * 0x1p-32;
         return (amt < u) ? materials[0] : materials[1];
     }
 
@@ -464,7 +470,7 @@ class DiffuseMaterial {
     const Image *GetNormalMap() const { return normalMap; }
 
     static DiffuseMaterial *Create(const TextureParameterDictionary &parameters,
-                                   const FileLoc *loc, Allocator alloc);
+                                   Image *normalMap, const FileLoc *loc, Allocator alloc);
 
     template <typename TextureEvaluator>
     PBRT_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
@@ -513,7 +519,7 @@ class ConductorMaterial {
     // ConductorMaterial Public Methods
     template <typename TextureEvaluator>
     PBRT_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
-        return texEval.CanEvaluate({uRoughness, vRoughness}, {eta, k});
+        return texEval.CanEvaluate({uRoughness, vRoughness}, {eta, k, reflectance});
     }
 
     template <typename TextureEvaluator>
@@ -525,22 +531,29 @@ class ConductorMaterial {
             uRough = TrowbridgeReitzDistribution::RoughnessToAlpha(uRough);
             vRough = TrowbridgeReitzDistribution::RoughnessToAlpha(vRough);
         }
-        SampledSpectrum etas = texEval(eta, ctx, lambda);
-        SampledSpectrum ks = texEval(k, ctx, lambda);
-
+        SampledSpectrum etas, ks;
+        if (eta) {
+            etas = texEval(eta, ctx, lambda);
+            ks = texEval(k, ctx, lambda);
+        } else {
+            SampledSpectrum r = texEval(reflectance, ctx, lambda);
+            etas = SampledSpectrum(1.f);
+            ks = 2 * Sqrt(r) / Sqrt(ClampZero(SampledSpectrum(1) - r));
+        }
         TrowbridgeReitzDistribution distrib(uRough, vRough);
         *bxdf = ConductorBxDF(distrib, etas, ks);
         return BSDF(ctx.wo, ctx.n, ctx.ns, ctx.dpdus, bxdf);
     }
 
     ConductorMaterial(SpectrumTextureHandle eta, SpectrumTextureHandle k,
-                      FloatTextureHandle uRoughness, FloatTextureHandle vRoughness,
-                      FloatTextureHandle displacement, Image *normalMap,
-                      bool remapRoughness)
+                      SpectrumTextureHandle reflectance, FloatTextureHandle uRoughness,
+                      FloatTextureHandle vRoughness, FloatTextureHandle displacement,
+                      Image *normalMap, bool remapRoughness)
         : displacement(displacement),
           normalMap(normalMap),
           eta(eta),
           k(k),
+          reflectance(reflectance),
           uRoughness(uRoughness),
           vRoughness(vRoughness),
           remapRoughness(remapRoughness) {}
@@ -553,7 +566,8 @@ class ConductorMaterial {
     const Image *GetNormalMap() const { return normalMap; }
 
     static ConductorMaterial *Create(const TextureParameterDictionary &parameters,
-                                     const FileLoc *loc, Allocator alloc);
+                                     Image *normalMap, const FileLoc *loc,
+                                     Allocator alloc);
 
     template <typename TextureEvaluator>
     PBRT_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
@@ -568,7 +582,7 @@ class ConductorMaterial {
     // ConductorMaterial Private Data
     FloatTextureHandle displacement;
     Image *normalMap;
-    SpectrumTextureHandle eta, k;
+    SpectrumTextureHandle eta, k, reflectance;
     FloatTextureHandle uRoughness, vRoughness;
     bool remapRoughness;
 };
@@ -625,8 +639,9 @@ class CoatedDiffuseMaterial {
         SampledSpectrum a = Clamp(texEval(albedo, ctx, lambda), 0, 1);
         Float gg = Clamp(texEval(g, ctx), -1, 1);
 
-        *bxdf = CoatedDiffuseBxDF(DielectricInterfaceBxDF(e, distrib),
-                                  IdealDiffuseBxDF(r), thick, a, gg, config);
+        *bxdf =
+            CoatedDiffuseBxDF(DielectricInterfaceBxDF(e, SampledSpectrum(1.f), distrib),
+                              IdealDiffuseBxDF(r), thick, a, gg, config);
         return BSDF(ctx.wo, ctx.n, ctx.ns, ctx.dpdus, bxdf);
     }
 
@@ -636,7 +651,8 @@ class CoatedDiffuseMaterial {
     const Image *GetNormalMap() const { return normalMap; }
 
     static CoatedDiffuseMaterial *Create(const TextureParameterDictionary &parameters,
-                                         const FileLoc *loc, Allocator alloc);
+                                         Image *normalMap, const FileLoc *loc,
+                                         Allocator alloc);
 
     template <typename TextureEvaluator>
     PBRT_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, const MaterialEvalContext &ctx,
@@ -670,6 +686,7 @@ class CoatedConductorMaterial {
                             FloatTextureHandle conductorURoughness,
                             FloatTextureHandle conductorVRoughness,
                             SpectrumTextureHandle conductorEta, SpectrumTextureHandle k,
+                            SpectrumTextureHandle reflectance,
                             FloatTextureHandle displacement, Image *normalMap,
                             bool remapRoughness, LayeredBxDFConfig config)
         : displacement(displacement),
@@ -684,6 +701,7 @@ class CoatedConductorMaterial {
           conductorVRoughness(conductorVRoughness),
           conductorEta(conductorEta),
           k(k),
+          reflectance(reflectance),
           remapRoughness(remapRoughness),
           config(config) {}
 
@@ -694,7 +712,7 @@ class CoatedConductorMaterial {
         return texEval.CanEvaluate(
             {interfaceURoughness, interfaceVRoughness, thickness, g, interfaceEta,
              conductorURoughness, conductorVRoughness},
-            {conductorEta, k, albedo});
+            {conductorEta, k, reflectance, albedo});
     }
 
     template <typename TextureEvaluator>
@@ -712,8 +730,16 @@ class CoatedConductorMaterial {
         Float thick = texEval(thickness, ctx);
         Float ieta = texEval(interfaceEta, ctx);
 
-        SampledSpectrum ce = texEval(conductorEta, ctx, lambda);
-        SampledSpectrum ck = texEval(k, ctx, lambda);
+        SampledSpectrum ce, ck;
+        if (conductorEta) {
+            ce = texEval(conductorEta, ctx, lambda);
+            ck = texEval(k, ctx, lambda);
+        } else {
+            SampledSpectrum r = texEval(reflectance, ctx, lambda);
+            ce = SampledSpectrum(1.f);
+            ck = 2 * Sqrt(r) / Sqrt(ClampZero(SampledSpectrum(1) - r));
+        }
+
         Float curough = texEval(conductorURoughness, ctx);
         Float cvrough = texEval(conductorVRoughness, ctx);
         if (remapRoughness) {
@@ -725,9 +751,9 @@ class CoatedConductorMaterial {
         SampledSpectrum a = Clamp(texEval(albedo, ctx, lambda), 0, 1);
         Float gg = Clamp(texEval(g, ctx), -1, 1);
 
-        *bxdf = CoatedConductorBxDF(DielectricInterfaceBxDF(ieta, interfaceDistrib),
-                                    ConductorBxDF(conductorDistrib, ce, ck), thick, a, gg,
-                                    config);
+        *bxdf = CoatedConductorBxDF(
+            DielectricInterfaceBxDF(ieta, SampledSpectrum(1.f), interfaceDistrib),
+            ConductorBxDF(conductorDistrib, ce, ck), thick, a, gg, config);
         return BSDF(ctx.wo, ctx.n, ctx.ns, ctx.dpdus, bxdf);
     }
 
@@ -737,7 +763,8 @@ class CoatedConductorMaterial {
     const Image *GetNormalMap() const { return normalMap; }
 
     static CoatedConductorMaterial *Create(const TextureParameterDictionary &parameters,
-                                           const FileLoc *loc, Allocator alloc);
+                                           Image *normalMap, const FileLoc *loc,
+                                           Allocator alloc);
 
     template <typename TextureEvaluator>
     PBRT_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, const MaterialEvalContext &ctx,
@@ -756,7 +783,7 @@ class CoatedConductorMaterial {
     FloatTextureHandle g;
     SpectrumTextureHandle albedo;
     FloatTextureHandle conductorURoughness, conductorVRoughness;
-    SpectrumTextureHandle conductorEta, k;
+    SpectrumTextureHandle conductorEta, k, reflectance;
     bool remapRoughness;
     LayeredBxDFConfig config;
 };
@@ -811,7 +838,7 @@ class SubsurfaceMaterial {
         TrowbridgeReitzDistribution distrib(urough, vrough);
 
         // Initialize _bsdf_ for smooth or rough dielectric
-        *bxdf = DielectricInterfaceBxDF(eta, distrib);
+        *bxdf = DielectricInterfaceBxDF(eta, SampledSpectrum(1.f), distrib);
         return BSDF(ctx.wo, ctx.n, ctx.ns, ctx.dpdus, bxdf);
     }
 
@@ -846,7 +873,8 @@ class SubsurfaceMaterial {
     static constexpr bool HasSubsurfaceScattering() { return true; }
 
     static SubsurfaceMaterial *Create(const TextureParameterDictionary &parameters,
-                                      const FileLoc *loc, Allocator alloc);
+                                      Image *normalMap, const FileLoc *loc,
+                                      Allocator alloc);
 
     std::string ToString() const;
 
@@ -901,8 +929,8 @@ class DiffuseTransmissionMaterial {
     const Image *GetNormalMap() const { return normalMap; }
 
     static DiffuseTransmissionMaterial *Create(
-        const TextureParameterDictionary &parameters, const FileLoc *loc,
-        Allocator alloc);
+        const TextureParameterDictionary &parameters, Image *normalMap,
+        const FileLoc *loc, Allocator alloc);
 
     template <typename TextureEvaluator>
     PBRT_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
@@ -951,7 +979,8 @@ class MeasuredMaterial {
     const Image *GetNormalMap() const { return normalMap; }
 
     static MeasuredMaterial *Create(const TextureParameterDictionary &parameters,
-                                    const FileLoc *loc, Allocator alloc);
+                                    Image *normalMap, const FileLoc *loc,
+                                    Allocator alloc);
 
     template <typename TextureEvaluator>
     PBRT_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,

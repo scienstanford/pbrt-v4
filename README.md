@@ -1,13 +1,15 @@
 pbrt, Version 4 (Early Release)
 ===============================
 
+[<img src="https://github.com/mmp/pbrt-v4/workflows/ci/badge.svg">](https://github.com/mmp/pbrt-v4/actions)
+
 ![Transparent Machines frame, via @beeple](images/teaser-transparent-machines.png)
 
 This is an early release of pbrt-v4, the rendering system that will be
 described in the (eventually) forthcoming fourth edition of *Physically
 Based Rendering: From Theory to Implementation*.  (We hope to have an
-online version of the book posted late in 2020 and printed books available
-in Spring 2021.)
+online version of the book posted a few months into 2021 and printed books available
+in Summer 2021.)
 
 We are making this code available for hardy adventurers; it's not yet
 extensively documented, but if you're familiar with previous versions of
@@ -155,8 +157,25 @@ intervention is required; an error message will be printed in this case.
 The environment map parameterization has also changed (from equi-rect to an
 equi-area mapping); you can upgrade environment maps using
 ```bash
-$ imgtool makeenv old.exr --outfile new.exr
+$ imgtool makeequiarea old.exr --outfile new.exr
 ```
+
+Converting scenes to pbrt's file format
+---------------------------------------
+
+The best option for importing scenes to pbrt is to use
+[assimp](https://www.assimp.org/), which as of January 21, 2021 includes
+support for exporting to pbrt-v4's file format:
+```bash
+$ assimp export scene.fbx scene.pbrt
+```
+
+While the converter tries to convert materials to pbrt's material model,
+some manual tweaking may be necessary after export.  Furthermore, area
+light sources are not always successfully detected; manual intervention may
+be required for them as well.  Use of pbrt's built-in support for
+converting meshes to use the binary PLY format is also recommended after
+conversion. (`pbrt --toply scene.pbrt > newscene.pbrt`).
 
 Using pbrt on the GPU
 ---------------------

@@ -387,6 +387,55 @@ void ParsedScene::EndOfFiles() {
 
     if (errorExit)
         ErrorExit("Fatal errors during scene construction");
+
+    // LOG_VERBOSE messages about any unused textures..
+    std::set<std::string> unusedFloatTextures, unusedSpectrumTextures;
+    for (const auto f : floatTextures) {
+        CHECK(unusedFloatTextures.find(f.first) == unusedFloatTextures.end());
+        unusedFloatTextures.insert(f.first);
+    }
+    for (const auto s : spectrumTextures) {
+        CHECK(unusedSpectrumTextures.find(s.first) == unusedSpectrumTextures.end());
+        unusedSpectrumTextures.insert(s.first);
+    }
+
+    auto checkVec = [&](const ParsedParameterVector &vec) {
+        for (const ParsedParameter *p : vec) {
+            if (p->type == "texture") {
+                CHECK(!p->strings.empty());
+                if (auto iter = unusedFloatTextures.find(p->strings[0]); iter != unusedFloatTextures.end())
+                    unusedFloatTextures.erase(iter);
+                else if (auto iter = unusedSpectrumTextures.find(p->strings[0]); iter != unusedSpectrumTextures.end())
+                    unusedSpectrumTextures.erase(iter);
+            }
+        }
+    };
+
+    // Walk through everything that uses textures..
+    for (const auto &nm : namedMaterials)
+        checkVec(nm.second.parameters.GetParameterVector());
+    for (const auto &m : materials)
+        checkVec(m.parameters.GetParameterVector());
+    for (const auto &ft : floatTextures)
+        checkVec(ft.second.parameters.GetParameterVector());
+    for (const auto &st : spectrumTextures)
+        checkVec(st.second.parameters.GetParameterVector());
+    for (const auto &s : shapes)
+        checkVec(s.parameters.GetParameterVector());
+    for (const auto &as : animatedShapes)
+        checkVec(as.parameters.GetParameterVector());
+    for (const auto &id : instanceDefinitions) {
+        for (const auto &s : id.second.shapes)
+            checkVec(s.parameters.GetParameterVector());
+        for (const auto &as : id.second.animatedShapes)
+            checkVec(as.parameters.GetParameterVector());
+    }
+
+    // And complain about what's left.
+    for (const std::string &s : unusedFloatTextures)
+        LOG_VERBOSE("%s: float texture unused in scene", s);
+    for (const std::string &s : unusedSpectrumTextures)
+        LOG_VERBOSE("%s: spectrum texture unused in scene", s);
 }
 
 void ParsedScene::Option(const std::string &name, const std::string &value, FileLoc loc) {
@@ -615,6 +664,44 @@ void ParsedScene::CreateMaterials(
     /*const*/ NamedTextures &textures, Allocator alloc,
     std::map<std::string, MaterialHandle> *namedMaterialsOut,
     std::vector<MaterialHandle> *materialsOut) const {
+    // First, load all of the normal maps in parallel.
+    std::set<std::string> normalMapFilenames;
+    for (const auto &nm : namedMaterials) {
+        std::string fn = nm.second.parameters.GetOneString("normalmap", "");
+        if (!fn.empty())
+            normalMapFilenames.insert(fn);
+    }
+    for (const auto &mtl : materials) {
+        std::string fn = mtl.parameters.GetOneString("normalmap", "");
+        if (!fn.empty())
+            normalMapFilenames.insert(fn);
+    }
+
+    std::vector<std::string> normalMapFilenameVector;
+    std::copy(normalMapFilenames.begin(), normalMapFilenames.end(),
+              std::back_inserter(normalMapFilenameVector));
+
+    LOG_VERBOSE("Reading %d normal maps in parallel", normalMapFilenameVector.size());
+    std::map<std::string, Image *> normalMapCache;
+    std::mutex mutex;
+    ParallelFor(0, normalMapFilenameVector.size(), [&](int64_t index) {
+        std::string filename = normalMapFilenameVector[index];
+        ImageAndMetadata immeta =
+            Image::Read(filename, Allocator(), ColorEncodingHandle::Linear);
+        Image &image = immeta.image;
+        ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
+        if (!rgbDesc)
+            ErrorExitDeferred("%s: normal map image must contain R, G, and B channels",
+                              filename);
+        Image *normalMap = alloc.new_object<Image>(alloc);
+        *normalMap = image.SelectChannels(rgbDesc);
+
+        mutex.lock();
+        normalMapCache[filename] = normalMap;
+        mutex.unlock();
+    });
+    LOG_VERBOSE("Done reading normal maps");
+
     // Named materials
     for (const auto &nm : namedMaterials) {
         const std::string &name = nm.first;
@@ -632,18 +719,25 @@ void ParsedScene::CreateMaterials(
                               name);
             continue;
         }
+
+        std::string fn = nm.second.parameters.GetOneString("normalmap", "");
+        Image *normalMap = !fn.empty() ? normalMapCache[fn] : nullptr;
+
         TextureParameterDictionary texDict(&mtl.parameters, &textures);
-        MaterialHandle m =
-            MaterialHandle::Create(type, texDict, *namedMaterialsOut, &mtl.loc, alloc);
+        MaterialHandle m = MaterialHandle::Create(type, texDict, normalMap,
+                                                  *namedMaterialsOut, &mtl.loc, alloc);
         (*namedMaterialsOut)[name] = m;
     }
 
     // Regular materials
     materialsOut->reserve(materials.size());
     for (const auto &mtl : materials) {
+        std::string fn = mtl.parameters.GetOneString("normalmap", "");
+        Image *normalMap = !fn.empty() ? normalMapCache[fn] : nullptr;
+
         TextureParameterDictionary texDict(&mtl.parameters, &textures);
-        MaterialHandle m = MaterialHandle::Create(mtl.name, texDict, *namedMaterialsOut,
-                                                  &mtl.loc, alloc);
+        MaterialHandle m = MaterialHandle::Create(mtl.name, texDict, normalMap,
+                                                  *namedMaterialsOut, &mtl.loc, alloc);
         materialsOut->push_back(m);
     }
 }
@@ -658,6 +752,7 @@ NamedTextures ParsedScene::CreateTextures(Allocator alloc, bool gpu) const {
     // Figure out which textures to load in parallel
     // Need to be careful since two textures can use the same image file;
     // we only want to load it once in that case...
+    int nMissingTextures = 0;
     for (size_t i = 0; i < floatTextures.size(); ++i) {
         const auto &tex = floatTextures[i];
 
@@ -675,6 +770,10 @@ NamedTextures ParsedScene::CreateTextures(Allocator alloc, bool gpu) const {
             ResolveFilename(tex.second.parameters.GetOneString("filename", ""));
         if (filename.empty())
             continue;
+        if (!FileExists(filename)) {
+            Error(&tex.second.loc, "%s: file not found.", filename);
+            ++nMissingTextures;
+        }
 
         if (seenFloatTextureFilenames.find(filename) == seenFloatTextureFilenames.end()) {
             seenFloatTextureFilenames.insert(filename);
@@ -699,6 +798,10 @@ NamedTextures ParsedScene::CreateTextures(Allocator alloc, bool gpu) const {
             ResolveFilename(tex.second.parameters.GetOneString("filename", ""));
         if (filename.empty())
             continue;
+        if (!FileExists(filename)) {
+            Error(&tex.second.loc, "%s: file not found.", filename);
+            ++nMissingTextures;
+        }
 
         if (seenSpectrumTextureFilenames.find(filename) ==
             seenSpectrumTextureFilenames.end()) {
@@ -707,6 +810,9 @@ NamedTextures ParsedScene::CreateTextures(Allocator alloc, bool gpu) const {
         } else
             serialSpectrumTextures.push_back(i);
     }
+
+    if (nMissingTextures > 0)
+        ErrorExit("%d missing textures", nMissingTextures);
 
     LOG_VERBOSE("Loading %d,%d textures in parallel, %d,%d serially",
                 parallelFloatTextures.size(), parallelSpectrumTextures.size(),

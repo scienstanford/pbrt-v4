@@ -105,14 +105,8 @@ template <int N>
 class SquareMatrix;
 
 // Math Inline Functions
-PBRT_CPU_GPU
-inline Float Lerp(Float t, Float a, Float b) {
-    return (1 - t) * a + t * b;
-}
-
 // http://www.plunk.org/~hatch/rightway.php
-PBRT_CPU_GPU
-inline Float SinXOverX(Float x) {
+PBRT_CPU_GPU inline Float SinXOverX(Float x) {
     if (1 + x * x == 1)
         return 1;
     return std::sin(x) / x;
@@ -133,6 +127,10 @@ inline Float WindowedSinc(Float x, Float radius, Float tau) {
     if (std::abs(x) > radius)
         return 0;
     return Sinc(x) * Sinc(x / tau);
+}
+
+PBRT_CPU_GPU inline Float Lerp(Float x, Float a, Float b) {
+    return (1 - x) * a + x * b;
 }
 
 #ifdef PBRT_IS_MSVC
@@ -247,45 +245,6 @@ PBRT_CPU_GPU inline constexpr Float EvaluatePolynomial(Float t, C c) {
 template <typename Float, typename C, typename... Args>
 PBRT_CPU_GPU inline constexpr Float EvaluatePolynomial(Float t, C c, Args... cRemaining) {
     return FMA(t, EvaluatePolynomial(t, cRemaining...), c);
-}
-
-PBRT_CPU_GPU
-inline Float ApproxSin(Float x);
-PBRT_CPU_GPU
-inline Float ApproxCos(Float x);
-
-PBRT_CPU_GPU
-inline Float ApproxSin(Float x) {
-#ifdef PBRT_IS_GPU_CODE
-    return __sinf(x * (Pi / 4));
-#else
-    DCHECK_RARE(1e-5, x < 0 || x > 2);
-    x = Clamp(x, 0, 2);
-
-    // Coefficients for minimax approximation of sin(x*pi/4), x=[0,2].
-    const float s1 = 0.7853975892066955566406250000000000f;
-    const float s2 = -0.0807407423853874206542968750000000f;
-    const float s3 = 0.0024843954015523195266723632812500f;
-    const float s4 = -0.0000341485538228880614042282104492f;
-    return EvaluatePolynomial(x * x, s1, s2, s3, s4) * x;
-#endif
-}
-
-PBRT_CPU_GPU
-inline Float ApproxCos(Float x) {
-#ifdef PBRT_IS_GPU_CODE
-    return __cosf(x * (Pi / 4));
-#else
-    DCHECK_RARE(1e-5, x < 0 || x > 2);
-    x = Clamp(x, 0, 2);
-
-    // Coefficients for minimax approximation of cos(x*pi/4), x=[0,2].
-    const float c1 = 0.9999932952821962577665326692990000f;
-    const float c2 = -0.3083711259464511647371969120320000f;
-    const float c3 = 0.0157862649459062213825197189573000f;
-    const float c4 = -0.0002983708648233575495551227373110f;
-    return EvaluatePolynomial(x * x, c1, c2, c3, c4);
-#endif
 }
 
 PBRT_CPU_GPU
@@ -566,8 +525,7 @@ InnerProduct(T... terms) {
     return Float(ip);
 }
 
-PBRT_CPU_GPU
-inline bool Quadratic(float a, float b, float c, float *t0, float *t1) {
+PBRT_CPU_GPU inline bool Quadratic(float a, float b, float c, float *t0, float *t1) {
     // Handle case of $a=0$ for quadratic solution
     if (a == 0) {
         *t0 = *t1 = -c / b;
@@ -1145,9 +1103,9 @@ PBRT_CPU_GPU inline Interval SumSquares(Interval i, Args... args) {
 }
 
 PBRT_CPU_GPU
-Vector3f EqualAreaSquareToSphere(const Point2f &p);
+Vector3f EqualAreaSquareToSphere(Point2f p);
 PBRT_CPU_GPU
-Point2f EqualAreaSphereToSquare(const Vector3f &v);
+Point2f EqualAreaSphereToSquare(Vector3f v);
 PBRT_CPU_GPU
 Point2f WrapEqualAreaSquare(Point2f p);
 

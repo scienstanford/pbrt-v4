@@ -197,8 +197,9 @@ class DielectricInterfaceBxDF {
     // DielectricInterfaceBxDF Public Methods
     DielectricInterfaceBxDF() = default;
     PBRT_CPU_GPU
-    DielectricInterfaceBxDF(Float eta, const TrowbridgeReitzDistribution &mfDistrib)
-        : eta(eta == 1 ? 1.001 : eta), mfDistrib(mfDistrib) {}
+    DielectricInterfaceBxDF(Float eta, SampledSpectrum tint,
+                            const TrowbridgeReitzDistribution &mfDistrib)
+        : eta(eta == 1 ? 1.001 : eta), tint(tint), mfDistrib(mfDistrib) {}
 
     PBRT_CPU_GPU
     BxDFFlags Flags() const {
@@ -229,6 +230,7 @@ class DielectricInterfaceBxDF {
   private:
     // DielectricInterfaceBxDF Private Members
     Float eta;
+    SampledSpectrum tint;
     TrowbridgeReitzDistribution mfDistrib;
 };
 
@@ -266,7 +268,7 @@ class ThinDielectricBxDF {
             return {};
 
         if (uc < pr / (pr + pt)) {
-            // Sample perfect specular reflection at interface
+            // Sample perfect specular reflection at thin dielectric interface
             Vector3f wi(-wo.x, -wo.y, wo.z);
             SampledSpectrum fr(R / AbsCosTheta(wi));
             return BSDFSample(fr, wi, pr / (pr + pt), BxDFFlags::SpecularReflection);
@@ -941,8 +943,6 @@ class CoatedDiffuseBxDF : public LayeredBxDF<DielectricInterfaceBxDF, IdealDiffu
     using LayeredBxDF::LayeredBxDF;
     PBRT_CPU_GPU
     static constexpr const char *Name() { return "CoatedDiffuseBxDF"; }
-
-    friend class SOA<CoatedDiffuseBxDF>;
 };
 
 // CoatedConductorBxDF Definition
@@ -952,8 +952,6 @@ class CoatedConductorBxDF : public LayeredBxDF<DielectricInterfaceBxDF, Conducto
     PBRT_CPU_GPU
     static constexpr const char *Name() { return "CoatedConductorBxDF"; }
     using LayeredBxDF::LayeredBxDF;
-
-    friend class SOA<CoatedConductorBxDF>;
 };
 
 // HairBxDF Definition

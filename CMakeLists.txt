@@ -15,6 +15,7 @@ list (INSERT CMAKE_MODULE_PATH 0 "${CMAKE_SOURCE_DIR}/cmake")
 option (PBRT_FLOAT_AS_DOUBLE "Use 64-bit floats" OFF)
 option (PBRT_BUILD_NATIVE_EXECUTABLE "Build executable optimized for CPU architecture of system pbrt was built on" ON)
 option (PBRT_NVTX "Insert NVTX annotations for NVIDIA Profiling and Debugging Tools" OFF)
+option (PBRT_USE_PREGENERATED_RGB_TO_SPECTRUM_TABLES "Use pregenerated rgbspectrum_*.cpp files rather than running rgb2spec_opt to generate them at build time" OFF)
 set (PBRT_OPTIX7_PATH "" CACHE PATH "Path to OptiX 7 SDK")
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -152,6 +153,8 @@ if (CMAKE_CUDA_COMPILER)
 
     if ("${PBRT_OPTIX7_PATH}" STREQUAL "")
         message (WARNING "Found CUDA but PBRT_OPTIX7_PATH is not set. Disabling GPU compilation.")
+    elseif (CMAKE_SYSTEM_NAME STREQUAL Windows)
+        message (FATAL_ERROR "pbrt on the GPU is not currently supported on Windows--sorry! It has worked in the past, but is now buggy. It will be necessary for someone to debug the current issues and send a PR for it to be re-enabled (we don't currently have the bandwidth to do so).")
     else ()
         enable_language (CUDA)
         list (APPEND PBRT_DEFINITIONS "PBRT_BUILD_GPU_RENDERER")
@@ -783,21 +786,23 @@ target_compile_definitions (rgb2spec_opt PRIVATE ${PBRT_DEFINITIONS})
 target_compile_options (rgb2spec_opt PUBLIC ${PBRT_CXX_FLAGS})
 target_link_libraries (rgb2spec_opt PRIVATE ${CMAKE_THREAD_LIBS_INIT} pbrt_warnings)
 
-add_custom_command (OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_aces.cpp
-    COMMAND rgb2spec_opt 64 ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_aces.cpp ACES2065_1 
-    DEPENDS rgb2spec_opt)
+if (NOT PBRT_USE_PREGENERATED_RGB_TO_SPECTRUM_TABLES)
+  add_custom_command (OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_aces.cpp
+      COMMAND rgb2spec_opt 64 ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_aces.cpp ACES2065_1 
+      DEPENDS rgb2spec_opt)
 
-add_custom_command (OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_dci_p3.cpp
-    COMMAND rgb2spec_opt 64 ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_dci_p3.cpp DCI_P3
-    DEPENDS rgb2spec_opt)
+  add_custom_command (OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_dci_p3.cpp
+      COMMAND rgb2spec_opt 64 ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_dci_p3.cpp DCI_P3
+      DEPENDS rgb2spec_opt)
 
-add_custom_command (OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_rec2020.cpp
-    COMMAND rgb2spec_opt 64 ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_rec2020.cpp REC2020
-    DEPENDS rgb2spec_opt)
+  add_custom_command (OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_rec2020.cpp
+      COMMAND rgb2spec_opt 64 ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_rec2020.cpp REC2020
+      DEPENDS rgb2spec_opt)
 
-add_custom_command (OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_srgb.cpp
-    COMMAND rgb2spec_opt 64 ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_srgb.cpp sRGB
-    DEPENDS rgb2spec_opt)
+  add_custom_command (OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_srgb.cpp
+      COMMAND rgb2spec_opt 64 ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_srgb.cpp sRGB
+      DEPENDS rgb2spec_opt)
+endif ()
 
 ######################
 # Main renderer
@@ -844,17 +849,6 @@ target_include_directories (pspec PRIVATE src src/ext)
 target_link_libraries (pspec PRIVATE ${ALL_PBRT_LIBS})
 
 add_sanitizers (pspec)
-
-######################
-# obj2pbrt
-
-add_executable (obj2pbrt src/pbrt/cmd/obj2pbrt.cpp)
-
-target_compile_definitions (obj2pbrt PRIVATE ${PBRT_DEFINITIONS})
-target_compile_options (obj2pbrt PRIVATE ${PBRT_CXX_FLAGS})
-target_link_libraries (obj2pbrt PRIVATE pbrt_warnings)
-
-add_sanitizers (obj2pbrt)
 
 ######################
 # cyhair2pbrt
@@ -921,7 +915,6 @@ install (TARGETS
   pbrt_exe
   imgtool
   pspec
-  obj2pbrt
   cyhair2pbrt
   DESTINATION
   bin

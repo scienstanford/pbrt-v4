@@ -18,7 +18,7 @@ namespace pbrt {
 
 // Transform Function Definitions
 // clang-format off
-Transform Translate(const Vector3f &delta) {
+Transform Translate(Vector3f delta) {
     SquareMatrix<4> m(1, 0, 0, delta.x,
                       0, 1, 0, delta.y,
                       0, 0, 1, delta.z,
@@ -78,13 +78,13 @@ Transform RotateZ(Float theta) {
 }
 // clang-format on
 
-Transform LookAt(const Point3f &pos, const Point3f &look, const Vector3f &up) {
-    SquareMatrix<4> cameraToWorld;
+Transform LookAt(Point3f pos, Point3f look, Vector3f up) {
+    SquareMatrix<4> worldFromCamera;
     // Initialize fourth column of viewing matrix
-    cameraToWorld[0][3] = pos.x;
-    cameraToWorld[1][3] = pos.y;
-    cameraToWorld[2][3] = pos.z;
-    cameraToWorld[3][3] = 1;
+    worldFromCamera[0][3] = pos.x;
+    worldFromCamera[1][3] = pos.y;
+    worldFromCamera[2][3] = pos.z;
+    worldFromCamera[3][3] = 1;
 
     // Initialize first three columns of viewing matrix
     Vector3f dir = Normalize(look - pos);
@@ -95,24 +95,24 @@ Transform LookAt(const Point3f &pos, const Point3f &look, const Vector3f &up) {
                   up.x, up.y, up.z, dir.x, dir.y, dir.z);
     Vector3f right = Normalize(Cross(Normalize(up), dir));
     Vector3f newUp = Cross(dir, right);
-    cameraToWorld[0][0] = right.x;
-    cameraToWorld[1][0] = right.y;
-    cameraToWorld[2][0] = right.z;
-    cameraToWorld[3][0] = 0.;
-    cameraToWorld[0][1] = newUp.x;
-    cameraToWorld[1][1] = newUp.y;
-    cameraToWorld[2][1] = newUp.z;
-    cameraToWorld[3][1] = 0.;
-    cameraToWorld[0][2] = dir.x;
-    cameraToWorld[1][2] = dir.y;
-    cameraToWorld[2][2] = dir.z;
-    cameraToWorld[3][2] = 0.;
+    worldFromCamera[0][0] = right.x;
+    worldFromCamera[1][0] = right.y;
+    worldFromCamera[2][0] = right.z;
+    worldFromCamera[3][0] = 0.;
+    worldFromCamera[0][1] = newUp.x;
+    worldFromCamera[1][1] = newUp.y;
+    worldFromCamera[2][1] = newUp.z;
+    worldFromCamera[3][1] = 0.;
+    worldFromCamera[0][2] = dir.x;
+    worldFromCamera[1][2] = dir.y;
+    worldFromCamera[2][2] = dir.z;
+    worldFromCamera[3][2] = 0.;
 
-    pstd::optional<SquareMatrix<4>> worldToCamera = Inverse(cameraToWorld);
+    pstd::optional<SquareMatrix<4>> cameraFromWorld = Inverse(worldFromCamera);
 #ifdef PBRT_DEBUG_BUILD
-    DCHECK(worldToCamera);
+    DCHECK(cameraFromWorld);
 #endif
-    return Transform(*worldToCamera, cameraToWorld);
+    return Transform(*cameraFromWorld, worldFromCamera);
 }
 
 Transform Orthographic(Float zNear, Float zFar) {
@@ -998,7 +998,7 @@ RayDifferential AnimatedTransform::operator()(const RayDifferential &r,
     }
 }
 
-Point3f AnimatedTransform::operator()(const Point3f &p, Float time) const {
+Point3f AnimatedTransform::operator()(Point3f p, Float time) const {
     if (!actuallyAnimated || time <= startTime)
         return startTransform(p);
     else if (time >= endTime)
@@ -1007,7 +1007,7 @@ Point3f AnimatedTransform::operator()(const Point3f &p, Float time) const {
     return t(p);
 }
 
-Vector3f AnimatedTransform::operator()(const Vector3f &v, Float time) const {
+Vector3f AnimatedTransform::operator()(Vector3f v, Float time) const {
     if (!actuallyAnimated || time <= startTime)
         return startTransform(v);
     else if (time >= endTime)
@@ -1016,7 +1016,7 @@ Vector3f AnimatedTransform::operator()(const Vector3f &v, Float time) const {
     return t(v);
 }
 
-Normal3f AnimatedTransform::operator()(const Normal3f &n, Float time) const {
+Normal3f AnimatedTransform::operator()(Normal3f n, Float time) const {
     if (!actuallyAnimated || time <= startTime)
         return startTransform(n);
     else if (time >= endTime)
@@ -1097,7 +1097,7 @@ Bounds3f AnimatedTransform::MotionBounds(const Bounds3f &b) const {
     return bounds;
 }
 
-Bounds3f AnimatedTransform::BoundPointMotion(const Point3f &p) const {
+Bounds3f AnimatedTransform::BoundPointMotion(Point3f p) const {
     if (!actuallyAnimated)
         return Bounds3f(startTransform(p));
     Bounds3f bounds(startTransform(p), endTransform(p));
