@@ -32,7 +32,9 @@ namespace pbrt {
 #define OneMinusEpsilon FloatOneMinusEpsilon
 #endif
 
-#define Infinity std::numeric_limits<Float>::infinity()
+// #define Infinity std::numeric_limits<Float>::infinity()
+// confict with eigen lib --zhenyi
+static constexpr Float Infinity = std::numeric_limits<Float>::infinity();
 #define MachineEpsilon std::numeric_limits<Float>::epsilon() * 0.5f
 
 #else

@@ -33,7 +33,6 @@
 
 
 using namespace std; 
-using namespace Eigen;
 
 
 namespace pbrt {
@@ -818,7 +817,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     int num_x = pixelBounds.pMax[0];
     int num_y = pixelBounds.pMax[1];
     // float spectralData[num_x * num_y][NSpectrumSamples];
-    MatrixXf spectralData(num_x * num_y, NSpectrumSamples);
+    Eigen::MatrixXf spectralData(num_x * num_y, NSpectrumSamples);
 
     std::atomic<int> nClamped{0};
     ParallelFor2D(pixelBounds, [&](Point2i p) {
@@ -945,16 +944,16 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     });
     // if writeSpectralBasis is enabled, coefficients file needs to written out seperately
     if (writeBasis) {
-        Eigen::BDCSVD<MatrixXf> svd(spectralData, ComputeThinV);
-        MatrixXf basis = svd.matrixV();
-        MatrixXf new_basis(basis.rows(), nbasis);
+        Eigen::BDCSVD<Eigen::MatrixXf> svd(spectralData, Eigen::ComputeThinV);
+        Eigen::MatrixXf basis = svd.matrixV();
+        Eigen::MatrixXf new_basis(basis.rows(), nbasis);
 
         for (int i = 0; i < nbasis; ++i) {    
             new_basis.col(i) = basis.col(i);
         }
 
 
-        MatrixXf coef = spectralData * new_basis;
+        Eigen::MatrixXf coef = spectralData * new_basis;
         
         // write basis and coef out in a binary file
         int extPos = filename.find_last_of(".");
