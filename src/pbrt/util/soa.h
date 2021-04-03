@@ -22,13 +22,12 @@
 namespace pbrt {
 
 struct alignas(16) Float4 {
-    // TODO: float vs Float
-    float v[4];
+    Float v[4];
 };
 
 PBRT_CPU_GPU
 inline Float4 Load4(const Float4 *p) {
-#ifdef PBRT_IS_GPU_CODE
+#if defined(PBRT_IS_GPU_CODE) && !defined(PBRT_FLOAT_AS_DOUBLE)
     float4 v = *(const float4 *)p;
     return {{v.x, v.y, v.z, v.w}};
 #else
@@ -38,7 +37,7 @@ inline Float4 Load4(const Float4 *p) {
 
 PBRT_CPU_GPU
 inline void Store4(Float4 *p, Float4 v) {
-#ifdef PBRT_IS_GPU_CODE
+#if defined(PBRT_IS_GPU_CODE) && !defined(PBRT_FLOAT_AS_DOUBLE)
     *(float4 *)p = make_float4(v.v[0], v.v[1], v.v[2], v.v[3]);
 #else
     *p = v;
@@ -53,7 +52,11 @@ class SOA<SampledSpectrum> {
         nAlloc = n4 * size;
         ptr = alloc.allocate_object<Float4>(nAlloc);
     }
-
+    SOA &operator=(const SOA& s) {
+        nAlloc = s.nAlloc;
+        ptr = s.ptr;
+        return *this;
+    }
     PBRT_CPU_GPU
     SampledSpectrum operator[](int i) const {
         int offset = n4 * i;
@@ -110,6 +113,12 @@ class SOA<SampledWavelengths> {
         nAlloc = n4 * size;
         lambda = alloc.allocate_object<Float4>(nAlloc);
         pdf = alloc.allocate_object<Float4>(nAlloc);
+    }
+    SOA &operator=(const SOA& s) {
+        nAlloc = s.nAlloc;
+        lambda = s.lambda;
+        pdf = s.pdf;
+        return *this;
     }
 
     PBRT_CPU_GPU

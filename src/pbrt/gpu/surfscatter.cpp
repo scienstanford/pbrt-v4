@@ -45,45 +45,45 @@ struct EvaluateMaterialCallback {
     int depth;
     GPUPathIntegrator *integrator;
     // EvaluateMaterialCallback Public Methods
-    template <typename Material>
+    template <typename Mtl>
     void operator()() {
-        if constexpr (!std::is_same_v<Material, MixMaterial>)
-            integrator->EvaluateMaterialAndBSDF<Material>(depth);
+        if constexpr (!std::is_same_v<Mtl, MixMaterial>)
+            integrator->EvaluateMaterialAndBSDF<Mtl>(depth);
     }
 };
 
 // GPUPathIntegrator Surface Scattering Methods
 void GPUPathIntegrator::EvaluateMaterialsAndBSDFs(int depth) {
-    MaterialHandle::ForEachType(EvaluateMaterialCallback{depth, this});
+    ForEachType(EvaluateMaterialCallback{depth, this}, Material::Types());
 }
 
-template <typename Material>
+template <typename Mtl>
 void GPUPathIntegrator::EvaluateMaterialAndBSDF(int depth) {
-    if (haveBasicEvalMaterial[MaterialHandle::TypeIndex<Material>()])
-        EvaluateMaterialAndBSDF<Material>(BasicTextureEvaluator(), basicEvalMaterialQueue,
-                                          depth);
-    if (haveUniversalEvalMaterial[MaterialHandle::TypeIndex<Material>()])
-        EvaluateMaterialAndBSDF<Material>(UniversalTextureEvaluator(),
-                                          universalEvalMaterialQueue, depth);
+    if (haveBasicEvalMaterial[Material::TypeIndex<Mtl>()])
+        EvaluateMaterialAndBSDF<Mtl>(BasicTextureEvaluator(), basicEvalMaterialQueue,
+                                     depth);
+    if (haveUniversalEvalMaterial[Material::TypeIndex<Mtl>()])
+        EvaluateMaterialAndBSDF<Mtl>(UniversalTextureEvaluator(),
+                                     universalEvalMaterialQueue, depth);
 }
 
-template <typename Material, typename TextureEvaluator>
+template <typename Mtl, typename TextureEvaluator>
 void GPUPathIntegrator::EvaluateMaterialAndBSDF(TextureEvaluator texEval,
                                                 MaterialEvalQueue *evalQueue, int depth) {
     // Construct _name_ for material/texture evaluator kernel
     std::string name = StringPrintf(
-        "%s + BxDF Eval (%s tex)", Material::Name(),
+        "%s + BxDF Eval (%s tex)", Mtl::Name(),
         std::is_same_v<TextureEvaluator, BasicTextureEvaluator> ? "Basic" : "Universal");
 
     RayQueue *nextRayQueue = NextRayQueue(depth);
     ForAllQueued(
-        name.c_str(), evalQueue->Get<MaterialEvalWorkItem<Material>>(), maxQueueSize,
-        PBRT_GPU_LAMBDA(const MaterialEvalWorkItem<Material> w) {
+        name.c_str(), evalQueue->Get<MaterialEvalWorkItem<Mtl>>(), maxQueueSize,
+        PBRT_GPU_LAMBDA(const MaterialEvalWorkItem<Mtl> w) {
             // Evaluate material and BSDF for ray intersection
             // Apply bump mapping if material has a displacement texture
             Normal3f ns = w.ns;
             Vector3f dpdus = w.dpdus;
-            FloatTextureHandle displacement = w.material->GetDisplacement();
+            FloatTexture displacement = w.material->GetDisplacement();
             const Image *normalMap = w.material->GetNormalMap();
             if (displacement || normalMap) {
                 if (displacement)
@@ -98,9 +98,11 @@ void GPUPathIntegrator::EvaluateMaterialAndBSDF(TextureEvaluator texEval,
             // Get BSDF at intersection point
             SampledWavelengths lambda = w.lambda;
             MaterialEvalContext ctx = w.GetMaterialEvalContext(ns, dpdus);
-            using BxDF = typename Material::BxDF;
+            using BxDF = typename Mtl::BxDF;
             BxDF bxdf;
             BSDF bsdf = w.material->GetBSDF(texEval, ctx, lambda, &bxdf);
+            if (lambda.SecondaryTerminated())
+                pixelSampleState.lambda[w.pixelIndex] = lambda;
 
             // Regularize BSDF, if appropriate
             if (regularize && w.anyNonSpecularBounces)
@@ -227,7 +229,7 @@ void GPUPathIntegrator::EvaluateMaterialAndBSDF(TextureEvaluator texEval,
                     lightSampler.Sample(ctx, raySamples.direct.uc);
                 if (!sampledLight)
                     return;
-                LightHandle light = sampledLight->light;
+                Light light = sampledLight->light;
 
                 // Sample light source and evaluate BSDF for direct lighting
                 pstd::optional<LightLiSample> ls = light.SampleLi(
@@ -259,7 +261,7 @@ void GPUPathIntegrator::EvaluateMaterialAndBSDF(TextureEvaluator texEval,
                 SampledSpectrum lightPathPDF = w.uniPathPDF * lightPDF;
 
                 // Enqueue shadow ray with tentative radiance contribution
-                SampledSpectrum Ld = SafeDiv(T_hat * ls->L, lambda.PDF());
+                SampledSpectrum Ld = T_hat * ls->L;
                 Ray ray = SpawnRayTo(w.pi, w.n, w.time, ls->pLight.pi, ls->pLight.n);
                 // Initialize _ray_ medium if media are present
                 if (haveMedia)

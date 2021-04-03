@@ -26,7 +26,7 @@ namespace pbrt {
 #define DoubleOneMinusEpsilon 0x1.fffffffffffffp-1
 #define FloatOneMinusEpsilon float(0x1.fffffep-1)
 
-#ifdef PBRT_FLOAT_IS_DOUBLE
+#ifdef PBRT_FLOAT_AS_DOUBLE
 #define OneMinusEpsilon DoubleOneMinusEpsilon
 #else
 #define OneMinusEpsilon FloatOneMinusEpsilon
@@ -46,7 +46,7 @@ static constexpr Float MachineEpsilon = std::numeric_limits<Float>::epsilon() * 
 
 static constexpr double DoubleOneMinusEpsilon = 0x1.fffffffffffffp-1;
 static constexpr float FloatOneMinusEpsilon = 0x1.fffffep-1;
-#ifdef PBRT_FLOAT_IS_DOUBLE
+#ifdef PBRT_FLOAT_AS_DOUBLE
 static constexpr double OneMinusEpsilon = DoubleOneMinusEpsilon;
 #else
 static constexpr float OneMinusEpsilon = FloatOneMinusEpsilon;
@@ -58,7 +58,11 @@ static constexpr float OneMinusEpsilon = FloatOneMinusEpsilon;
 template <typename T>
 inline PBRT_CPU_GPU typename std::enable_if_t<std::is_floating_point<T>::value, bool>
 IsNaN(T v) {
+#ifdef PBRT_IS_GPU_CODE
+    return isnan(v);
+#else
     return std::isnan(v);
+#endif
 }
 
 template <typename T>
@@ -70,7 +74,11 @@ inline PBRT_CPU_GPU typename std::enable_if_t<std::is_integral<T>::value, bool> 
 template <typename T>
 inline PBRT_CPU_GPU typename std::enable_if_t<std::is_floating_point<T>::value, bool>
 IsInf(T v) {
+#ifdef PBRT_IS_GPU_CODE
+    return isinf(v);
+#else
     return std::isinf(v);
+#endif
 }
 
 template <typename T>
@@ -146,7 +154,7 @@ inline double BitsToFloat(uint64_t ui) {
 PBRT_CPU_GPU
 inline float NextFloatUp(float v) {
     // Handle infinity and negative zero for _NextFloatUp()_
-    if (IsInf(v) && v > 0.)
+    if (IsInf(v) && v > 0.f)
         return v;
     if (v == -0.f)
         v = 0.f;
@@ -181,7 +189,7 @@ inline constexpr Float gamma(int n) {
 
 inline PBRT_CPU_GPU Float AddRoundUp(Float a, Float b) {
 #ifdef PBRT_IS_GPU_CODE
-#ifdef PBRT_FLOAT_IS_DOUBLE
+#ifdef PBRT_FLOAT_AS_DOUBLE
     return __dadd_ru(a, b);
 #else
     return __fadd_ru(a, b);
@@ -192,7 +200,7 @@ inline PBRT_CPU_GPU Float AddRoundUp(Float a, Float b) {
 }
 inline PBRT_CPU_GPU Float AddRoundDown(Float a, Float b) {
 #ifdef PBRT_IS_GPU_CODE
-#ifdef PBRT_FLOAT_IS_DOUBLE
+#ifdef PBRT_FLOAT_AS_DOUBLE
     return __dadd_rd(a, b);
 #else
     return __fadd_rd(a, b);
@@ -211,7 +219,7 @@ inline PBRT_CPU_GPU Float SubRoundDown(Float a, Float b) {
 
 inline PBRT_CPU_GPU Float MulRoundUp(Float a, Float b) {
 #ifdef PBRT_IS_GPU_CODE
-#ifdef PBRT_FLOAT_IS_DOUBLE
+#ifdef PBRT_FLOAT_AS_DOUBLE
     return __dmul_ru(a, b);
 #else
     return __fmul_ru(a, b);
@@ -223,7 +231,7 @@ inline PBRT_CPU_GPU Float MulRoundUp(Float a, Float b) {
 
 inline PBRT_CPU_GPU Float MulRoundDown(Float a, Float b) {
 #ifdef PBRT_IS_GPU_CODE
-#ifdef PBRT_FLOAT_IS_DOUBLE
+#ifdef PBRT_FLOAT_AS_DOUBLE
     return __dmul_rd(a, b);
 #else
     return __fmul_rd(a, b);
@@ -235,7 +243,7 @@ inline PBRT_CPU_GPU Float MulRoundDown(Float a, Float b) {
 
 inline PBRT_CPU_GPU Float DivRoundUp(Float a, Float b) {
 #ifdef PBRT_IS_GPU_CODE
-#ifdef PBRT_FLOAT_IS_DOUBLE
+#ifdef PBRT_FLOAT_AS_DOUBLE
     return __ddiv_ru(a, b);
 #else
     return __fdiv_ru(a, b);
@@ -247,7 +255,7 @@ inline PBRT_CPU_GPU Float DivRoundUp(Float a, Float b) {
 
 inline PBRT_CPU_GPU Float DivRoundDown(Float a, Float b) {
 #ifdef PBRT_IS_GPU_CODE
-#ifdef PBRT_FLOAT_IS_DOUBLE
+#ifdef PBRT_FLOAT_AS_DOUBLE
     return __ddiv_rd(a, b);
 #else
     return __fdiv_rd(a, b);
@@ -259,7 +267,7 @@ inline PBRT_CPU_GPU Float DivRoundDown(Float a, Float b) {
 
 inline PBRT_CPU_GPU Float SqrtRoundUp(Float a) {
 #ifdef PBRT_IS_GPU_CODE
-#ifdef PBRT_FLOAT_IS_DOUBLE
+#ifdef PBRT_FLOAT_AS_DOUBLE
     return __dsqrt_ru(a);
 #else
     return __fsqrt_ru(a);
@@ -271,7 +279,7 @@ inline PBRT_CPU_GPU Float SqrtRoundUp(Float a) {
 
 inline PBRT_CPU_GPU Float SqrtRoundDown(Float a) {
 #ifdef PBRT_IS_GPU_CODE
-#ifdef PBRT_FLOAT_IS_DOUBLE
+#ifdef PBRT_FLOAT_AS_DOUBLE
     return __dsqrt_rd(a);
 #else
     return __fsqrt_rd(a);
@@ -283,7 +291,7 @@ inline PBRT_CPU_GPU Float SqrtRoundDown(Float a) {
 
 inline PBRT_CPU_GPU Float FMARoundUp(Float a, Float b, Float c) {
 #ifdef PBRT_IS_GPU_CODE
-#ifdef PBRT_FLOAT_IS_DOUBLE
+#ifdef PBRT_FLOAT_AS_DOUBLE
     return __fma_ru(a, b, c);  // FIXME: what to do here?
 #else
     return __fma_ru(a, b, c);
@@ -295,7 +303,7 @@ inline PBRT_CPU_GPU Float FMARoundUp(Float a, Float b, Float c) {
 
 inline PBRT_CPU_GPU Float FMARoundDown(Float a, Float b, Float c) {
 #ifdef PBRT_IS_GPU_CODE
-#ifdef PBRT_FLOAT_IS_DOUBLE
+#ifdef PBRT_FLOAT_AS_DOUBLE
     return __fma_rd(a, b, c);  // FIXME: what to do here?
 #else
     return __fma_rd(a, b, c);

@@ -65,8 +65,8 @@ std::string DiffuseBxDF::ToString() const {
     return StringPrintf("[ DiffuseBxDF R: %s T: %s A: %f B: %f ]", R, T, A, B);
 }
 
-template <typename TopBxDF, typename BottomBxDF>
-std::string LayeredBxDF<TopBxDF, BottomBxDF>::ToString() const {
+template <typename TopBxDF, typename BottomBxDF, bool twoSided>
+std::string LayeredBxDF<TopBxDF, BottomBxDF, twoSided>::ToString() const {
     return StringPrintf(
         "[ LayeredBxDF top: %s bottom: %s thickness: %f albedo: %s g: %f ]", top, bottom,
         thickness, albedo, g);
@@ -593,11 +593,6 @@ std::string HairBxDF::ToString() const {
     return StringPrintf("[ HairBxDF h: %f gamma_o: %f eta: %f beta_m: %f beta_n: %f "
                         "v[0]: %f s: %f sigma_a: %s ]",
                         h, gamma_o, eta, beta_m, beta_n, v[0], s, sigma_a);
-}
-
-std::string LayeredBxDFConfig::ToString() const {
-    return StringPrintf("[ LayeredBxDFConfig maxDepth: %d nSamples: %d twoSided: %d",
-                        maxDepth, nSamples, twoSided);
 }
 
 // *****************************************************************************
@@ -1169,9 +1164,9 @@ std::string NormalizedFresnelBxDF::ToString() const {
     return StringPrintf("[ NormalizedFresnelBxDF eta: %f ]", eta);
 }
 
-// BxDFHandle Method Definitions
-SampledSpectrum BxDFHandle::rho(Vector3f wo, pstd::span<const Float> uc,
-                                pstd::span<const Point2f> u2) const {
+// BxDF Method Definitions
+SampledSpectrum BxDF::rho(Vector3f wo, pstd::span<const Float> uc,
+                          pstd::span<const Point2f> u2) const {
     if (wo.z == 0)
         return {};
     SampledSpectrum r(0.);
@@ -1185,8 +1180,8 @@ SampledSpectrum BxDFHandle::rho(Vector3f wo, pstd::span<const Float> uc,
     return r / uc.size();
 }
 
-SampledSpectrum BxDFHandle::rho(pstd::span<const Point2f> u1, pstd::span<const Float> uc,
-                                pstd::span<const Point2f> u2) const {
+SampledSpectrum BxDF::rho(pstd::span<const Point2f> u1, pstd::span<const Float> uc,
+                          pstd::span<const Point2f> u2) const {
     DCHECK_EQ(uc.size(), u1.size());
     DCHECK_EQ(u1.size(), u2.size());
     SampledSpectrum r(0.f);
@@ -1203,12 +1198,12 @@ SampledSpectrum BxDFHandle::rho(pstd::span<const Point2f> u1, pstd::span<const F
     return r / (Pi * uc.size());
 }
 
-std::string BxDFHandle::ToString() const {
+std::string BxDF::ToString() const {
     auto toStr = [](auto ptr) { return ptr->ToString(); };
     return DispatchCPU(toStr);
 }
 
-template class LayeredBxDF<DielectricInterfaceBxDF, IdealDiffuseBxDF>;
-template class LayeredBxDF<DielectricInterfaceBxDF, ConductorBxDF>;
+template class LayeredBxDF<DielectricInterfaceBxDF, IdealDiffuseBxDF, true>;
+template class LayeredBxDF<DielectricInterfaceBxDF, ConductorBxDF, true>;
 
 }  // namespace pbrt

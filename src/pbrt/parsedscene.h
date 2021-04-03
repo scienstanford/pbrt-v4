@@ -35,8 +35,8 @@ struct SceneEntity {
     }
 
     std::string name;
-    ParameterDictionary parameters;
     FileLoc loc;
+    ParameterDictionary parameters;
 };
 
 struct TransformedSceneEntity : public SceneEntity {
@@ -197,21 +197,24 @@ struct LightSceneEntity : public TransformedSceneEntity {
 struct InstanceSceneEntity : public SceneEntity {
     InstanceSceneEntity() = default;
     InstanceSceneEntity(const std::string &name, FileLoc loc,
-                        const AnimatedTransform &renderFromInstanceAnim,
-                        const Transform *renderFromInstance)
+                        const AnimatedTransform &renderFromInstanceAnim)
         : SceneEntity(name, {}, loc),
-          renderFromInstanceAnim(renderFromInstanceAnim),
-          renderFromInstance(renderFromInstance) {}
+          renderFromInstanceAnim(new AnimatedTransform(renderFromInstanceAnim)) {}
+    InstanceSceneEntity(const std::string &name, FileLoc loc,
+                        const Transform *renderFromInstance)
+        : SceneEntity(name, {}, loc), renderFromInstance(renderFromInstance) {}
 
     std::string ToString() const {
         return StringPrintf(
             "[ InstanceSeneEntity name: %s loc: %s "
             "renderFromInstanceAnim: %s renderFromInstance: %s ]",
-            name, loc, renderFromInstanceAnim,
+            name, loc,
+            renderFromInstanceAnim ? renderFromInstanceAnim->ToString()
+                                   : std::string("nullptr"),
             renderFromInstance ? renderFromInstance->ToString() : std::string("nullptr"));
     }
 
-    AnimatedTransform renderFromInstanceAnim;
+    AnimatedTransform *renderFromInstanceAnim;
     const Transform *renderFromInstance;
 };
 
@@ -324,24 +327,29 @@ class ParsedScene : public SceneRepresentation {
 
     void EndOfFiles();
 
+    ParsedScene *CopyForImport();
+    void MergeImported(ParsedScene *);
+
     std::string ToString() const;
 
     NamedTextures CreateTextures(Allocator alloc, bool gpu) const;
 
     void CreateMaterials(/*const*/ NamedTextures &sceneTextures, Allocator alloc,
-                         std::map<std::string, MaterialHandle> *namedMaterials,
-                         std::vector<MaterialHandle> *materials) const;
+                         std::map<std::string, pbrt::Material> *namedMaterials,
+                         std::vector<pbrt::Material> *materials) const;
 
-    std::map<std::string, MediumHandle> CreateMedia(Allocator alloc) const;
+    std::map<std::string, Medium> CreateMedia(Allocator alloc) const;
 
     // ParsedScene Public Members
     SceneEntity film, sampler, integrator, filter, accelerator;
     CameraSceneEntity camera;
     std::vector<std::pair<std::string, SceneEntity>> namedMaterials;
+    std::set<std::string> namedMaterialNames;
     std::vector<SceneEntity> materials;
     std::map<std::string, TransformedSceneEntity> media;
     std::vector<std::pair<std::string, TextureSceneEntity>> floatTextures;
     std::vector<std::pair<std::string, TextureSceneEntity>> spectrumTextures;
+    std::set<std::string> floatTextureNames, spectrumTextureNames;
     std::vector<LightSceneEntity> lights;
     std::vector<SceneEntity> areaLights;
     std::vector<ShapeSceneEntity> shapes;
@@ -377,6 +385,7 @@ class ParsedScene : public SceneRepresentation {
         Float transformStartTime = 0, transformEndTime = 1;
     };
 
+    friend void parse(SceneRepresentation *scene, std::unique_ptr<Tokenizer> t);
     // ParsedScene Private Methods
     class Transform RenderFromObject(int index) const {
         return pbrt::Transform((renderFromWorld * graphicsState.ctm[index]).GetMatrix());

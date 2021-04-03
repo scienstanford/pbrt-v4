@@ -38,31 +38,28 @@ class CompactLightBounds;
 struct LightLiSample;
 struct LightLeSample;
 
-// LightHandle Definition
-class LightHandle : public TaggedPointer<  // Light Source Types
-                        PointLight, DistantLight, ProjectionLight, GoniometricLight,
-                        SpotLight, DiffuseAreaLight, UniformInfiniteLight,
-                        ImageInfiniteLight, PortalImageInfiniteLight
+// Light Definition
+class Light : public TaggedPointer<  // Light Source Types
+                  PointLight, DistantLight, ProjectionLight, GoniometricLight, SpotLight,
+                  DiffuseAreaLight, UniformInfiniteLight, ImageInfiniteLight,
+                  PortalImageInfiniteLight
 
-                        > {
+                  > {
   public:
     // Light Interface
     using TaggedPointer::TaggedPointer;
 
-    static LightHandle Create(const std::string &name,
-                              const ParameterDictionary &parameters,
-                              const Transform &renderFromLight,
-                              const CameraTransform &cameraTransform,
-                              MediumHandle outsideMedium, const FileLoc *loc,
-                              Allocator alloc);
-    static LightHandle CreateArea(const std::string &name,
-                                  const ParameterDictionary &parameters,
-                                  const Transform &renderFromLight,
-                                  const MediumInterface &mediumInterface,
-                                  const ShapeHandle shape, const FileLoc *loc,
-                                  Allocator alloc);
+    static Light Create(const std::string &name, const ParameterDictionary &parameters,
+                        const Transform &renderFromLight,
+                        const CameraTransform &cameraTransform, Medium outsideMedium,
+                        const FileLoc *loc, Allocator alloc);
+    static Light CreateArea(const std::string &name,
+                            const ParameterDictionary &parameters,
+                            const Transform &renderFromLight,
+                            const MediumInterface &mediumInterface, const Shape shape,
+                            const FileLoc *loc, Allocator alloc);
 
-    SampledSpectrum Phi(const SampledWavelengths &lambda) const;
+    SampledSpectrum Phi(SampledWavelengths lambda) const;
 
     PBRT_CPU_GPU inline LightType Type() const;
 
@@ -97,7 +94,7 @@ class LightHandle : public TaggedPointer<  // Light Source Types
 
     // AreaLights only
     PBRT_CPU_GPU
-    void PDF_Le(const Interaction &intr, Vector3f &w, Float *pdfPos, Float *pdfDir) const;
+    void PDF_Le(const Interaction &intr, Vector3f w, Float *pdfPos, Float *pdfDir) const;
 };
 
 }  // namespace pbrt

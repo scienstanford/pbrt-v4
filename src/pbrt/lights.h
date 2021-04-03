@@ -64,7 +64,7 @@ struct LightLeSample {
     }
 
     PBRT_CPU_GPU
-    Float AbsCosTheta(const Vector3f &w) const { return intr ? AbsDot(w, intr->n) : 1; }
+    Float AbsCosTheta(Vector3f w) const { return intr ? AbsDot(w, intr->n) : 1; }
 
     // LightLeSample Public Members
     SampledSpectrum L;
@@ -145,6 +145,7 @@ class LightBase {
                       const SampledWavelengths &lambda) const {
         return SampledSpectrum(0.f);
     }
+
     PBRT_CPU_GPU
     SampledSpectrum Le(const Ray &, const SampledWavelengths &) const {
         return SampledSpectrum(0.f);
@@ -162,17 +163,17 @@ class LightBase {
 class PointLight : public LightBase {
   public:
     // PointLight Public Methods
-    PointLight(Transform renderFromLight, MediumInterface mediumInterface,
-               SpectrumHandle I, Float scale, Allocator alloc)
+    PointLight(Transform renderFromLight, MediumInterface mediumInterface, Spectrum I,
+               Float scale, Allocator alloc)
         : LightBase(LightType::DeltaPosition, renderFromLight, mediumInterface),
           I(I, alloc),
           scale(scale) {}
 
-    static PointLight *Create(const Transform &renderFromLight, MediumHandle medium,
+    static PointLight *Create(const Transform &renderFromLight, Medium medium,
                               const ParameterDictionary &parameters,
                               const RGBColorSpace *colorSpace, const FileLoc *loc,
                               Allocator alloc);
-    SampledSpectrum Phi(const SampledWavelengths &lambda) const;
+    SampledSpectrum Phi(SampledWavelengths lambda) const;
     void Preprocess(const Bounds3f &sceneBounds) {}
 
     PBRT_CPU_GPU
@@ -182,7 +183,7 @@ class PointLight : public LightBase {
     void PDF_Le(const Ray &, Float *pdfPos, Float *pdfDir) const;
 
     PBRT_CPU_GPU
-    void PDF_Le(const Interaction &, Vector3f &w, Float *pdfPos, Float *pdfDir) const {
+    void PDF_Le(const Interaction &, Vector3f w, Float *pdfPos, Float *pdfDir) const {
         LOG_FATAL("Shouldn't be called for non-area lights");
     }
 
@@ -213,7 +214,7 @@ class PointLight : public LightBase {
 class DistantLight : public LightBase {
   public:
     // DistantLight Public Methods
-    DistantLight(const Transform &renderFromLight, SpectrumHandle Lemit, Float scale,
+    DistantLight(const Transform &renderFromLight, Spectrum Lemit, Float scale,
                  Allocator alloc)
         : LightBase(LightType::DeltaDirection, renderFromLight, MediumInterface()),
           Lemit(Lemit, alloc),
@@ -224,7 +225,7 @@ class DistantLight : public LightBase {
                                 const RGBColorSpace *colorSpace, const FileLoc *loc,
                                 Allocator alloc);
 
-    SampledSpectrum Phi(const SampledWavelengths &lambda) const;
+    SampledSpectrum Phi(SampledWavelengths lambda) const;
 
     PBRT_CPU_GPU
     Float PDF_Li(LightSampleContext, Vector3f, LightSamplingMode mode) const { return 0; }
@@ -236,7 +237,7 @@ class DistantLight : public LightBase {
     void PDF_Le(const Ray &, Float *pdfPos, Float *pdfDir) const;
 
     PBRT_CPU_GPU
-    void PDF_Le(const Interaction &, Vector3f &w, Float *pdfPos, Float *pdfDir) const {
+    void PDF_Le(const Interaction &, Vector3f w, Float *pdfPos, Float *pdfDir) const {
         LOG_FATAL("Shouldn't be called for non-area lights");
     }
 
@@ -271,10 +272,10 @@ class ProjectionLight : public LightBase {
   public:
     // ProjectionLight Public Methods
     ProjectionLight(Transform renderFromLight, MediumInterface medium, Image image,
-                    const RGBColorSpace *colorSpace, Float scale, Float fov, Float power,
+                    const RGBColorSpace *colorSpace, Float scale, Float fov,
                     Allocator alloc);
 
-    static ProjectionLight *Create(const Transform &renderFromLight, MediumHandle medium,
+    static ProjectionLight *Create(const Transform &renderFromLight, Medium medium,
                                    const ParameterDictionary &parameters,
                                    const FileLoc *loc, Allocator alloc);
 
@@ -287,7 +288,7 @@ class ProjectionLight : public LightBase {
     PBRT_CPU_GPU
     SampledSpectrum I(Vector3f w, const SampledWavelengths &lambda) const;
 
-    SampledSpectrum Phi(const SampledWavelengths &lambda) const;
+    SampledSpectrum Phi(SampledWavelengths lambda) const;
 
     PBRT_CPU_GPU
     Float PDF_Li(LightSampleContext, Vector3f, LightSamplingMode mode) const;
@@ -299,7 +300,7 @@ class ProjectionLight : public LightBase {
     void PDF_Le(const Ray &, Float *pdfPos, Float *pdfDir) const;
 
     PBRT_CPU_GPU
-    void PDF_Le(const Interaction &, Vector3f &w, Float *pdfPos, Float *pdfDir) const {
+    void PDF_Le(const Interaction &, Vector3f w, Float *pdfPos, Float *pdfDir) const {
         LOG_FATAL("Shouldn't be called for non-area lights");
     }
 
@@ -324,10 +325,10 @@ class GoniometricLight : public LightBase {
   public:
     // GoniometricLight Public Methods
     GoniometricLight(const Transform &renderFromLight,
-                     const MediumInterface &mediumInterface, SpectrumHandle I,
-                     Float scale, Image image, Allocator alloc);
+                     const MediumInterface &mediumInterface, Spectrum I, Float scale,
+                     Image image, Allocator alloc);
 
-    static GoniometricLight *Create(const Transform &renderFromLight, MediumHandle medium,
+    static GoniometricLight *Create(const Transform &renderFromLight, Medium medium,
                                     const ParameterDictionary &parameters,
                                     const RGBColorSpace *colorSpace, const FileLoc *loc,
                                     Allocator alloc);
@@ -339,7 +340,7 @@ class GoniometricLight : public LightBase {
                                            SampledWavelengths lambda,
                                            LightSamplingMode mode) const;
 
-    SampledSpectrum Phi(const SampledWavelengths &lambda) const;
+    SampledSpectrum Phi(SampledWavelengths lambda) const;
 
     PBRT_CPU_GPU
     Float PDF_Li(LightSampleContext, Vector3f, LightSamplingMode mode) const;
@@ -351,7 +352,7 @@ class GoniometricLight : public LightBase {
     void PDF_Le(const Ray &, Float *pdfPos, Float *pdfDir) const;
 
     PBRT_CPU_GPU
-    void PDF_Le(const Interaction &, Vector3f &w, Float *pdfPos, Float *pdfDir) const {
+    void PDF_Le(const Interaction &, Vector3f w, Float *pdfPos, Float *pdfDir) const {
         LOG_FATAL("Shouldn't be called for non-area lights");
     }
 
@@ -360,8 +361,8 @@ class GoniometricLight : public LightBase {
     std::string ToString() const;
 
     PBRT_CPU_GPU
-    SampledSpectrum I(Vector3f wl, const SampledWavelengths &lambda) const {
-        Point2f uv = EqualAreaSphereToSquare(wl);
+    SampledSpectrum I(Vector3f w, const SampledWavelengths &lambda) const {
+        Point2f uv = EqualAreaSphereToSquare(w);
         return scale * Iemit.Sample(lambda) * image.LookupNearestChannel(uv, 0);
     }
 
@@ -378,25 +379,24 @@ class DiffuseAreaLight : public LightBase {
   public:
     // DiffuseAreaLight Public Methods
     DiffuseAreaLight(const Transform &renderFromLight,
-                     const MediumInterface &mediumInterface, SpectrumHandle Le,
-                     Float scale, const ShapeHandle shape, Image image,
-                     const RGBColorSpace *imageColorSpace, bool twoSided,
-                     Allocator alloc);
+                     const MediumInterface &mediumInterface, Spectrum Le, Float scale,
+                     const Shape shape, Image image, const RGBColorSpace *imageColorSpace,
+                     bool twoSided, Allocator alloc);
 
-    static DiffuseAreaLight *Create(const Transform &renderFromLight, MediumHandle medium,
+    static DiffuseAreaLight *Create(const Transform &renderFromLight, Medium medium,
                                     const ParameterDictionary &parameters,
                                     const RGBColorSpace *colorSpace, const FileLoc *loc,
-                                    Allocator alloc, const ShapeHandle shape);
+                                    Allocator alloc, const Shape shape);
 
     void Preprocess(const Bounds3f &sceneBounds) {}
 
-    SampledSpectrum Phi(const SampledWavelengths &lambda) const;
+    SampledSpectrum Phi(SampledWavelengths lambda) const;
 
     PBRT_CPU_GPU
     pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2,
                                            SampledWavelengths &lambda, Float time) const;
     PBRT_CPU_GPU
-    void PDF_Le(const Interaction &, Vector3f &w, Float *pdfPos, Float *pdfDir) const;
+    void PDF_Le(const Interaction &, Vector3f w, Float *pdfPos, Float *pdfDir) const;
 
     pstd::optional<LightBounds> Bounds() const;
 
@@ -415,10 +415,9 @@ class DiffuseAreaLight : public LightBase {
         if (image) {
             // Return _DiffuseAreaLight_ emission using image
             RGB rgb;
-            Point2f st = uv;
-            st[1] = 1 - st[1];
+            uv[1] = 1 - uv[1];
             for (int c = 0; c < 3; ++c)
-                rgb[c] = image.BilerpChannel(st, c);
+                rgb[c] = image.BilerpChannel(uv, c);
             return scale *
                    RGBIlluminantSpectrum(*imageColorSpace, ClampZero(rgb)).Sample(lambda);
 
@@ -436,7 +435,7 @@ class DiffuseAreaLight : public LightBase {
 
   private:
     // DiffuseAreaLight Private Members
-    ShapeHandle shape;
+    Shape shape;
     Float area;
     bool twoSided;
     DenselySampledSpectrum Lemit;
@@ -449,14 +448,14 @@ class DiffuseAreaLight : public LightBase {
 class UniformInfiniteLight : public LightBase {
   public:
     // UniformInfiniteLight Public Methods
-    UniformInfiniteLight(const Transform &renderFromLight, SpectrumHandle Lemit,
-                         Float scale, Allocator alloc);
+    UniformInfiniteLight(const Transform &renderFromLight, Spectrum Lemit, Float scale,
+                         Allocator alloc);
 
     void Preprocess(const Bounds3f &sceneBounds) {
         sceneBounds.BoundingSphere(&sceneCenter, &sceneRadius);
     }
 
-    SampledSpectrum Phi(const SampledWavelengths &lambda) const;
+    SampledSpectrum Phi(SampledWavelengths lambda) const;
 
     PBRT_CPU_GPU
     SampledSpectrum Le(const Ray &ray, const SampledWavelengths &lambda) const;
@@ -474,7 +473,7 @@ class UniformInfiniteLight : public LightBase {
     void PDF_Le(const Ray &, Float *pdfPos, Float *pdfDir) const;
 
     PBRT_CPU_GPU
-    void PDF_Le(const Interaction &, Vector3f &w, Float *pdfPos, Float *pdfDir) const {
+    void PDF_Le(const Interaction &, Vector3f w, Float *pdfPos, Float *pdfDir) const {
         LOG_FATAL("Shouldn't be called for non-area lights");
     }
 
@@ -502,7 +501,7 @@ class ImageInfiniteLight : public LightBase {
         sceneBounds.BoundingSphere(&sceneCenter, &sceneRadius);
     }
 
-    SampledSpectrum Phi(const SampledWavelengths &lambda) const;
+    SampledSpectrum Phi(SampledWavelengths lambda) const;
 
     PBRT_CPU_GPU
     Float PDF_Li(LightSampleContext, Vector3f, LightSamplingMode mode) const;
@@ -514,7 +513,7 @@ class ImageInfiniteLight : public LightBase {
     void PDF_Le(const Ray &, Float *pdfPos, Float *pdfDir) const;
 
     PBRT_CPU_GPU
-    void PDF_Le(const Interaction &, Vector3f &w, Float *pdfPos, Float *pdfDir) const {
+    void PDF_Le(const Interaction &, Vector3f w, Float *pdfPos, Float *pdfDir) const {
         LOG_FATAL("Shouldn't be called for non-area lights");
     }
 
@@ -522,8 +521,8 @@ class ImageInfiniteLight : public LightBase {
 
     PBRT_CPU_GPU
     SampledSpectrum Le(const Ray &ray, const SampledWavelengths &lambda) const {
-        Vector3f wl = Normalize(renderFromLight.ApplyInverse(ray.d));
-        Point2f uv = EqualAreaSphereToSquare(wl);
+        Vector3f wLight = Normalize(renderFromLight.ApplyInverse(ray.d));
+        Point2f uv = EqualAreaSphereToSquare(wLight);
         return Le(uv, lambda);
     }
 
@@ -532,16 +531,18 @@ class ImageInfiniteLight : public LightBase {
                                            SampledWavelengths lambda,
                                            LightSamplingMode mode) const {
         // Find $(u,v)$ sample coordinates in infinite light texture
-        Float mapPDF;
-        Point2f uv = (mode == LightSamplingMode::WithMIS)
-                         ? compensatedDistribution.Sample(u, &mapPDF)
-                         : distribution.Sample(u, &mapPDF);
+        Float mapPDF = 0;
+        Point2f uv;
+        if (mode == LightSamplingMode::WithMIS)
+            uv = compensatedDistribution.Sample(u, &mapPDF);
+        else
+            uv = distribution.Sample(u, &mapPDF);
         if (mapPDF == 0)
             return {};
 
         // Convert infinite light sample point to direction
-        Vector3f wl = EqualAreaSquareToSphere(uv);
-        Vector3f wi = renderFromLight(wl);
+        Vector3f wLight = EqualAreaSquareToSphere(uv);
+        Vector3f wi = renderFromLight(wLight);
 
         // Compute PDF for sampled infinite light direction
         Float pdf = mapPDF / (4 * Pi);
@@ -561,8 +562,8 @@ class ImageInfiniteLight : public LightBase {
         RGB rgb;
         for (int c = 0; c < 3; ++c)
             rgb[c] = image.LookupNearestChannel(uv, c, WrapMode::OctahedralSphere);
-        return scale *
-               RGBIlluminantSpectrum(*imageColorSpace, ClampZero(rgb)).Sample(lambda);
+        RGBIlluminantSpectrum spec(*imageColorSpace, ClampZero(rgb));
+        return scale * spec.Sample(lambda);
     }
 
     // ImageInfiniteLight Private Members
@@ -588,7 +589,7 @@ class PortalImageInfiniteLight : public LightBase {
         sceneBounds.BoundingSphere(&sceneCenter, &sceneRadius);
     }
 
-    SampledSpectrum Phi(const SampledWavelengths &lambda) const;
+    SampledSpectrum Phi(SampledWavelengths lambda) const;
 
     PBRT_CPU_GPU
     SampledSpectrum Le(const Ray &ray, const SampledWavelengths &lambda) const;
@@ -608,7 +609,7 @@ class PortalImageInfiniteLight : public LightBase {
     void PDF_Le(const Ray &, Float *pdfPos, Float *pdfDir) const;
 
     PBRT_CPU_GPU
-    void PDF_Le(const Interaction &, Vector3f &w, Float *pdfPos, Float *pdfDir) const {
+    void PDF_Le(const Interaction &, Vector3f w, Float *pdfPos, Float *pdfDir) const {
         LOG_FATAL("Shouldn't be called for non-area lights");
     }
 
@@ -682,11 +683,10 @@ class PortalImageInfiniteLight : public LightBase {
 class SpotLight : public LightBase {
   public:
     // SpotLight Public Methods
-    SpotLight(const Transform &renderFromLight, const MediumInterface &m,
-              SpectrumHandle I, Float scale, Float totalWidth, Float falloffStart,
-              Allocator alloc);
+    SpotLight(const Transform &renderFromLight, const MediumInterface &m, Spectrum I,
+              Float scale, Float totalWidth, Float falloffStart, Allocator alloc);
 
-    static SpotLight *Create(const Transform &renderFromLight, MediumHandle medium,
+    static SpotLight *Create(const Transform &renderFromLight, Medium medium,
                              const ParameterDictionary &parameters,
                              const RGBColorSpace *colorSpace, const FileLoc *loc,
                              Allocator alloc);
@@ -694,9 +694,9 @@ class SpotLight : public LightBase {
     void Preprocess(const Bounds3f &sceneBounds) {}
 
     PBRT_CPU_GPU
-    SampledSpectrum I(Vector3f w, const SampledWavelengths &) const;
+    SampledSpectrum I(Vector3f w, SampledWavelengths) const;
 
-    SampledSpectrum Phi(const SampledWavelengths &lambda) const;
+    SampledSpectrum Phi(SampledWavelengths lambda) const;
 
     PBRT_CPU_GPU
     Float PDF_Li(LightSampleContext, Vector3f, LightSamplingMode mode) const;
@@ -708,7 +708,7 @@ class SpotLight : public LightBase {
     void PDF_Le(const Ray &, Float *pdfPos, Float *pdfDir) const;
 
     PBRT_CPU_GPU
-    void PDF_Le(const Interaction &, Vector3f &w, Float *pdfPos, Float *pdfDir) const {
+    void PDF_Le(const Interaction &, Vector3f w, Float *pdfPos, Float *pdfDir) const {
         LOG_FATAL("Shouldn't be called for non-area lights");
     }
 
@@ -723,8 +723,8 @@ class SpotLight : public LightBase {
         Point3f p = renderFromLight(Point3f(0, 0, 0));
         Vector3f wi = Normalize(p - ctx.p());
         // Compute incident radiance _Li_ for _SpotLight_
-        Vector3f wl = Normalize(renderFromLight.ApplyInverse(-wi));
-        SampledSpectrum Li = I(wl, lambda) / DistanceSquared(p, ctx.p());
+        Vector3f wLight = Normalize(renderFromLight.ApplyInverse(-wi));
+        SampledSpectrum Li = I(wLight, lambda) / DistanceSquared(p, ctx.p());
 
         if (!Li)
             return {};
@@ -737,34 +737,32 @@ class SpotLight : public LightBase {
     Float scale, cosFalloffStart, cosFalloffEnd;
 };
 
-inline pstd::optional<LightLiSample> LightHandle::SampleLi(LightSampleContext ctx,
-                                                           Point2f u,
-                                                           SampledWavelengths lambda,
-                                                           LightSamplingMode mode) const {
+inline pstd::optional<LightLiSample> Light::SampleLi(LightSampleContext ctx, Point2f u,
+                                                     SampledWavelengths lambda,
+                                                     LightSamplingMode mode) const {
     auto sample = [&](auto ptr) { return ptr->SampleLi(ctx, u, lambda, mode); };
     return Dispatch(sample);
 }
 
-inline Float LightHandle::PDF_Li(LightSampleContext ctx, Vector3f wi,
-                                 LightSamplingMode mode) const {
+inline Float Light::PDF_Li(LightSampleContext ctx, Vector3f wi,
+                           LightSamplingMode mode) const {
     auto pdf = [&](auto ptr) { return ptr->PDF_Li(ctx, wi, mode); };
     return Dispatch(pdf);
 }
 
-inline SampledSpectrum LightHandle::L(Point3f p, Normal3f n, Point2f uv, Vector3f w,
-                                      const SampledWavelengths &lambda) const {
+inline SampledSpectrum Light::L(Point3f p, Normal3f n, Point2f uv, Vector3f w,
+                                const SampledWavelengths &lambda) const {
     CHECK(Type() == LightType::Area);
     auto l = [&](auto ptr) { return ptr->L(p, n, uv, w, lambda); };
     return Dispatch(l);
 }
 
-inline SampledSpectrum LightHandle::Le(const Ray &ray,
-                                       const SampledWavelengths &lambda) const {
+inline SampledSpectrum Light::Le(const Ray &ray, const SampledWavelengths &lambda) const {
     auto le = [&](auto ptr) { return ptr->Le(ray, lambda); };
     return Dispatch(le);
 }
 
-inline LightType LightHandle::Type() const {
+inline LightType Light::Type() const {
     auto t = [&](auto ptr) { return ptr->Type(); };
     return Dispatch(t);
 }

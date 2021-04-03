@@ -10,6 +10,7 @@
 #include <float.h>
 #include <limits.h>
 #include <cassert>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <initializer_list>
@@ -412,44 +413,44 @@ class span {
     size_t n;
 };
 
-template <int &... ExplicitArgumentBarrier, typename T>
+template <int &...ExplicitArgumentBarrier, typename T>
 PBRT_CPU_GPU inline constexpr span<T> MakeSpan(T *ptr, size_t size) noexcept {
     return span<T>(ptr, size);
 }
 
-template <int &... ExplicitArgumentBarrier, typename T>
+template <int &...ExplicitArgumentBarrier, typename T>
 PBRT_CPU_GPU inline span<T> MakeSpan(T *begin, T *end) noexcept {
     return span<T>(begin, end - begin);
 }
 
-template <int &... ExplicitArgumentBarrier, typename C>
+template <int &...ExplicitArgumentBarrier, typename C>
 PBRT_CPU_GPU inline constexpr auto MakeSpan(C &c) noexcept
     -> decltype(MakeSpan(span_internal::GetData(c), c.size())) {
     return MakeSpan(span_internal::GetData(c), c.size());
 }
 
-template <int &... ExplicitArgumentBarrier, typename T, size_t N>
+template <int &...ExplicitArgumentBarrier, typename T, size_t N>
 PBRT_CPU_GPU inline constexpr span<T> MakeSpan(T (&array)[N]) noexcept {
     return span<T>(array, N);
 }
 
-template <int &... ExplicitArgumentBarrier, typename T>
+template <int &...ExplicitArgumentBarrier, typename T>
 PBRT_CPU_GPU inline constexpr span<const T> MakeConstSpan(T *ptr, size_t size) noexcept {
     return span<const T>(ptr, size);
 }
 
-template <int &... ExplicitArgumentBarrier, typename T>
+template <int &...ExplicitArgumentBarrier, typename T>
 PBRT_CPU_GPU inline span<const T> MakeConstSpan(T *begin, T *end) noexcept {
     return span<const T>(begin, end - begin);
 }
 
-template <int &... ExplicitArgumentBarrier, typename C>
+template <int &...ExplicitArgumentBarrier, typename C>
 PBRT_CPU_GPU inline constexpr auto MakeConstSpan(const C &c) noexcept
     -> decltype(MakeSpan(c)) {
     return MakeSpan(c);
 }
 
-template <int &... ExplicitArgumentBarrier, typename T, size_t N>
+template <int &...ExplicitArgumentBarrier, typename T, size_t N>
 PBRT_CPU_GPU inline constexpr span<const T> MakeConstSpan(const T (&array)[N]) noexcept {
     return span<const T>(array, N);
 }
@@ -631,7 +632,7 @@ class polymorphic_allocator {
         deallocate_bytes(p, n * sizeof(T), alignof(T));
     }
     template <class T, class... Args>
-    T *new_object(Args &&... args) {
+    T *new_object(Args &&...args) {
         // NOTE: this doesn't handle constructors that throw exceptions...
         T *p = allocate_object<T>();
         construct(p, std::forward<Args>(args)...);
@@ -644,7 +645,7 @@ class polymorphic_allocator {
     }
 
     template <class T, class... Args>
-    void construct(T *p, Args &&... args) {
+    void construct(T *p, Args &&...args) {
         ::new ((void *)p) T(std::forward<Args>(args)...);
     }
 
@@ -902,12 +903,12 @@ class vector {
     }
 
     template <class... Args>
-    iterator emplace(const_iterator pos, Args &&... args) {
+    iterator emplace(const_iterator pos, Args &&...args) {
         // TODO
         LOG_FATAL("TODO");
     }
     template <class... Args>
-    void emplace_back(Args &&... args) {
+    void emplace_back(Args &&...args) {
         if (nAlloc == nStored)
             reserve(nAlloc == 0 ? 4 : 2 * nAlloc);
 
@@ -975,6 +976,153 @@ class vector {
     T *ptr = nullptr;
     size_t nAlloc = 0, nStored = 0;
 };
+
+template <typename... Ts>
+struct tuple;
+template <>
+struct tuple<> {
+    template <size_t>
+    using type = void;
+};
+
+template <typename T, typename... Ts>
+struct tuple<T, Ts...> : tuple<Ts...> {
+    using Base = tuple<Ts...>;
+
+    tuple() = default;
+    tuple(const tuple &) = default;
+    tuple(tuple &&) = default;
+    tuple &operator=(tuple &&) = default;
+    tuple &operator=(const tuple &) = default;
+
+    tuple(const T &value, const Ts &...values) : Base(values...), value(value) {}
+
+    tuple(T &&value, Ts &&...values)
+        : Base(std::move(values)...), value(std::move(value)) {}
+
+    T value;
+};
+
+template <typename... Ts>
+tuple(Ts &&...) -> tuple<std::decay_t<Ts>...>;
+
+template <size_t I, typename T, typename... Ts>
+PBRT_CPU_GPU auto &get(tuple<T, Ts...> &tuple) {
+    if constexpr (I == 0)
+        return tuple.value;
+    else
+        return get<I - 1, Ts...>(tuple);
+}
+
+template <size_t I, typename T, typename... Ts>
+PBRT_CPU_GPU const auto &get(const tuple<T, Ts...> &tuple) {
+    if constexpr (I == 0)
+        return tuple.value;
+    else
+        return get<I - 1, Ts...>(tuple);
+}
+
+template <typename Req, typename T, typename... Ts>
+PBRT_CPU_GPU auto &get(tuple<T, Ts...> &tuple) {
+    if constexpr (std::is_same_v<Req, T>)
+        return tuple.value;
+    else
+        return get<Req, Ts...>(tuple);
+}
+
+template <typename Req, typename T, typename... Ts>
+PBRT_CPU_GPU const auto &get(const tuple<T, Ts...> &tuple) {
+    if constexpr (std::is_same_v<Req, T>)
+        return tuple.value;
+    else
+        return get<Req, Ts...>(tuple);
+}
+
+template <typename T>
+struct complex {
+    PBRT_CPU_GPU complex(T re) : re(re), im(0) {}
+    PBRT_CPU_GPU complex(T re, T im) : re(re), im(im) {}
+
+    PBRT_CPU_GPU complex operator-() const { return {-re, -im}; }
+
+    PBRT_CPU_GPU complex operator+(complex z) const { return {re + z.re, im + z.im}; }
+
+    PBRT_CPU_GPU complex operator-(complex z) const { return {re - z.re, im - z.im}; }
+
+    PBRT_CPU_GPU complex operator*(complex z) const {
+        return {re * z.re - im * z.im, re * z.im + im * z.re};
+    }
+
+    PBRT_CPU_GPU complex operator/(complex z) const {
+        T scale = 1 / (z.re * z.re + z.im * z.im);
+        return {scale * (re * z.re + im * z.im), scale * (im * z.re - re * z.im)};
+    }
+
+    friend PBRT_CPU_GPU complex operator+(T value, complex z) {
+        return complex(value) + z;
+    }
+
+    friend PBRT_CPU_GPU complex operator-(T value, complex z) {
+        return complex(value) - z;
+    }
+
+    friend PBRT_CPU_GPU complex operator*(T value, complex z) {
+        return complex(value) * z;
+    }
+
+    friend PBRT_CPU_GPU complex operator/(T value, complex z) {
+        return complex(value) / z;
+    }
+
+    T re, im;
+};
+
+PBRT_CPU_GPU inline float sqrt(float f) {
+    return ::sqrtf(f);
+}
+PBRT_CPU_GPU inline double sqrt(double f) {
+    return ::sqrt(f);
+}
+PBRT_CPU_GPU inline float abs(float f) {
+    return ::fabsf(f);
+}
+PBRT_CPU_GPU inline double abs(double f) {
+    return ::fabs(f);
+}
+
+template <typename T>
+PBRT_CPU_GPU T real(const complex<T> &z) {
+    return z.re;
+}
+
+template <typename T>
+PBRT_CPU_GPU T imag(const complex<T> &z) {
+    return z.im;
+}
+
+template <typename T>
+PBRT_CPU_GPU T norm(const complex<T> &z) {
+    return z.re * z.re + z.im * z.im;
+}
+
+template <typename T>
+PBRT_CPU_GPU T abs(const complex<T> &z) {
+    return pstd::sqrt(pstd::norm(z));
+}
+
+template <typename T>
+PBRT_CPU_GPU complex<T> sqrt(const complex<T> &z) {
+    T n = pstd::abs(z), t1 = pstd::sqrt(T(.5) * (n + pstd::abs(z.re))),
+      t2 = T(.5) * z.im / t1;
+
+    if (n == 0)
+        return 0;
+
+    if (z.re >= 0)
+        return {t1, t2};
+    else
+        return {pstd::abs(t2), std::copysign(t1, z.im)};
+}
 
 }  // namespace pstd
 

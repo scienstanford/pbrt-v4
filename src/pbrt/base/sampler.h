@@ -20,7 +20,7 @@ struct CameraSample {
     Point2f pFilm;
     Point2f pLens;
     Float time = 0;
-    Float weight = 1;
+    Float filterWeight = 1;
     std::string ToString() const;
 };
 
@@ -28,26 +28,23 @@ struct CameraSample {
 class HaltonSampler;
 class PaddedSobolSampler;
 class PMJ02BNSampler;
-class RandomSampler;
+class IndependentSampler;
 class SobolSampler;
 class StratifiedSampler;
 class ZSobolSampler;
 class MLTSampler;
 class DebugMLTSampler;
 
-// SamplerHandle Definition
-class SamplerHandle
-    : public TaggedPointer<RandomSampler, StratifiedSampler, HaltonSampler,
-                           PaddedSobolSampler, SobolSampler, ZSobolSampler,
-                           PMJ02BNSampler, MLTSampler, DebugMLTSampler> {
+// Sampler Definition
+class Sampler : public TaggedPointer<IndependentSampler, StratifiedSampler, HaltonSampler,
+                                     PaddedSobolSampler, SobolSampler, ZSobolSampler,
+                                     PMJ02BNSampler, MLTSampler, DebugMLTSampler> {
   public:
     // Sampler Interface
     using TaggedPointer::TaggedPointer;
 
-    static SamplerHandle Create(const std::string &name,
-                                const ParameterDictionary &parameters,
-                                Point2i fullResolution, const FileLoc *loc,
-                                Allocator alloc);
+    static Sampler Create(const std::string &name, const ParameterDictionary &parameters,
+                          Point2i fullResolution, const FileLoc *loc, Allocator alloc);
 
     PBRT_CPU_GPU inline int SamplesPerPixel() const;
 
@@ -59,7 +56,7 @@ class SamplerHandle
 
     PBRT_CPU_GPU inline Point2f GetPixel2D();
 
-    std::vector<SamplerHandle> Clone(int n, Allocator alloc = {});
+    std::vector<Sampler> Clone(int n, Allocator alloc = {});
 
     std::string ToString() const;
 };

@@ -21,17 +21,17 @@
 
 namespace pbrt {
 
-// LightHandleHash Definition
-struct LightHandleHash {
+// LightHash Definition
+struct LightHash {
     PBRT_CPU_GPU
-    size_t operator()(LightHandle lightHandle) const { return Hash(lightHandle.ptr()); }
+    size_t operator()(Light light) const { return Hash(light.ptr()); }
 };
 
 // UniformLightSampler Definition
 class UniformLightSampler {
   public:
     // UniformLightSampler Public Methods
-    UniformLightSampler(pstd::span<const LightHandle> lights, Allocator alloc)
+    UniformLightSampler(pstd::span<const Light> lights, Allocator alloc)
         : lights(lights.begin(), lights.end(), alloc) {}
 
     PBRT_CPU_GPU
@@ -43,7 +43,7 @@ class UniformLightSampler {
     }
 
     PBRT_CPU_GPU
-    Float PDF(LightHandle light) const {
+    Float PDF(Light light) const {
         if (lights.empty())
             return 0;
         return 1.f / lights.size();
@@ -55,22 +55,20 @@ class UniformLightSampler {
     }
 
     PBRT_CPU_GPU
-    Float PDF(const LightSampleContext &ctx, LightHandle light) const {
-        return PDF(light);
-    }
+    Float PDF(const LightSampleContext &ctx, Light light) const { return PDF(light); }
 
     std::string ToString() const { return "UniformLightSampler"; }
 
   private:
     // UniformLightSampler Private Members
-    pstd::vector<LightHandle> lights;
+    pstd::vector<Light> lights;
 };
 
 // PowerLightSampler Definition
 class PowerLightSampler {
   public:
     // PowerLightSampler Public Methods
-    PowerLightSampler(pstd::span<const LightHandle> lights, Allocator alloc);
+    PowerLightSampler(pstd::span<const Light> lights, Allocator alloc);
 
     PBRT_CPU_GPU
     pstd::optional<SampledLight> Sample(Float u) const {
@@ -82,7 +80,7 @@ class PowerLightSampler {
     }
 
     PBRT_CPU_GPU
-    Float PDF(LightHandle light) const {
+    Float PDF(Light light) const {
         if (!aliasTable.size())
             return 0;
         return aliasTable.PDF(lightToIndex[light]);
@@ -94,16 +92,14 @@ class PowerLightSampler {
     }
 
     PBRT_CPU_GPU
-    Float PDF(const LightSampleContext &ctx, LightHandle light) const {
-        return PDF(light);
-    }
+    Float PDF(const LightSampleContext &ctx, Light light) const { return PDF(light); }
 
     std::string ToString() const;
 
   private:
     // PowerLightSampler Private Members
-    pstd::vector<LightHandle> lights;
-    HashMap<LightHandle, size_t, LightHandleHash> lightToIndex;
+    pstd::vector<Light> lights;
+    HashMap<Light, size_t, LightHash> lightToIndex;
     AliasTable aliasTable;
 };
 
@@ -269,13 +265,13 @@ struct alignas(32) LightBVHNode {
 class BVHLightSampler {
   public:
     // BVHLightSampler Public Methods
-    BVHLightSampler(pstd::span<const LightHandle> lights, Allocator alloc);
+    BVHLightSampler(pstd::span<const Light> lights, Allocator alloc);
 
     PBRT_CPU_GPU
     pstd::optional<SampledLight> Sample(const LightSampleContext &ctx, Float u) const {
         // Compute infinite light sampling probability _pInfinite_
         Float pInfinite = Float(infiniteLights.size()) /
-                          Float(infiniteLights.size() + (!nodes.empty() ? 1 : 0));
+                          Float(infiniteLights.size() + (nodes.empty() ? 0 : 1));
 
         if (u < pInfinite) {
             // Sample infinite lights with uniform probability
@@ -294,7 +290,7 @@ class BVHLightSampler {
             Normal3f n = ctx.ns;
             u = std::min<Float>((u - pInfinite) / (1 - pInfinite), OneMinusEpsilon);
             int nodeIndex = 0;
-            Float pdf = (1 - pInfinite);
+            Float pdf = 1 - pInfinite;
 
             while (true) {
                 // Process light BVH node for light sampling
@@ -329,10 +325,10 @@ class BVHLightSampler {
     }
 
     PBRT_CPU_GPU
-    Float PDF(const LightSampleContext &ctx, LightHandle light) const {
+    Float PDF(const LightSampleContext &ctx, Light light) const {
         // Handle infinite _light_ PDF computation
         if (!lightToBitTrail.HasKey(light))
-            return 1.f / (infiniteLights.size() + (!nodes.empty() ? 1 : 0));
+            return 1.f / (infiniteLights.size() + (nodes.empty() ? 0 : 1));
 
         // Initialize local variables for BVH traversal for PDF computation
         uint32_t bitTrail = lightToBitTrail[light];
@@ -364,7 +360,7 @@ class BVHLightSampler {
         // Return final PDF accounting for infinite light sampling probability
         // Compute infinite light sampling probability _pInfinite_
         Float pInfinite = Float(infiniteLights.size()) /
-                          Float(infiniteLights.size() + (!nodes.empty() ? 1 : 0));
+                          Float(infiniteLights.size() + (nodes.empty() ? 0 : 1));
 
         return pdf * (1 - pInfinite);
     }
@@ -378,7 +374,7 @@ class BVHLightSampler {
     }
 
     PBRT_CPU_GPU
-    Float PDF(LightHandle light) const {
+    Float PDF(Light light) const {
         if (lights.empty())
             return 0;
         return 1.f / lights.size();
@@ -397,34 +393,34 @@ class BVHLightSampler {
         Float theta_o = std::acos(b.cosTheta_o), theta_e = std::acos(b.cosTheta_e);
         Float theta_w = std::min(theta_o + theta_e, Pi);
         Float sinTheta_o = SafeSqrt(1 - Sqr(b.cosTheta_o));
-        Float Momega = 2 * Pi * (1 - b.cosTheta_o) +
-                       Pi / 2 *
-                           (2 * theta_w * sinTheta_o - std::cos(theta_o - 2 * theta_w) -
-                            2 * theta_o * sinTheta_o + b.cosTheta_o);
+        Float M_omega = 2 * Pi * (1 - b.cosTheta_o) +
+                        Pi / 2 *
+                            (2 * theta_w * sinTheta_o - std::cos(theta_o - 2 * theta_w) -
+                             2 * theta_o * sinTheta_o + b.cosTheta_o);
 
         // Return complete cost estimate for _LightBounds_
         Float Kr = MaxComponentValue(bounds.Diagonal()) / bounds.Diagonal()[dim];
-        return b.phi * Momega * Kr * b.bounds.SurfaceArea();
+        return b.phi * M_omega * Kr * b.bounds.SurfaceArea();
     }
 
     // BVHLightSampler Private Members
-    pstd::vector<LightHandle> lights;
-    pstd::vector<LightHandle> infiniteLights;
+    pstd::vector<Light> lights;
+    pstd::vector<Light> infiniteLights;
     Bounds3f allLightBounds;
     pstd::vector<LightBVHNode> nodes;
-    HashMap<LightHandle, uint32_t, LightHandleHash> lightToBitTrail;
+    HashMap<Light, uint32_t, LightHash> lightToBitTrail;
 };
 
 // ExhaustiveLightSampler Definition
 class ExhaustiveLightSampler {
   public:
-    ExhaustiveLightSampler(pstd::span<const LightHandle> lights, Allocator alloc);
+    ExhaustiveLightSampler(pstd::span<const Light> lights, Allocator alloc);
 
     PBRT_CPU_GPU
     pstd::optional<SampledLight> Sample(const LightSampleContext &ctx, Float u) const;
 
     PBRT_CPU_GPU
-    Float PDF(const LightSampleContext &ctx, LightHandle light) const;
+    Float PDF(const LightSampleContext &ctx, Light light) const;
 
     PBRT_CPU_GPU
     pstd::optional<SampledLight> Sample(Float u) const {
@@ -436,7 +432,7 @@ class ExhaustiveLightSampler {
     }
 
     PBRT_CPU_GPU
-    Float PDF(LightHandle light) const {
+    Float PDF(Light light) const {
         if (lights.empty())
             return 0;
         return 1.f / lights.size();
@@ -445,29 +441,28 @@ class ExhaustiveLightSampler {
     std::string ToString() const;
 
   private:
-    pstd::vector<LightHandle> lights, boundedLights, infiniteLights;
+    pstd::vector<Light> lights, boundedLights, infiniteLights;
     pstd::vector<LightBounds> lightBounds;
-    HashMap<LightHandle, size_t, LightHandleHash> lightToBoundedIndex;
+    HashMap<Light, size_t, LightHash> lightToBoundedIndex;
 };
 
-inline pstd::optional<SampledLight> LightSamplerHandle::Sample(
-    const LightSampleContext &ctx, Float u) const {
+inline pstd::optional<SampledLight> LightSampler::Sample(const LightSampleContext &ctx,
+                                                         Float u) const {
     auto s = [&](auto ptr) { return ptr->Sample(ctx, u); };
     return Dispatch(s);
 }
 
-inline Float LightSamplerHandle::PDF(const LightSampleContext &ctx,
-                                     LightHandle light) const {
+inline Float LightSampler::PDF(const LightSampleContext &ctx, Light light) const {
     auto pdf = [&](auto ptr) { return ptr->PDF(ctx, light); };
     return Dispatch(pdf);
 }
 
-inline pstd::optional<SampledLight> LightSamplerHandle::Sample(Float u) const {
+inline pstd::optional<SampledLight> LightSampler::Sample(Float u) const {
     auto sample = [&](auto ptr) { return ptr->Sample(u); };
     return Dispatch(sample);
 }
 
-inline Float LightSamplerHandle::PDF(LightHandle light) const {
+inline Float LightSampler::PDF(Light light) const {
     auto pdf = [&](auto ptr) { return ptr->PDF(light); };
     return Dispatch(pdf);
 }

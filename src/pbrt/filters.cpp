@@ -10,7 +10,7 @@
 
 namespace pbrt {
 
-std::string FilterHandle::ToString() const {
+std::string Filter::ToString() const {
     if (ptr() == nullptr)
         return "(nullptr)";
 
@@ -48,8 +48,8 @@ GaussianFilter *GaussianFilter::Create(const ParameterDictionary &parameters,
 
 // Mitchell Filter Method Definitions
 std::string MitchellFilter::ToString() const {
-    return StringPrintf("[ MitchellFilter radius: %s B: %f C: %f sampler: %s ]", radius,
-                        B, C, sampler);
+    return StringPrintf("[ MitchellFilter radius: %s b: %f c: %f sampler: %s ]", radius,
+                        b, c, sampler);
 }
 
 MitchellFilter *MitchellFilter::Create(const ParameterDictionary &parameters,
@@ -106,10 +106,9 @@ TriangleFilter *TriangleFilter::Create(const ParameterDictionary &parameters,
     return alloc.new_object<TriangleFilter>(Vector2f(xw, yw));
 }
 
-FilterHandle FilterHandle::Create(const std::string &name,
-                                  const ParameterDictionary &parameters,
-                                  const FileLoc *loc, Allocator alloc) {
-    FilterHandle filter = nullptr;
+Filter Filter::Create(const std::string &name, const ParameterDictionary &parameters,
+                      const FileLoc *loc, Allocator alloc) {
+    Filter filter = nullptr;
     if (name == "box")
         filter = BoxFilter::Create(parameters, loc, alloc);
     else if (name == "gaussian")
@@ -131,25 +130,25 @@ FilterHandle FilterHandle::Create(const std::string &name,
 }
 
 // FilterSampler Method Definitions
-FilterSampler::FilterSampler(FilterHandle filter, Allocator alloc)
+FilterSampler::FilterSampler(Filter filter, Allocator alloc)
     : domain(Point2f(-filter.Radius()), Point2f(filter.Radius())),
-      values(int(32 * filter.Radius().x), int(32 * filter.Radius().y), alloc),
+      f(int(32 * filter.Radius().x), int(32 * filter.Radius().y), alloc),
       distrib(alloc) {
-    // Tabularize filter function in _values_
-    for (int y = 0; y < values.ySize(); ++y)
-        for (int x = 0; x < values.xSize(); ++x) {
-            Point2f p = domain.Lerp(
-                Point2f((x + 0.5f) / values.xSize(), (y + 0.5f) / values.ySize()));
-            values(x, y) = filter.Evaluate(p);
+    // Tabularize unnormalized filter function in _f_
+    for (int y = 0; y < f.ySize(); ++y)
+        for (int x = 0; x < f.xSize(); ++x) {
+            Point2f p =
+                domain.Lerp(Point2f((x + 0.5f) / f.xSize(), (y + 0.5f) / f.ySize()));
+            f(x, y) = filter.Evaluate(p);
         }
 
     // Compute sampling distribution for filter
-    distrib = PiecewiseConstant2D(values, domain, alloc);
+    distrib = PiecewiseConstant2D(f, domain, alloc);
 }
 
 std::string FilterSampler::ToString() const {
-    return StringPrintf("[ FilterSampler domain: %s values: %s distrib: %s ]", domain,
-                        values, distrib);
+    return StringPrintf("[ FilterSampler domain: %s f: %s distrib: %s ]", domain, f,
+                        distrib);
 }
 
 }  // namespace pbrt

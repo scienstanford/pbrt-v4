@@ -114,7 +114,7 @@ STAT_COUNTER("Scene/Object instances used", nObjectInstancesUsed);
 ParsedScene::ParsedScene() {
     // Set scene defaults
     camera.name = "perspective";
-    sampler.name = "pmj02bn";
+    sampler.name = "zsobol";
     filter.name = "gaussian";
     integrator.name = "volpath";
 
@@ -364,14 +364,12 @@ void ParsedScene::ObjectInstance(const std::string &name, FileLoc loc) {
             RenderFromObject(0) * worldFromRender, graphicsState.transformStartTime,
             RenderFromObject(1) * worldFromRender, graphicsState.transformEndTime);
 
-        instances.push_back(
-            InstanceSceneEntity(name, loc, animatedRenderFromInstance, nullptr));
+        instances.push_back(InstanceSceneEntity(name, loc, animatedRenderFromInstance));
     } else {
         const class Transform *renderFromInstance =
             transformCache.Lookup(RenderFromObject(0) * worldFromRender);
 
-        instances.push_back(
-            InstanceSceneEntity(name, loc, AnimatedTransform(), renderFromInstance));
+        instances.push_back(InstanceSceneEntity(name, loc, renderFromInstance));
     }
 }
 
@@ -403,9 +401,11 @@ void ParsedScene::EndOfFiles() {
         for (const ParsedParameter *p : vec) {
             if (p->type == "texture") {
                 CHECK(!p->strings.empty());
-                if (auto iter = unusedFloatTextures.find(p->strings[0]); iter != unusedFloatTextures.end())
+                if (auto iter = unusedFloatTextures.find(p->strings[0]);
+                    iter != unusedFloatTextures.end())
                     unusedFloatTextures.erase(iter);
-                else if (auto iter = unusedSpectrumTextures.find(p->strings[0]); iter != unusedSpectrumTextures.end())
+                else if (auto iter = unusedSpectrumTextures.find(p->strings[0]);
+                         iter != unusedSpectrumTextures.end())
                     unusedSpectrumTextures.erase(iter);
             }
         }
@@ -431,11 +431,87 @@ void ParsedScene::EndOfFiles() {
             checkVec(as.parameters.GetParameterVector());
     }
 
+    LOG_VERBOSE("Scene stats: %d shapes, %d animated shapes, %d instance definitions, "
+                "%d instance uses, %d lights, %d float textures, %d spectrum textures, "
+                "%d named materials, %d materials",
+                shapes.size(), animatedShapes.size(), instanceDefinitions.size(),
+                instances.size(), lights.size(), floatTextures.size(),
+                spectrumTextures.size(), namedMaterials.size(), materials.size());
+
     // And complain about what's left.
     for (const std::string &s : unusedFloatTextures)
         LOG_VERBOSE("%s: float texture unused in scene", s);
     for (const std::string &s : unusedSpectrumTextures)
         LOG_VERBOSE("%s: spectrum texture unused in scene", s);
+}
+
+ParsedScene *ParsedScene::CopyForImport() {
+    ParsedScene *importScene = new ParsedScene;
+    importScene->renderFromWorld = renderFromWorld;
+    importScene->graphicsState = graphicsState;
+    importScene->currentBlock = currentBlock;
+    return importScene;
+}
+
+void ParsedScene::MergeImported(ParsedScene *importScene) {
+    while (!importScene->pushedGraphicsStates.empty()) {
+        ErrorExitDeferred("Missing end to AttributeBegin");
+        importScene->pushedGraphicsStates.pop_back();
+    }
+
+    errorExit |= importScene->errorExit;
+
+    // Reindex materials in shapes in importScene
+    size_t materialBase = materials.size(), lightBase = lights.size();
+    auto reindex = [materialBase, lightBase](auto &map) {
+        for (auto &shape : map) {
+            if (shape.materialName.empty())
+                shape.materialIndex += materialBase;
+            if (shape.lightIndex >= 0)
+                shape.lightIndex += lightBase;
+        }
+    };
+    reindex(importScene->shapes);
+    reindex(importScene->animatedShapes);
+    for (auto &inst : importScene->instanceDefinitions) {
+        reindex(inst.second.shapes);
+        reindex(inst.second.animatedShapes);
+    }
+
+    auto mergeMap = [this](auto &base, const auto &imported, const char *name) {
+        for (const auto &item : imported) {
+            if (base.find(item.first) != base.end())
+                ErrorExitDeferred(&item.second.loc, "%s: multiply-defined %s.",
+                                  item.first, name);
+            base[item.first] = item.second;
+        }
+    };
+    mergeMap(instanceDefinitions, importScene->instanceDefinitions, "object instance");
+    // mergeMap(namedCoordinateSystems, importScene->namedCoordinateSystems, "named
+    // coordinate system");
+
+    auto mergeSet = [this](auto &base, const auto &imported, const char *name) {
+        for (const auto &item : imported) {
+            if (base.find(item) != base.end())
+                ErrorExitDeferred("%s: multiply-defined %s.", item, name);
+            base.insert(item);
+        }
+    };
+    mergeSet(namedMaterialNames, importScene->namedMaterialNames, "named material");
+    mergeSet(floatTextureNames, importScene->floatTextureNames, "texture");
+    mergeSet(spectrumTextureNames, importScene->spectrumTextureNames, "texture");
+
+    auto mergeVector = [](auto &base, const auto &imported) {
+        base.insert(base.end(), imported.begin(), imported.end());
+    };
+    mergeVector(materials, importScene->materials);
+    mergeVector(namedMaterials, importScene->namedMaterials);
+    mergeVector(floatTextures, importScene->floatTextures);
+    mergeVector(spectrumTextures, importScene->spectrumTextures);
+    mergeVector(lights, importScene->lights);
+    mergeVector(shapes, importScene->shapes);
+    mergeVector(animatedShapes, importScene->animatedShapes);
+    mergeVector(instances, importScene->instances);
 }
 
 void ParsedScene::Option(const std::string &name, const std::string &value, FileLoc loc) {
@@ -605,14 +681,16 @@ void ParsedScene::Texture(const std::string &name, const std::string &type,
         return;
     }
 
+    std::set<std::string> &names =
+        (type == "float") ? floatTextureNames : spectrumTextureNames;
+    if (names.find(name) != names.end()) {
+        ErrorExitDeferred(&loc, "Redefining texture \"%s\".", name);
+        return;
+    }
+    names.insert(name);
+
     std::vector<std::pair<std::string, TextureSceneEntity>> &textures =
         (type == "float") ? floatTextures : spectrumTextures;
-
-    for (const auto &tex : textures)
-        if (tex.first == name) {
-            ErrorExitDeferred(&loc, "Redefining texture \"%s\".", name);
-            return;
-        }
 
     textures.push_back(std::make_pair(
         name, TextureSceneEntity(texname, std::move(dict), loc, RenderFromObject())));
@@ -635,12 +713,11 @@ void ParsedScene::MakeNamedMaterial(const std::string &name, ParsedParameterVect
     ParameterDictionary dict(std::move(params), graphicsState.materialAttributes,
                              graphicsState.colorSpace);
 
-    // Note: O(n). FIXME?
-    for (const auto &nm : namedMaterials)
-        if (nm.first == name) {
-            ErrorExitDeferred(&loc, "%s: named material redefined.", name);
-            return;
-        }
+    if (namedMaterialNames.find(name) != namedMaterialNames.end()) {
+        ErrorExitDeferred(&loc, "%s: named material redefined.", name);
+        return;
+    }
+    namedMaterialNames.insert(name);
 
     namedMaterials.push_back(std::make_pair(name, SceneEntity("", std::move(dict), loc)));
 }
@@ -662,8 +739,8 @@ void ParsedScene::AreaLightSource(const std::string &name, ParsedParameterVector
 
 void ParsedScene::CreateMaterials(
     /*const*/ NamedTextures &textures, Allocator alloc,
-    std::map<std::string, MaterialHandle> *namedMaterialsOut,
-    std::vector<MaterialHandle> *materialsOut) const {
+    std::map<std::string, pbrt::Material> *namedMaterialsOut,
+    std::vector<pbrt::Material> *materialsOut) const {
     // First, load all of the normal maps in parallel.
     std::set<std::string> normalMapFilenames;
     for (const auto &nm : namedMaterials) {
@@ -687,7 +764,7 @@ void ParsedScene::CreateMaterials(
     ParallelFor(0, normalMapFilenameVector.size(), [&](int64_t index) {
         std::string filename = normalMapFilenameVector[index];
         ImageAndMetadata immeta =
-            Image::Read(filename, Allocator(), ColorEncodingHandle::Linear);
+            Image::Read(filename, Allocator(), ColorEncoding::Linear);
         Image &image = immeta.image;
         ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
         if (!rgbDesc)
@@ -724,8 +801,8 @@ void ParsedScene::CreateMaterials(
         Image *normalMap = !fn.empty() ? normalMapCache[fn] : nullptr;
 
         TextureParameterDictionary texDict(&mtl.parameters, &textures);
-        MaterialHandle m = MaterialHandle::Create(type, texDict, normalMap,
-                                                  *namedMaterialsOut, &mtl.loc, alloc);
+        class Material m = Material::Create(type, texDict, normalMap, *namedMaterialsOut,
+                                            &mtl.loc, alloc);
         (*namedMaterialsOut)[name] = m;
     }
 
@@ -736,8 +813,8 @@ void ParsedScene::CreateMaterials(
         Image *normalMap = !fn.empty() ? normalMapCache[fn] : nullptr;
 
         TextureParameterDictionary texDict(&mtl.parameters, &textures);
-        MaterialHandle m = MaterialHandle::Create(mtl.name, texDict, normalMap,
-                                                  *namedMaterialsOut, &mtl.loc, alloc);
+        class Material m = Material::Create(mtl.name, texDict, normalMap,
+                                            *namedMaterialsOut, &mtl.loc, alloc);
         materialsOut->push_back(m);
     }
 }
@@ -761,7 +838,7 @@ NamedTextures ParsedScene::CreateTextures(Allocator alloc, bool gpu) const {
                     "Animated world to texture transforms are not supported. "
                     "Using start transform.");
 
-        if (tex.second.texName != "imagemap") {
+        if (tex.second.texName != "imagemap" && tex.second.texName != "ptex") {
             serialFloatTextures.push_back(i);
             continue;
         }
@@ -789,7 +866,7 @@ NamedTextures ParsedScene::CreateTextures(Allocator alloc, bool gpu) const {
                     "Animated world to texture transforms are not supported. "
                     "Using start transform.");
 
-        if (tex.second.texName != "imagemap") {
+        if (tex.second.texName != "imagemap" && tex.second.texName != "ptex") {
             serialSpectrumTextures.push_back(i);
             continue;
         }
@@ -828,8 +905,8 @@ NamedTextures ParsedScene::CreateTextures(Allocator alloc, bool gpu) const {
         // Pass nullptr for the textures, since they shouldn't be accessed
         // anyway.
         TextureParameterDictionary texDict(&tex.second.parameters, nullptr);
-        FloatTextureHandle t = FloatTextureHandle::Create(
-            tex.second.texName, renderFromTexture, texDict, &tex.second.loc, alloc, gpu);
+        FloatTexture t = FloatTexture::Create(tex.second.texName, renderFromTexture,
+                                              texDict, &tex.second.loc, alloc, gpu);
         std::lock_guard<std::mutex> lock(mutex);
         textures.floatTextures[tex.first] = t;
     });
@@ -840,14 +917,14 @@ NamedTextures ParsedScene::CreateTextures(Allocator alloc, bool gpu) const {
         pbrt::Transform renderFromTexture = tex.second.renderFromObject.startTransform;
         // nullptr for the textures, as above.
         TextureParameterDictionary texDict(&tex.second.parameters, nullptr);
-        SpectrumTextureHandle albedoTex = SpectrumTextureHandle::Create(
-            tex.second.texName, renderFromTexture, texDict, SpectrumType::Albedo,
-            &tex.second.loc, alloc, gpu);
+        SpectrumTexture albedoTex =
+            SpectrumTexture::Create(tex.second.texName, renderFromTexture, texDict,
+                                    SpectrumType::Albedo, &tex.second.loc, alloc, gpu);
         // These should be fast since they should hit the texture cache
-        SpectrumTextureHandle unboundedTex = SpectrumTextureHandle::Create(
-            tex.second.texName, renderFromTexture, texDict, SpectrumType::Unbounded,
-            &tex.second.loc, alloc, gpu);
-        SpectrumTextureHandle illumTex = SpectrumTextureHandle::Create(
+        SpectrumTexture unboundedTex =
+            SpectrumTexture::Create(tex.second.texName, renderFromTexture, texDict,
+                                    SpectrumType::Unbounded, &tex.second.loc, alloc, gpu);
+        SpectrumTexture illumTex = SpectrumTexture::Create(
             tex.second.texName, renderFromTexture, texDict, SpectrumType::Illuminant,
             &tex.second.loc, alloc, gpu);
 
@@ -864,8 +941,8 @@ NamedTextures ParsedScene::CreateTextures(Allocator alloc, bool gpu) const {
 
         pbrt::Transform renderFromTexture = tex.second.renderFromObject.startTransform;
         TextureParameterDictionary texDict(&tex.second.parameters, &textures);
-        FloatTextureHandle t = FloatTextureHandle::Create(
-            tex.second.texName, renderFromTexture, texDict, &tex.second.loc, alloc, gpu);
+        FloatTexture t = FloatTexture::Create(tex.second.texName, renderFromTexture,
+                                              texDict, &tex.second.loc, alloc, gpu);
         textures.floatTextures[tex.first] = t;
     }
     for (size_t index : serialSpectrumTextures) {
@@ -877,13 +954,13 @@ NamedTextures ParsedScene::CreateTextures(Allocator alloc, bool gpu) const {
 
         pbrt::Transform renderFromTexture = tex.second.renderFromObject.startTransform;
         TextureParameterDictionary texDict(&tex.second.parameters, &textures);
-        SpectrumTextureHandle albedoTex = SpectrumTextureHandle::Create(
-            tex.second.texName, renderFromTexture, texDict, SpectrumType::Albedo,
-            &tex.second.loc, alloc, gpu);
-        SpectrumTextureHandle unboundedTex = SpectrumTextureHandle::Create(
-            tex.second.texName, renderFromTexture, texDict, SpectrumType::Unbounded,
-            &tex.second.loc, alloc, gpu);
-        SpectrumTextureHandle illumTex = SpectrumTextureHandle::Create(
+        SpectrumTexture albedoTex =
+            SpectrumTexture::Create(tex.second.texName, renderFromTexture, texDict,
+                                    SpectrumType::Albedo, &tex.second.loc, alloc, gpu);
+        SpectrumTexture unboundedTex =
+            SpectrumTexture::Create(tex.second.texName, renderFromTexture, texDict,
+                                    SpectrumType::Unbounded, &tex.second.loc, alloc, gpu);
+        SpectrumTexture illumTex = SpectrumTexture::Create(
             tex.second.texName, renderFromTexture, texDict, SpectrumType::Illuminant,
             &tex.second.loc, alloc, gpu);
 
@@ -896,8 +973,8 @@ NamedTextures ParsedScene::CreateTextures(Allocator alloc, bool gpu) const {
     return textures;
 }
 
-std::map<std::string, MediumHandle> ParsedScene::CreateMedia(Allocator alloc) const {
-    std::map<std::string, MediumHandle> mediaMap;
+std::map<std::string, Medium> ParsedScene::CreateMedia(Allocator alloc) const {
+    std::map<std::string, Medium> mediaMap;
 
     for (const auto &m : media) {
         std::string type = m.second.parameters.GetOneString("type", "");
@@ -908,9 +985,9 @@ std::map<std::string, MediumHandle> ParsedScene::CreateMedia(Allocator alloc) co
             Warning(&m.second.loc,
                     "Animated transformation provided for medium. Only the "
                     "start transform will be used.");
-        MediumHandle medium = MediumHandle::Create(
-            type, m.second.parameters, m.second.renderFromObject.startTransform,
-            &m.second.loc, alloc);
+        Medium medium = Medium::Create(type, m.second.parameters,
+                                       m.second.renderFromObject.startTransform,
+                                       &m.second.loc, alloc);
         mediaMap[m.first] = medium;
     }
 
@@ -1217,13 +1294,12 @@ void FormattingScene::Texture(const std::string &name, const std::string &type,
                             name);
                         return;
                     }
-                    if (p->numbers.size() != 3) {
+                    if (p->floats.size() != 3) {
                         ErrorExitDeferred(
                             &p->loc, "Didn't find 3 values for \"rgb\" \"%s\".", p->name);
                         return;
                     }
-                    if (p->numbers[0] != p->numbers[1] ||
-                        p->numbers[1] != p->numbers[2]) {
+                    if (p->floats[0] != p->floats[1] || p->floats[1] != p->floats[2]) {
                         ErrorExitDeferred(&p->loc,
                                           "Non-constant \"rgb\" value found for "
                                           "\"scale\" texture parameter \"%s\". Please "
@@ -1236,7 +1312,7 @@ void FormattingScene::Texture(const std::string &name, const std::string &type,
                     foundRGB = true;
                     p->type = "float";
                     p->name = "scale";
-                    p->numbers.resize(1);
+                    p->floats.resize(1);
                 } else {
                     if (foundTexture) {
                         ErrorExitDeferred(
@@ -1551,8 +1627,7 @@ void FormattingScene::NamedMaterial(const std::string &name, FileLoc loc) {
 
 static bool upgradeRGBToScale(ParameterDictionary *dict, const char *name,
                               Float *totalScale) {
-    std::vector<SpectrumHandle> s =
-        dict->GetSpectrumArray(name, SpectrumType::Unbounded, {});
+    std::vector<Spectrum> s = dict->GetSpectrumArray(name, SpectrumType::Unbounded, {});
     if (s.empty())
         return true;
 

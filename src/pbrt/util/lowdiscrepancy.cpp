@@ -4,7 +4,6 @@
 
 #include <pbrt/util/lowdiscrepancy.h>
 
-#include <pbrt/util/bits.h>
 #include <pbrt/util/math.h>
 #include <pbrt/util/parallel.h>
 #include <pbrt/util/primes.h>
@@ -33,8 +32,6 @@ std::string ToString(RandomizeStrategy r) {
     switch (r) {
     case RandomizeStrategy::None:
         return "None";
-    case RandomizeStrategy::CranleyPatterson:
-        return "CranleyPatterson";
     case RandomizeStrategy::PermuteDigits:
         return "PermuteDigits";
     case RandomizeStrategy::FastOwen:

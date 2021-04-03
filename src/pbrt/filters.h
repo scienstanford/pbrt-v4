@@ -26,25 +26,22 @@ struct FilterSample {
 class FilterSampler {
   public:
     // FilterSampler Public Methods
-    FilterSampler(FilterHandle filter, Allocator alloc = {});
+    FilterSampler(Filter filter, Allocator alloc = {});
     std::string ToString() const;
 
     PBRT_CPU_GPU
-    FilterSample Sample(const Point2f &u) const {
-        Point2f p = distrib.Sample(u);
+    FilterSample Sample(Point2f u) const {
+        Float pdf;
+        Point2i pi;
+        Point2f p = distrib.Sample(u, &pdf, &pi);
         Point2f p01 = Point2f(domain.Offset(p));
-        Point2i pi(Clamp(p01.x * values.xSize() + 0.5f, 0, values.xSize() - 1),
-                   Clamp(p01.y * values.ySize() + 0.5f, 0, values.ySize() - 1));
-        return {p, values[pi] < 0 ? -1.f : 1.f};
+        return {p, f[pi] / pdf};
     }
-
-    PBRT_CPU_GPU
-    Float Integral() const { return distrib.Integral(); }
 
   private:
     // FilterSampler Private Members
     Bounds2f domain;
-    Array2D<Float> values;
+    Array2D<Float> f;
     PiecewiseConstant2D distrib;
 };
 
@@ -63,14 +60,14 @@ class BoxFilter {
     std::string ToString() const;
 
     PBRT_CPU_GPU
-    Float Evaluate(const Point2f &p) const {
+    Float Evaluate(Point2f p) const {
         return (std::abs(p.x) <= radius.x && std::abs(p.y) <= radius.y) ? 1 : 0;
     }
 
     PBRT_CPU_GPU
-    FilterSample Sample(const Point2f &u) const {
+    FilterSample Sample(Point2f u) const {
         Point2f p(Lerp(u[0], -radius.x, radius.x), Lerp(u[1], -radius.y, radius.y));
-        return {p, 1.f};
+        return {p, Float(1)};
     }
 
     PBRT_CPU_GPU
@@ -100,7 +97,7 @@ class GaussianFilter {
     std::string ToString() const;
 
     PBRT_CPU_GPU
-    Float Evaluate(const Point2f &p) const {
+    Float Evaluate(Point2f p) const {
         return (std::max<Float>(0, Gaussian(p.x, 0, sigma) - expX) *
                 std::max<Float>(0, Gaussian(p.y, 0, sigma) - expY));
     }
@@ -112,7 +109,7 @@ class GaussianFilter {
     }
 
     PBRT_CPU_GPU
-    FilterSample Sample(const Point2f &u) const { return sampler.Sample(u); }
+    FilterSample Sample(Point2f u) const { return sampler.Sample(u); }
 
   private:
     // GaussianFilter Private Members
@@ -125,9 +122,9 @@ class GaussianFilter {
 class MitchellFilter {
   public:
     // MitchellFilter Public Methods
-    MitchellFilter(const Vector2f &radius, Float B = 1.f / 3.f, Float C = 1.f / 3.f,
+    MitchellFilter(const Vector2f &radius, Float b = 1.f / 3.f, Float c = 1.f / 3.f,
                    Allocator alloc = {})
-        : radius(radius), B(B), C(C), sampler(this, alloc) {}
+        : radius(radius), b(b), c(c), sampler(this, alloc) {}
 
     static MitchellFilter *Create(const ParameterDictionary &parameters,
                                   const FileLoc *loc, Allocator alloc);
@@ -138,12 +135,12 @@ class MitchellFilter {
     std::string ToString() const;
 
     PBRT_CPU_GPU
-    Float Evaluate(const Point2f &p) const {
+    Float Evaluate(Point2f p) const {
         return Mitchell1D(2 * p.x / radius.x) * Mitchell1D(2 * p.y / radius.y);
     }
 
     PBRT_CPU_GPU
-    FilterSample Sample(const Point2f &u) const { return sampler.Sample(u); }
+    FilterSample Sample(Point2f u) const { return sampler.Sample(u); }
 
     PBRT_CPU_GPU
     Float Integral() const { return radius.x * radius.y / 4; }
@@ -154,12 +151,12 @@ class MitchellFilter {
     Float Mitchell1D(Float x) const {
         x = std::abs(x);
         if (x <= 1)
-            return ((12 - 9 * B - 6 * C) * x * x * x + (-18 + 12 * B + 6 * C) * x * x +
-                    (6 - 2 * B)) *
+            return ((12 - 9 * b - 6 * c) * x * x * x + (-18 + 12 * b + 6 * c) * x * x +
+                    (6 - 2 * b)) *
                    (1.f / 6.f);
         else if (x <= 2)
-            return ((-B - 6 * C) * x * x * x + (6 * B + 30 * C) * x * x +
-                    (-12 * B - 48 * C) * x + (8 * B + 24 * C)) *
+            return ((-b - 6 * c) * x * x * x + (6 * b + 30 * c) * x * x +
+                    (-12 * b - 48 * c) * x + (8 * b + 24 * c)) *
                    (1.f / 6.f);
         else
             return 0;
@@ -167,7 +164,7 @@ class MitchellFilter {
 
     // MitchellFilter Private Members
     Vector2f radius;
-    Float B, C;
+    Float b, c;
     FilterSampler sampler;
 };
 
@@ -187,12 +184,12 @@ class LanczosSincFilter {
     std::string ToString() const;
 
     PBRT_CPU_GPU
-    Float Evaluate(const Point2f &p) const {
+    Float Evaluate(Point2f p) const {
         return WindowedSinc(p.x, radius.x, tau) * WindowedSinc(p.y, radius.y, tau);
     }
 
     PBRT_CPU_GPU
-    FilterSample Sample(const Point2f &u) const { return sampler.Sample(u); }
+    FilterSample Sample(Point2f u) const { return sampler.Sample(u); }
 
     PBRT_CPU_GPU
     Float Integral() const;
@@ -219,14 +216,15 @@ class TriangleFilter {
     std::string ToString() const;
 
     PBRT_CPU_GPU
-    Float Evaluate(const Point2f &p) const {
+    Float Evaluate(Point2f p) const {
         return std::max<Float>(0, radius.x - std::abs(p.x)) *
                std::max<Float>(0, radius.y - std::abs(p.y));
     }
 
     PBRT_CPU_GPU
-    FilterSample Sample(const Point2f &u) const {
-        return {Point2f(SampleTent(u[0], radius.x), SampleTent(u[1], radius.y)), 1.f};
+    FilterSample Sample(Point2f u) const {
+        return {Point2f(SampleTent(u[0], radius.x), SampleTent(u[1], radius.y)),
+                Float(1)};
     }
 
     PBRT_CPU_GPU
@@ -236,22 +234,22 @@ class TriangleFilter {
     Vector2f radius;
 };
 
-inline Float FilterHandle::Evaluate(const Point2f &p) const {
+inline Float Filter::Evaluate(Point2f p) const {
     auto eval = [&](auto ptr) { return ptr->Evaluate(p); };
     return Dispatch(eval);
 }
 
-inline FilterSample FilterHandle::Sample(const Point2f &u) const {
+inline FilterSample Filter::Sample(Point2f u) const {
     auto sample = [&](auto ptr) { return ptr->Sample(u); };
     return Dispatch(sample);
 }
 
-inline Vector2f FilterHandle::Radius() const {
+inline Vector2f Filter::Radius() const {
     auto radius = [&](auto ptr) { return ptr->Radius(); };
     return Dispatch(radius);
 }
 
-inline Float FilterHandle::Integral() const {
+inline Float Filter::Integral() const {
     auto integral = [&](auto ptr) { return ptr->Integral(); };
     return Dispatch(integral);
 }

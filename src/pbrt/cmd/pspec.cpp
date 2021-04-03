@@ -59,11 +59,11 @@ Where <sampler> is one of:
     halton.permutedigits:
                      The first two dimensions of the Halton sequence, randomized
                      using random digit permutations.
+    independent:     Independent uniform random samples.
     lhs:             Latin hypercube sampling.
     pmj02bn:         Progressive multi-jittered (0,2) blue noise points. (Note:
                      pbrt uses precomputed tables for these and only has five,
                      so nsets > 5 does not make sense in this case.)
-    random:          Uniform random samples.
     sobol:           The first two dimensions of the Sobol' sequence.
     sobol.fastowen:  The first two dimensions of the Sobol' sequence, randomized
                      using a fast hashing approach that operates on all bits in
@@ -73,6 +73,8 @@ Where <sampler> is one of:
     sobol.permutedigits:
                      The first two dimensions of the Sobol' sequence, randomized
                      with bitwise permutations.
+    sobol.z:         Randomized Morton z-curve Sobol' corresponding to the
+                     ZSobolSampler.
     stdin.binary:    Sample values are read from standard input as binary 32-bit
                      floats. Multiple point sets may be provided by providing
                      successive point sets one after the previous.
@@ -195,18 +197,29 @@ GenerateSamples(std::string samplerName, int nPoints, int iter) {
         RNG rng(Options->seed, iter);
         uint32_t r[2] = {rng.Uniform<uint32_t>(), rng.Uniform<uint32_t>()};
 
-        for (int i = 0; i < nPoints; ++i) {
-            Float u2 = SobolSample(i, 0, NoRandomizer());
-            uint32_t uu = OwenScrambleBinaryFull(uint32_t(u2 * 0x1p32), r[0]);
-            u2 = uu * 0x1p-32;
+        for (int i = 0; i < nPoints; ++i)
+            points.push_back(Point2f(SobolSample(i, 0, OwenScrambler(r[0])),
+                                     OwenScrambledRadicalInverse(1, i, r[1])));
+    } else if (samplerName == "sobol.z") {
+        if (!IsPowerOf2(nPoints))
+            ErrorExit("Must use power of 2 points for \"sobol.z\".");
 
-            points.push_back(
-                Point2f(u2, OwenScrambledRadicalInverse(1, i, r[1])));
-        }
+        int n = 1 << (Log2Int(nPoints) / 2);
+        int spp = nPoints / Sqr(n);
+        ZSobolSampler sampler(spp, {n, n}, RandomizeStrategy::Owen, Options->seed);
+
+        for (int y = 0; y < n; ++y)
+            for (int x = 0; x < n; ++x) {
+                sampler.StartPixelSample({x, y}, 0, 0);
+                for (int s = 0; s < spp; ++s) {
+                    Point2f u = sampler.Get2D();
+                    points.push_back(Point2f((x + u[0]) / n, (y + u[1]) / n));
+                }
+            }
     } else {
-        SamplerHandle sampler = [&]() -> SamplerHandle {
-            if (samplerName == "random")
-                return new RandomSampler(nPoints, Options->seed);
+        Sampler sampler = [&]() -> Sampler {
+            if (samplerName == "independent")
+                return new IndependentSampler(nPoints, Options->seed);
             else if (samplerName == "stratified") {
                 int sqrtSamples = std::sqrt(nPoints);
                 nPoints = Sqr(sqrtSamples);
@@ -215,13 +228,16 @@ GenerateSamples(std::string samplerName, int nPoints, int iter) {
             } else if (samplerName == "pmj02bn") {
                 return new PMJ02BNSampler(nPoints, Options->seed);
             } else if (samplerName == "sobol") {
-                return new PaddedSobolSampler(nPoints, RandomizeStrategy::None);
+                return new PaddedSobolSampler(nPoints, RandomizeStrategy::None, Options->seed);
             } else if (samplerName == "sobol.permutedigits") {
-                return new PaddedSobolSampler(nPoints, RandomizeStrategy::PermuteDigits);
+                return new PaddedSobolSampler(nPoints, RandomizeStrategy::PermuteDigits,
+                                              Options->seed);
             } else if (samplerName == "sobol.fastowen") {
-                return new PaddedSobolSampler(nPoints, RandomizeStrategy::FastOwen);
+                return new PaddedSobolSampler(nPoints, RandomizeStrategy::FastOwen,
+                                              Options->seed);
             } else if (samplerName == "sobol.owen") {
-                return new PaddedSobolSampler(nPoints, RandomizeStrategy::Owen);
+                return new PaddedSobolSampler(nPoints, RandomizeStrategy::Owen,
+                                              Options->seed);
             } else {
                 usage(StringPrintf("%s: sampler unknown", samplerName));
                 exit(1);

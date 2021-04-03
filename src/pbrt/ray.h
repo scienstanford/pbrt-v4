@@ -25,7 +25,7 @@ class Ray {
 
     Ray() = default;
     PBRT_CPU_GPU
-    Ray(Point3f o, Vector3f d, Float time = 0.f, MediumHandle medium = nullptr)
+    Ray(Point3f o, Vector3f d, Float time = 0.f, Medium medium = nullptr)
         : o(o), d(d), time(time), medium(medium) {}
 
     PBRT_CPU_GPU
@@ -35,8 +35,8 @@ class Ray {
     Point3f o;
     Vector3f d;
     Float time = 0;
-    MediumHandle medium = nullptr;
     float wavelength; // zhenyi for ca
+    Medium medium = nullptr;
 };
 
 // RayDifferential Definition
@@ -45,8 +45,7 @@ class RayDifferential : public Ray {
     // RayDifferential Public Methods
     RayDifferential() = default;
     PBRT_CPU_GPU
-    RayDifferential(Point3f o, Vector3f d, Float time = 0.f,
-                    MediumHandle medium = nullptr)
+    RayDifferential(Point3f o, Vector3f d, Float time = 0.f, Medium medium = nullptr)
         : Ray(o, d, time, medium) {}
 
     PBRT_CPU_GPU

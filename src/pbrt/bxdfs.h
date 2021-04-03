@@ -413,14 +413,6 @@ class ConductorBxDF {
     SampledSpectrum eta, k;
 };
 
-// LayeredBxDFConfig Definition
-struct LayeredBxDFConfig {
-    uint8_t maxDepth = 10;
-    uint8_t nSamples = 1;
-    uint8_t twoSided = true;
-    std::string ToString() const;
-};
-
 // TopOrBottomBxDF Definition
 template <typename TopBxDF, typename BottomBxDF>
 class TopOrBottomBxDF {
@@ -475,20 +467,21 @@ class TopOrBottomBxDF {
 };
 
 // LayeredBxDF Definition
-template <typename TopBxDF, typename BottomBxDF>
+template <typename TopBxDF, typename BottomBxDF, bool twoSided>
 class LayeredBxDF {
   public:
     // LayeredBxDF Public Methods
     LayeredBxDF() = default;
     PBRT_CPU_GPU
     LayeredBxDF(TopBxDF top, BottomBxDF bottom, Float thickness,
-                const SampledSpectrum &albedo, Float g, LayeredBxDFConfig config)
+                const SampledSpectrum &albedo, Float g, int maxDepth, int nSamples)
         : top(top),
           bottom(bottom),
           thickness(std::max(thickness, std::numeric_limits<Float>::min())),
           g(g),
           albedo(albedo),
-          config(config) {}
+          maxDepth(maxDepth),
+          nSamples(nSamples) {}
 
     std::string ToString() const;
 
@@ -524,14 +517,14 @@ class LayeredBxDF {
         SampledSpectrum f(0.);
         // Estimate _LayeredBxDF_ value _f_ using random sampling
         // Set _wi_ and _wi_ for layered BSDF evaluation
-        if (config.twoSided && wo.z < 0) {
+        if (twoSided && wo.z < 0) {
             wo = -wo;
             wi = -wi;
         }
 
         // Determine entrance interface for layered BSDF
         TopOrBottomBxDF<TopBxDF, BottomBxDF> enterInterface;
-        bool enteredTop = wo.z > 0;
+        bool enteredTop = twoSided || wo.z > 0;
         if (enteredTop)
             enterInterface = &top;
         else
@@ -550,7 +543,7 @@ class LayeredBxDF {
 
         // Account for reflection at the entrance interface
         if (SameHemisphere(wo, wi))
-            f = config.nSamples * enterInterface.f(wo, wi, mode);
+            f = nSamples * enterInterface.f(wo, wi, mode);
 
         // Declare _RNG_ for layered BSDF evaluation
         RNG rng(Hash(GetOptions().seed, wo), Hash(wi));
@@ -558,7 +551,7 @@ class LayeredBxDF {
             return std::min<Float>(rng.Uniform<Float>(), OneMinusEpsilon);
         };
 
-        for (int s = 0; s < config.nSamples; ++s) {
+        for (int s = 0; s < nSamples; ++s) {
             // Sample random walk through layers to estimate BSDF value
             // Sample transmission direction through entrance interface
             Float uc = r();
@@ -567,20 +560,20 @@ class LayeredBxDF {
             if (!wos || !wos->f || wos->pdf == 0 || wos->wi.z == 0)
                 continue;
 
-            // Declare state for random walk through BSDF layers
-            SampledSpectrum beta = wos->f * AbsCosTheta(wos->wi) / wos->pdf;
-            Vector3f w = wos->wi;
-            Float z = enteredTop ? thickness : 0;
-            HGPhaseFunction phase(g);
-
-            // Sample BSDF for NEE in _wi_'s direction
+            // Sample BSDF for virtual light from _wi_
             uc = r();
             pstd::optional<BSDFSample> wis = exitInterface.Sample_f(
                 wi, uc, Point2f(r(), r()), !mode, BxDFReflTransFlags::Transmission);
             if (!wis || !wis->f || wis->pdf == 0 || wis->wi.z == 0)
                 continue;
 
-            for (int depth = 0; depth < config.maxDepth; ++depth) {
+            // Declare state for random walk through BSDF layers
+            SampledSpectrum beta = wos->f * AbsCosTheta(wos->wi) / wos->pdf;
+            Float z = enteredTop ? thickness : 0;
+            Vector3f w = wos->wi;
+            HGPhaseFunction phase(g);
+
+            for (int depth = 0; depth < maxDepth; ++depth) {
                 // Sample next event for layered BSDF evaluation random walk
                 PBRT_DBG("beta: %f %f %f %f, w: %f %f %f, f: %f %f %f %f\n", beta[0],
                          beta[1], beta[2], beta[3], w.x, w.y, w.z, f[0], f[1], f[2],
@@ -606,7 +599,7 @@ class LayeredBxDF {
                     Float sigma_t = 1;
                     Float dz = SampleExponential(r(), sigma_t / std::abs(w.z));
                     Float zp = w.z > 0 ? (z + dz) : (z - dz);
-                    CHECK_RARE(1e-5, z == zp);
+                    DCHECK_RARE(1e-5, z == zp);
                     if (z == zp)
                         continue;
                     if (0 < zp && zp < thickness) {
@@ -619,22 +612,24 @@ class LayeredBxDF {
                              Tr(zp - exitZ, wis->wi) * wis->f / wis->pdf;
 
                         // Sample phase function and update layered path state
-                        pstd::optional<PhaseFunctionSample> ps =
-                            phase.Sample_p(-w, Point2f(r(), r()));
+                        Point2f u{r(), r()};
+                        pstd::optional<PhaseFunctionSample> ps = phase.Sample_p(-w, u);
                         if (!ps || ps->pdf == 0 || ps->wi.z == 0)
                             continue;
                         beta *= albedo * ps->p / ps->pdf;
                         w = ps->wi;
                         z = zp;
 
-                        if (!IsSpecular(exitInterface.Flags())) {
-                            // Account for scattering through _exitInterface_ from new _w_
+                        // Possibly account for scattering through _exitInterface_
+                        if (((z < exitZ && w.z > 0) || (z > exitZ && w.z < 0)) &&
+                            !IsSpecular(exitInterface.Flags())) {
+                            // Account for scattering through _exitInterface_
                             SampledSpectrum fExit = exitInterface.f(-w, wi, mode);
                             if (fExit) {
                                 Float exitPDF = exitInterface.PDF(
                                     -w, wi, mode, BxDFReflTransFlags::Transmission);
-                                Float weight = PowerHeuristic(1, ps->pdf, 1, exitPDF);
-                                f += beta * Tr(zp - exitZ, ps->wi) * fExit * weight;
+                                Float wt = PowerHeuristic(1, ps->pdf, 1, exitPDF);
+                                f += beta * Tr(zp - exitZ, ps->wi) * fExit * wt;
                             }
                         }
 
@@ -657,7 +652,7 @@ class LayeredBxDF {
                 } else {
                     // Account for scattering at _nonExitInterface_
                     if (!IsSpecular(nonExitInterface.Flags())) {
-                        // Add NEE contribution along pre-sampled _wis_ direction
+                        // Add NEE contribution along presampled _wis_ direction
                         Float wt = 1;
                         if (!IsSpecular(exitInterface.Flags()))
                             wt = PowerHeuristic(1, wis->pdf, 1,
@@ -693,7 +688,7 @@ class LayeredBxDF {
             }
         }
 
-        return f / config.nSamples;
+        return f / nSamples;
     }
 
     PBRT_CPU_GPU
@@ -703,13 +698,13 @@ class LayeredBxDF {
         CHECK(sampleFlags == BxDFReflTransFlags::All);  // for now
         // Set _wo_ for layered BSDF sampling
         bool flipWi = false;
-        if (config.twoSided && wo.z < 0) {
+        if (twoSided && wo.z < 0) {
             wo = -wo;
             flipWi = true;
         }
 
         // Sample BSDF at entrance interface to get initial direction _w_
-        bool enteredTop = wo.z > 0;
+        bool enteredTop = twoSided || wo.z > 0;
         pstd::optional<BSDFSample> bs =
             enteredTop ? top.Sample_f(wo, uc, u, mode) : bottom.Sample_f(wo, uc, u, mode);
         if (!bs || !bs->f || bs->pdf == 0 || bs->wi.z == 0)
@@ -733,7 +728,7 @@ class LayeredBxDF {
         Float z = enteredTop ? thickness : 0;
         HGPhaseFunction phase(g);
 
-        for (int depth = 0; depth < config.maxDepth; ++depth) {
+        for (int depth = 0; depth < maxDepth; ++depth) {
             // Follow random walk through layers to sample layered BSDF
             // Possibly terminate layered BSDF sampling with Russian Roulette
             Float rrBeta = f.MaxComponentValue() / pdf;
@@ -814,29 +809,28 @@ class LayeredBxDF {
     Float PDF(Vector3f wo, Vector3f wi, TransportMode mode,
               BxDFReflTransFlags sampleFlags = BxDFReflTransFlags::All) const {
         CHECK(sampleFlags == BxDFReflTransFlags::All);  // for now
-        // Return approximate PDF for layered BSDF
         // Set _wi_ and _wi_ for layered BSDF evaluation
-        if (config.twoSided && wo.z < 0) {
+        if (twoSided && wo.z < 0) {
             wo = -wo;
             wi = -wi;
         }
 
-        // Declare _RNG_ for layered BSDF evaluation
-        RNG rng(Hash(GetOptions().seed, wo), Hash(wi));
+        // Declare _RNG_ for layered PDF evaluation
+        RNG rng(Hash(GetOptions().seed, wi), Hash(wo));
         auto r = [&rng]() {
             return std::min<Float>(rng.Uniform<Float>(), OneMinusEpsilon);
         };
 
         // Update _pdfSum_ for reflection at the entrance layer
-        bool enteredTop = wo.z > 0;
+        bool enteredTop = twoSided || wo.z > 0;
         Float pdfSum = 0;
         if (SameHemisphere(wo, wi)) {
             auto reflFlag = BxDFReflTransFlags::Reflection;
-            pdfSum += enteredTop ? config.nSamples * top.PDF(wo, wi, mode, reflFlag)
-                                 : config.nSamples * bottom.PDF(wo, wi, mode, reflFlag);
+            pdfSum += enteredTop ? nSamples * top.PDF(wo, wi, mode, reflFlag)
+                                 : nSamples * bottom.PDF(wo, wi, mode, reflFlag);
         }
 
-        for (int s = 0; s < config.nSamples; ++s) {
+        for (int s = 0; s < nSamples; ++s) {
             // Evaluate layered BSDF PDF sample
             if (SameHemisphere(wo, wi)) {
                 // Evaluate TRT term for PDF estimate
@@ -862,20 +856,20 @@ class LayeredBxDF {
                         // Use multiple importance sampling to estimate PDF product
                         pstd::optional<BSDFSample> rs =
                             rInterface.Sample_f(-wos->wi, r(), {r(), r()}, mode);
-                        if (!rs || !rs->f || rs->pdf == 0)
-                            ;
-                        else if (!rInterface.IsNonSpecular())
-                            pdfSum += tInterface.PDF(-rs->wi, wi, mode);
-                        else {
-                            // Actual MIS here
-                            // first, sample r -> r cancels
-                            Float tPDF = tInterface.PDF(-rs->wi, wi, mode);
-                            Float wt = PowerHeuristic(1, rs->pdf, 1, tPDF);
-                            pdfSum += wt * tPDF;
+                        if (rs && rs->f && rs->pdf > 0) {
+                            if (!rInterface.IsNonSpecular())
+                                pdfSum += tInterface.PDF(-rs->wi, wi, mode);
+                            else {
+                                // Compute MIS-weighted estimate of Equation
+                                // (\ref{eq:pdf-triple-canceled-one})
+                                Float rPDF = rInterface.PDF(-wos->wi, -wis->wi, mode);
+                                Float wt = PowerHeuristic(1, wis->pdf, 1, rPDF);
+                                pdfSum += wt * rPDF;
 
-                            Float rPDF = rInterface.PDF(-wos->wi, -wis->wi, mode);
-                            wt = PowerHeuristic(1, wis->pdf, 1, rPDF);
-                            pdfSum += wt * rPDF;
+                                Float tPDF = tInterface.PDF(-rs->wi, wi, mode);
+                                wt = PowerHeuristic(1, rs->pdf, 1, tPDF);
+                                pdfSum += wt * tPDF;
+                            }
                         }
                     }
                 }
@@ -916,28 +910,29 @@ class LayeredBxDF {
             }
         }
         // Return mixture of PDF estimate and constant PDF
-        return Lerp(0.9f, 1 / (4 * Pi), pdfSum / config.nSamples);
+        return Lerp(0.9f, 1 / (4 * Pi), pdfSum / nSamples);
     }
 
-  protected:
-    // LayeredBxDF Protected Methods
+  private:
+    // LayeredBxDF Private Methods
     PBRT_CPU_GPU
-    static Float Tr(Float dz, const Vector3f &w) {
+    static Float Tr(Float dz, Vector3f w) {
         if (std::abs(dz) <= std::numeric_limits<Float>::min())
             return 1;
         return FastExp(-std::abs(dz / w.z));
     }
 
-    // LayeredBxDF Protected Members
+    // LayeredBxDF Private Members
     TopBxDF top;
     BottomBxDF bottom;
     Float thickness, g;
     SampledSpectrum albedo;
-    LayeredBxDFConfig config;
+    int maxDepth, nSamples;
 };
 
 // CoatedDiffuseBxDF Definition
-class CoatedDiffuseBxDF : public LayeredBxDF<DielectricInterfaceBxDF, IdealDiffuseBxDF> {
+class CoatedDiffuseBxDF
+    : public LayeredBxDF<DielectricInterfaceBxDF, IdealDiffuseBxDF, true> {
   public:
     // CoatedDiffuseBxDF Public Methods
     using LayeredBxDF::LayeredBxDF;
@@ -946,7 +941,8 @@ class CoatedDiffuseBxDF : public LayeredBxDF<DielectricInterfaceBxDF, IdealDiffu
 };
 
 // CoatedConductorBxDF Definition
-class CoatedConductorBxDF : public LayeredBxDF<DielectricInterfaceBxDF, ConductorBxDF> {
+class CoatedConductorBxDF
+    : public LayeredBxDF<DielectricInterfaceBxDF, ConductorBxDF, true> {
   public:
     // CoatedConductorBxDF Public Methods
     PBRT_CPU_GPU
@@ -1170,38 +1166,38 @@ class NormalizedFresnelBxDF {
     Float eta;
 };
 
-inline SampledSpectrum BxDFHandle::f(Vector3f wo, Vector3f wi, TransportMode mode) const {
+inline SampledSpectrum BxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const {
     auto f = [&](auto ptr) -> SampledSpectrum { return ptr->f(wo, wi, mode); };
     return Dispatch(f);
 }
 
-inline pstd::optional<BSDFSample> BxDFHandle::Sample_f(
-    Vector3f wo, Float uc, Point2f u, TransportMode mode,
-    BxDFReflTransFlags sampleFlags) const {
+inline pstd::optional<BSDFSample> BxDF::Sample_f(Vector3f wo, Float uc, Point2f u,
+                                                 TransportMode mode,
+                                                 BxDFReflTransFlags sampleFlags) const {
     auto sample_f = [&](auto ptr) -> pstd::optional<BSDFSample> {
         return ptr->Sample_f(wo, uc, u, mode, sampleFlags);
     };
     return Dispatch(sample_f);
 }
 
-inline Float BxDFHandle::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
-                             BxDFReflTransFlags sampleFlags) const {
+inline Float BxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
+                       BxDFReflTransFlags sampleFlags) const {
     auto pdf = [&](auto ptr) { return ptr->PDF(wo, wi, mode, sampleFlags); };
     return Dispatch(pdf);
 }
 
-inline BxDFFlags BxDFHandle::Flags() const {
+inline BxDFFlags BxDF::Flags() const {
     auto flags = [&](auto ptr) { return ptr->Flags(); };
     return Dispatch(flags);
 }
 
-inline void BxDFHandle::Regularize() {
+inline void BxDF::Regularize() {
     auto regularize = [&](auto ptr) { ptr->Regularize(); };
     return Dispatch(regularize);
 }
 
-extern template class LayeredBxDF<DielectricInterfaceBxDF, IdealDiffuseBxDF>;
-extern template class LayeredBxDF<DielectricInterfaceBxDF, ConductorBxDF>;
+extern template class LayeredBxDF<DielectricInterfaceBxDF, IdealDiffuseBxDF, true>;
+extern template class LayeredBxDF<DielectricInterfaceBxDF, ConductorBxDF, true>;
 
 }  // namespace pbrt
 

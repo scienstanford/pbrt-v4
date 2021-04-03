@@ -33,7 +33,6 @@
 #include <map>
 
 #include <cuda.h>
-#include <cuda_profiler_api.h>
 #include <cuda_runtime.h>
 
 #ifdef NVTX
@@ -50,10 +49,9 @@ namespace pbrt {
 
 STAT_MEMORY_COUNTER("Memory/GPU path integrator pixel state", pathIntegratorBytes);
 
-GPUPathIntegrator::GPUPathIntegrator(Allocator alloc, const ParsedScene &scene)
-    : envLights(alloc) {
+GPUPathIntegrator::GPUPathIntegrator(Allocator alloc, const ParsedScene &scene) {
     // Allocate all of the data structures that represent the scene...
-    std::map<std::string, MediumHandle> media = scene.CreateMedia(alloc);
+    std::map<std::string, Medium> media = scene.CreateMedia(alloc);
 
     haveMedia = false;
     // Check the shapes...
@@ -64,7 +62,7 @@ GPUPathIntegrator::GPUPathIntegrator(Allocator alloc, const ParsedScene &scene)
         if (!shape.insideMedium.empty() || !shape.outsideMedium.empty())
             haveMedia = true;
 
-    auto findMedium = [&](const std::string &s, const FileLoc *loc) -> MediumHandle {
+    auto findMedium = [&](const std::string &s, const FileLoc *loc) -> Medium {
         if (s.empty())
             return nullptr;
 
@@ -75,8 +73,8 @@ GPUPathIntegrator::GPUPathIntegrator(Allocator alloc, const ParsedScene &scene)
         return iter->second;
     };
 
-    filter = FilterHandle::Create(scene.filter.name, scene.filter.parameters,
-                                  &scene.filter.loc, alloc);
+    filter = Filter::Create(scene.filter.name, scene.filter.parameters, &scene.filter.loc,
+                            alloc);
 
     Float exposureTime = scene.camera.parameters.GetOneFloat("shutterclose", 1.f) -
                          scene.camera.parameters.GetOneFloat("shutteropen", 0.f);
@@ -85,39 +83,39 @@ GPUPathIntegrator::GPUPathIntegrator(Allocator alloc, const ParsedScene &scene)
                   "The specified camera shutter times imply that the shutter "
                   "does not open.  A black image will result.");
 
-    film = FilmHandle::Create(scene.film.name, scene.film.parameters, exposureTime,
-                              filter, &scene.film.loc, alloc);
+    film = Film::Create(scene.film.name, scene.film.parameters, exposureTime, filter,
+                        &scene.film.loc, alloc);
     initializeVisibleSurface = film.UsesVisibleSurface();
 
-    sampler = SamplerHandle::Create(scene.sampler.name, scene.sampler.parameters,
-                                    film.FullResolution(), &scene.sampler.loc, alloc);
+    sampler = Sampler::Create(scene.sampler.name, scene.sampler.parameters,
+                              film.FullResolution(), &scene.sampler.loc, alloc);
 
-    MediumHandle cameraMedium = findMedium(scene.camera.medium, &scene.camera.loc);
-    camera = CameraHandle::Create(scene.camera.name, scene.camera.parameters,
-                                  cameraMedium, scene.camera.cameraTransform, film,
-                                  &scene.camera.loc, alloc);
+    Medium cameraMedium = findMedium(scene.camera.medium, &scene.camera.loc);
+    camera = Camera::Create(scene.camera.name, scene.camera.parameters, cameraMedium,
+                            scene.camera.cameraTransform, film, &scene.camera.loc, alloc);
 
-    pstd::vector<LightHandle> allLights;
+    pstd::vector<Light> allLights;
 
+    envLights = alloc.new_object<pstd::vector<Light>>(alloc);
     for (const auto &light : scene.lights) {
-        MediumHandle outsideMedium = findMedium(light.medium, &light.loc);
+        Medium outsideMedium = findMedium(light.medium, &light.loc);
         if (light.renderFromObject.IsAnimated())
             Warning(&light.loc,
                     "Animated lights aren't supported. Using the start transform.");
 
-        LightHandle l = LightHandle::Create(
+        Light l = Light::Create(
             light.name, light.parameters, light.renderFromObject.startTransform,
             scene.camera.cameraTransform, outsideMedium, &light.loc, alloc);
 
         if (l.Is<UniformInfiniteLight>() || l.Is<ImageInfiniteLight>() ||
             l.Is<PortalImageInfiniteLight>())
-            envLights.push_back(l);
+            envLights->push_back(l);
 
         allLights.push_back(l);
     }
 
     // Area lights...
-    std::map<int, pstd::vector<LightHandle> *> shapeIndexToAreaLights;
+    std::map<int, pstd::vector<Light> *> shapeIndexToAreaLights;
     for (size_t i = 0; i < scene.shapes.size(); ++i) {
         const auto &shape = scene.shapes[i];
         if (shape.lightIndex == -1)
@@ -126,18 +124,18 @@ GPUPathIntegrator::GPUPathIntegrator(Allocator alloc, const ParsedScene &scene)
         const auto &areaLightEntity = scene.areaLights[shape.lightIndex];
         AnimatedTransform renderFromLight(*shape.renderFromObject);
 
-        pstd::vector<ShapeHandle> shapeHandles = ShapeHandle::Create(
-            shape.name, shape.renderFromObject, shape.objectFromRender,
-            shape.reverseOrientation, shape.parameters, &shape.loc, alloc);
+        pstd::vector<Shape> shapes =
+            Shape::Create(shape.name, shape.renderFromObject, shape.objectFromRender,
+                          shape.reverseOrientation, shape.parameters, &shape.loc, alloc);
 
-        if (shapeHandles.empty())
+        if (shapes.empty())
             continue;
 
-        MediumHandle outsideMedium = findMedium(shape.outsideMedium, &shape.loc);
+        Medium outsideMedium = findMedium(shape.outsideMedium, &shape.loc);
 
-        pstd::vector<LightHandle> *lightsForShape =
-            alloc.new_object<pstd::vector<LightHandle>>(alloc);
-        for (ShapeHandle sh : shapeHandles) {
+        pstd::vector<Light> *lightsForShape =
+            alloc.new_object<pstd::vector<Light>>(alloc);
+        for (Shape sh : shapes) {
             if (renderFromLight.IsAnimated())
                 ErrorExit(&shape.loc, "Animated lights are not supported.");
             DiffuseAreaLight *area = DiffuseAreaLight::Create(
@@ -157,7 +155,7 @@ GPUPathIntegrator::GPUPathIntegrator(Allocator alloc, const ParsedScene &scene)
                          &haveSubsurface);
 
     // Preprocess the light sources
-    for (LightHandle light : allLights)
+    for (Light light : allLights)
         light.Preprocess(accel->Bounds());
 
     bool haveLights = !allLights.empty();
@@ -170,7 +168,7 @@ GPUPathIntegrator::GPUPathIntegrator(Allocator alloc, const ParsedScene &scene)
         scene.integrator.parameters.GetOneString("lightsampler", "bvh");
     if (allLights.size() == 1)
         lightSamplerName = "uniform";
-    lightSampler = LightSamplerHandle::Create(lightSamplerName, allLights, alloc);
+    lightSampler = LightSampler::Create(lightSamplerName, allLights, alloc);
 
     if (scene.integrator.name != "path" && scene.integrator.name != "volpath")
         Warning(&scene.integrator.loc,
@@ -225,7 +223,7 @@ GPUPathIntegrator::GPUPathIntegrator(Allocator alloc, const ParsedScene &scene)
             alloc.new_object<SubsurfaceScatterQueue>(maxQueueSize, alloc);
     }
 
-    if (envLights.size())
+    if (envLights->size())
         escapedRayQueue = alloc.new_object<EscapedRayQueue>(maxQueueSize, alloc);
     hitAreaLightQueue = alloc.new_object<HitAreaLightQueue>(maxQueueSize, alloc);
 
@@ -459,7 +457,7 @@ void GPUPathIntegrator::HandleEscapedRays(int depth) {
         PBRT_GPU_LAMBDA(const EscapedRayWorkItem w) {
             // Update pixel radiance for escaped ray
             SampledSpectrum L(0.f);
-            for (const auto &light : envLights) {
+            for (const auto &light : *envLights) {
                 if (SampledSpectrum Le = light.Le(Ray(w.rayo, w.rayd), w.lambda); Le) {
                     // Compute path radiance contribution from infinite light
                     PBRT_DBG("L %f %f %f %f T_hat %f %f %f %f Le %f %f %f %f", L[0], L[1],
@@ -484,8 +482,6 @@ void GPUPathIntegrator::HandleEscapedRays(int depth) {
                 }
             }
             if (L) {
-                L = SafeDiv(L, w.lambda.PDF());
-
                 PBRT_DBG("Added L %f %f %f %f for escaped ray pixel index %d\n", L[0],
                          L[1], L[2], L[3], w.pixelIndex);
 
@@ -522,7 +518,6 @@ void GPUPathIntegrator::HandleRayFoundEmission(int depth) {
                 SampledSpectrum lightPathPDF = w.lightPathPDF * lightPDF;
                 L = w.T_hat * Le / (uniPathPDF + lightPathPDF).Average();
             }
-            L = SafeDiv(L, w.lambda.PDF());
 
             PBRT_DBG("Added L %f %f %f %f for pixel index %d\n", L[0], L[1], L[2], L[3],
                      w.pixelIndex);
@@ -602,8 +597,6 @@ void GPURender(ParsedScene &scene) {
     integrator->Render();
 
     LOG_VERBOSE("Total rendering time: %.3f s", timer.ElapsedSeconds());
-
-    CUDA_CHECK(cudaProfilerStop());
 
     if (!Options->quiet) {
         ReportKernelStats();

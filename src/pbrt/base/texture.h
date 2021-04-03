@@ -24,26 +24,28 @@ class GPUFloatImageTexture;
 class FloatImageTexture;
 class FloatMixTexture;
 class FloatPtexTexture;
+class GPUFloatPtexTexture;
 class FloatScaledTexture;
 class WindyTexture;
 class WrinkledTexture;
 
-// FloatTextureHandle Definition
-class FloatTextureHandle
+// FloatTexture Definition
+class FloatTexture
     : public TaggedPointer<  // FloatTextures
           FloatImageTexture, GPUFloatImageTexture, FloatMixTexture, FloatScaledTexture,
           FloatConstantTexture, FloatBilerpTexture, FloatCheckerboardTexture,
-          FloatDotsTexture, FBmTexture, FloatPtexTexture, WindyTexture, WrinkledTexture
+          FloatDotsTexture, FBmTexture, FloatPtexTexture, GPUFloatPtexTexture,
+          WindyTexture, WrinkledTexture
 
           > {
   public:
     // FloatTexture Interface
     using TaggedPointer::TaggedPointer;
 
-    static FloatTextureHandle Create(const std::string &name,
-                                     const Transform &renderFromTexture,
-                                     const TextureParameterDictionary &parameters,
-                                     const FileLoc *loc, Allocator alloc, bool gpu);
+    static FloatTexture Create(const std::string &name,
+                               const Transform &renderFromTexture,
+                               const TextureParameterDictionary &parameters,
+                               const FileLoc *loc, Allocator alloc, bool gpu);
 
     std::string ToString() const;
 
@@ -61,26 +63,27 @@ class MarbleTexture;
 class SpectrumMixTexture;
 class SpectrumDotsTexture;
 class SpectrumPtexTexture;
+class GPUSpectrumPtexTexture;
 class SpectrumScaledTexture;
 
-// SpectrumTextureHandle Definition
-class SpectrumTextureHandle
+// SpectrumTexture Definition
+class SpectrumTexture
     : public TaggedPointer<  // SpectrumTextures
           SpectrumImageTexture, GPUSpectrumImageTexture, SpectrumMixTexture,
           SpectrumScaledTexture, SpectrumConstantTexture, SpectrumBilerpTexture,
           SpectrumCheckerboardTexture, MarbleTexture, SpectrumDotsTexture,
-          SpectrumPtexTexture
+          SpectrumPtexTexture, GPUSpectrumPtexTexture
 
           > {
   public:
     // SpectrumTexture Interface
     using TaggedPointer::TaggedPointer;
 
-    static SpectrumTextureHandle Create(const std::string &name,
-                                        const Transform &renderFromTexture,
-                                        const TextureParameterDictionary &parameters,
-                                        SpectrumType spectrumType, const FileLoc *loc,
-                                        Allocator alloc, bool gpu);
+    static SpectrumTexture Create(const std::string &name,
+                                  const Transform &renderFromTexture,
+                                  const TextureParameterDictionary &parameters,
+                                  SpectrumType spectrumType, const FileLoc *loc,
+                                  Allocator alloc, bool gpu);
 
     std::string ToString() const;
 

@@ -8,6 +8,8 @@
 
 #include <pbrt/samplers.h>
 
+#include <set>
+
 using namespace pbrt;
 
 // Make sure all samplers give the same sample values if we go back to the
@@ -17,24 +19,20 @@ TEST(Sampler, ConsistentValues) {
     constexpr int spp = rootSpp * rootSpp;
     Point2i resolution(100, 101);
 
-    std::vector<SamplerHandle> samplers;
+    std::vector<Sampler> samplers;
     samplers.push_back(new HaltonSampler(spp, resolution));
-    samplers.push_back(new RandomSampler(spp));
+    samplers.push_back(new IndependentSampler(spp));
     samplers.push_back(new PaddedSobolSampler(spp, RandomizeStrategy::None));
-    samplers.push_back(new PaddedSobolSampler(spp, RandomizeStrategy::CranleyPatterson));
     samplers.push_back(new PaddedSobolSampler(spp, RandomizeStrategy::PermuteDigits));
     samplers.push_back(new PaddedSobolSampler(spp, RandomizeStrategy::FastOwen));
     samplers.push_back(new PaddedSobolSampler(spp, RandomizeStrategy::Owen));
     samplers.push_back(new ZSobolSampler(spp, resolution, RandomizeStrategy::None));
-    samplers.push_back(new ZSobolSampler(spp, resolution, RandomizeStrategy::CranleyPatterson));
     samplers.push_back(new ZSobolSampler(spp, resolution, RandomizeStrategy::PermuteDigits));
     samplers.push_back(new ZSobolSampler(spp, resolution, RandomizeStrategy::FastOwen));
     samplers.push_back(new ZSobolSampler(spp, resolution, RandomizeStrategy::Owen));
     samplers.push_back(new PMJ02BNSampler(spp));
     samplers.push_back(new StratifiedSampler(rootSpp, rootSpp, true));
     samplers.push_back(new SobolSampler(spp, resolution, RandomizeStrategy::None));
-    samplers.push_back(
-        new SobolSampler(spp, resolution, RandomizeStrategy::CranleyPatterson));
     samplers.push_back(new SobolSampler(spp, resolution, RandomizeStrategy::PermuteDigits));
     samplers.push_back(new SobolSampler(spp, resolution, RandomizeStrategy::Owen));
     samplers.push_back(new SobolSampler(spp, resolution, RandomizeStrategy::FastOwen));
@@ -99,24 +97,27 @@ static void checkElementary(const char *name, std::vector<Point2f> samples,
     }
 }
 
-static void checkElementarySampler(const char *name, SamplerHandle sampler,
-                                   int logSamples) {
+static void checkElementarySampler(const char *name, Sampler sampler,
+                                   int logSamples, int res = 1) {
     // Get all of the samples for a pixel.
     int spp = sampler.SamplesPerPixel();
     std::vector<Point2f> samples;
-    for (int i = 0; i < spp; ++i) {
-        sampler.StartPixelSample(Point2i(0, 0), i);
-        samples.push_back(sampler.GetPixel2D());
-    }
+    for (Point2i p : Bounds2i(Point2i(0, 0), Point2i(res, res))) {
+        samples.clear();
+        for (int i = 0; i < spp; ++i) {
+            sampler.StartPixelSample(p, i);
+            samples.push_back(sampler.GetPixel2D());
+        }
 
-    checkElementary(name, samples, logSamples);
+        checkElementary(name, samples, logSamples);
+    }
 }
 
 // TODO: check Halton (where the elementary intervals are (2^i, 3^j)).
 
 TEST(PaddedSobolSampler, ElementaryIntervals) {
     for (auto rand :
-         {RandomizeStrategy::None, RandomizeStrategy::Owen, RandomizeStrategy::PermuteDigits})
+         {RandomizeStrategy::None, RandomizeStrategy::PermuteDigits})
         for (int logSamples = 2; logSamples <= 10; ++logSamples)
             checkElementarySampler("PaddedSobolSampler",
                                    new PaddedSobolSampler(1 << logSamples, rand),
@@ -124,12 +125,13 @@ TEST(PaddedSobolSampler, ElementaryIntervals) {
 }
 
 TEST(ZSobolSampler, ElementaryIntervals) {
-    for (auto rand :
-         {RandomizeStrategy::None, RandomizeStrategy::Owen, RandomizeStrategy::PermuteDigits})
-        for (int logSamples = 2; logSamples <= 10; ++logSamples)
-            checkElementarySampler("ZSobolSampler",
-                                   new ZSobolSampler(1 << logSamples, Point2i(100, 100), rand),
-                                   logSamples);
+    for (int seed : {0, 1, 5, 6, 10, 15})
+        for (auto rand :
+                 {RandomizeStrategy::None, RandomizeStrategy::PermuteDigits})
+            for (int logSamples = 2; logSamples <= 8; ++logSamples)
+                checkElementarySampler(StringPrintf("ZSobolSampler - %s - %d", rand, seed).c_str(),
+                                       new ZSobolSampler(1 << logSamples, Point2i(10, 10), rand, seed),
+                                       logSamples, 10);
 }
 
 TEST(SobolUnscrambledSampler, ElementaryIntervals) {
@@ -160,4 +162,34 @@ TEST(PMJ02BNSampler, ElementaryIntervals) {
     for (int logSamples = 2; logSamples <= 10; logSamples += 2)
         checkElementarySampler("PMJ02BNSampler", new PMJ02BNSampler(1 << logSamples),
                                logSamples);
+}
+
+TEST(ZSobolSampler, ValidIndices) {
+    Point2i res(16, 9);
+    for (int logSamples = 0; logSamples <= 10; ++logSamples) {
+        int spp = 1 << logSamples;
+        ZSobolSampler sampler(spp, res, RandomizeStrategy::PermuteDigits);
+
+        for (int dim = 0; dim < 7; dim += 3) {
+            std::set<uint64_t> returnedIndices;
+            for (Point2i p : Bounds2i(Point2i(0, 0), res)) {
+                uint64_t pow2Base;
+                for (int i = 0; i < spp; ++i) {
+                    sampler.StartPixelSample(p, i, dim);
+                    uint64_t index = sampler.GetSampleIndex();
+
+                    // Make sure no index is repeated across multiple pixels
+                    EXPECT_TRUE(returnedIndices.find(index) == returnedIndices.end());
+                    returnedIndices.insert(index);
+
+                    // Make sure that all samples for this pixel are within the
+                    // same pow2 aligned and sized range of the sample indices.
+                    if (i == 0)
+                        pow2Base = index / spp;
+                    else
+                        EXPECT_EQ(index / spp, pow2Base);
+                }
+            }
+        }
+    }
 }

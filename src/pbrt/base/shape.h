@@ -26,19 +26,19 @@ struct ShapeSample;
 struct ShapeIntersection;
 struct ShapeSampleContext;
 
-// ShapeHandle Definition
-class ShapeHandle
+// Shape Definition
+class Shape
     : public TaggedPointer<Sphere, Cylinder, Disk, Triangle, BilinearPatch, Curve> {
   public:
     // Shape Interface
     using TaggedPointer::TaggedPointer;
 
-    static pstd::vector<ShapeHandle> Create(const std::string &name,
-                                            const Transform *renderFromObject,
-                                            const Transform *objectFromRender,
-                                            bool reverseOrientation,
-                                            const ParameterDictionary &parameters,
-                                            const FileLoc *loc, Allocator alloc);
+    static pstd::vector<Shape> Create(const std::string &name,
+                                      const Transform *renderFromObject,
+                                      const Transform *objectFromRender,
+                                      bool reverseOrientation,
+                                      const ParameterDictionary &parameters,
+                                      const FileLoc *loc, Allocator alloc);
     std::string ToString() const;
 
     PBRT_CPU_GPU inline Bounds3f Bounds() const;
@@ -52,15 +52,14 @@ class ShapeHandle
 
     PBRT_CPU_GPU inline Float Area() const;
 
-    PBRT_CPU_GPU inline pstd::optional<ShapeSample> Sample(const Point2f &u) const;
+    PBRT_CPU_GPU inline pstd::optional<ShapeSample> Sample(Point2f u) const;
 
     PBRT_CPU_GPU inline Float PDF(const Interaction &) const;
 
     PBRT_CPU_GPU inline pstd::optional<ShapeSample> Sample(const ShapeSampleContext &ctx,
-                                                           const Point2f &u) const;
+                                                           Point2f u) const;
 
-    PBRT_CPU_GPU inline Float PDF(const ShapeSampleContext &ctx,
-                                  const Vector3f &wi) const;
+    PBRT_CPU_GPU inline Float PDF(const ShapeSampleContext &ctx, Vector3f wi) const;
 };
 
 }  // namespace pbrt

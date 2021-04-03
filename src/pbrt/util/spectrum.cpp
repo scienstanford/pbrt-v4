@@ -31,7 +31,7 @@
 namespace pbrt {
 
 // Spectrum Function Definitions
-Float SpectrumToPhotometric(SpectrumHandle s) {
+Float SpectrumToPhotometric(Spectrum s) {
     // We have to handle RGBIlluminantSpectrum separately here as it's composed of an
     // illuminant spectrum and an RGB multiplier. We only want to consider the
     // illuminant for the sake of this calculation, and we should consider the
@@ -44,16 +44,15 @@ Float SpectrumToPhotometric(SpectrumHandle s) {
     for (Float lambda = Lambda_min; lambda <= Lambda_max; ++lambda)
         y += Spectra::Y()(lambda) * s(lambda);
 
-    const Float K_m = 683;
-    return y * K_m;
+    return y;
 }
 
-XYZ SpectrumToXYZ(SpectrumHandle s) {
+XYZ SpectrumToXYZ(Spectrum s) {
     return XYZ(InnerProduct(&Spectra::X(), s), InnerProduct(&Spectra::Y(), s),
                InnerProduct(&Spectra::Z(), s));
 }
 
-std::string SpectrumHandle::ToString() const {
+std::string Spectrum::ToString() const {
     if (!ptr())
         return "(nullptr)";
 
@@ -100,8 +99,8 @@ std::string PiecewiseLinearSpectrum::ToString() const {
     return ret + " ]";
 }
 
-pstd::optional<SpectrumHandle> PiecewiseLinearSpectrum::Read(const std::string &fn,
-                                                             Allocator alloc) {
+pstd::optional<Spectrum> PiecewiseLinearSpectrum::Read(const std::string &fn,
+                                                       Allocator alloc) {
     std::vector<Float> vals = ReadFloatFile(fn);
     if (vals.empty()) {
         Warning("%s: unable to read spectrum file.", fn);
@@ -123,9 +122,7 @@ pstd::optional<SpectrumHandle> PiecewiseLinearSpectrum::Read(const std::string &
             lambda.push_back(vals[2 * i]);
             v.push_back(vals[2 * i + 1]);
         }
-        SpectrumHandle handle =
-            alloc.new_object<PiecewiseLinearSpectrum>(lambda, v, alloc);
-        return handle;
+        return Spectrum(alloc.new_object<PiecewiseLinearSpectrum>(lambda, v, alloc));
     }
 }
 
@@ -2625,7 +2622,7 @@ DenselySampledSpectrum *x, *y, *z;
 
 namespace {
 
-std::map<std::string, SpectrumHandle> namedSpectra;
+std::map<std::string, Spectrum> namedSpectra;
 
 }  // namespace
 
@@ -2647,69 +2644,65 @@ void Init(Allocator alloc) {
     }
 #endif
 
-    SpectrumHandle illuma =
-        PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_A, true, alloc);
-    SpectrumHandle illumd50 =
+    Spectrum illuma = PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_A, true, alloc);
+    Spectrum illumd50 =
         PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_D5000, true, alloc);
-    SpectrumHandle illumacesd60 =
+    Spectrum illumacesd60 =
         PiecewiseLinearSpectrum::FromInterleaved(ACES_Illum_D60, true, alloc);
-    SpectrumHandle illumd65 =
+    Spectrum illumd65 =
         PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_D6500, true, alloc);
-    SpectrumHandle illumf1 =
+    Spectrum illumf1 =
         PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_F1, true, alloc);
-    SpectrumHandle illumf2 =
+    Spectrum illumf2 =
         PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_F2, true, alloc);
-    SpectrumHandle illumf3 =
+    Spectrum illumf3 =
         PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_F3, true, alloc);
-    SpectrumHandle illumf4 =
+    Spectrum illumf4 =
         PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_F4, true, alloc);
-    SpectrumHandle illumf5 =
+    Spectrum illumf5 =
         PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_F5, true, alloc);
-    SpectrumHandle illumf6 =
+    Spectrum illumf6 =
         PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_F6, true, alloc);
-    SpectrumHandle illumf7 =
+    Spectrum illumf7 =
         PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_F7, true, alloc);
-    SpectrumHandle illumf8 =
+    Spectrum illumf8 =
         PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_F8, true, alloc);
-    SpectrumHandle illumf9 =
+    Spectrum illumf9 =
         PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_F9, true, alloc);
-    SpectrumHandle illumf10 =
+    Spectrum illumf10 =
         PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_F10, true, alloc);
-    SpectrumHandle illumf11 =
+    Spectrum illumf11 =
         PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_F11, true, alloc);
-    SpectrumHandle illumf12 =
+    Spectrum illumf12 =
         PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_F12, true, alloc);
 
-    SpectrumHandle ageta = PiecewiseLinearSpectrum::FromInterleaved(Ag_eta, false, alloc);
-    SpectrumHandle agk = PiecewiseLinearSpectrum::FromInterleaved(Ag_k, false, alloc);
-    SpectrumHandle aleta = PiecewiseLinearSpectrum::FromInterleaved(Al_eta, false, alloc);
-    SpectrumHandle alk = PiecewiseLinearSpectrum::FromInterleaved(Al_k, false, alloc);
-    SpectrumHandle aueta = PiecewiseLinearSpectrum::FromInterleaved(Au_eta, false, alloc);
-    SpectrumHandle auk = PiecewiseLinearSpectrum::FromInterleaved(Au_k, false, alloc);
-    SpectrumHandle cueta = PiecewiseLinearSpectrum::FromInterleaved(Cu_eta, false, alloc);
-    SpectrumHandle cuk = PiecewiseLinearSpectrum::FromInterleaved(Cu_k, false, alloc);
-    SpectrumHandle cuzneta =
-        PiecewiseLinearSpectrum::FromInterleaved(CuZn_eta, false, alloc);
-    SpectrumHandle cuznk = PiecewiseLinearSpectrum::FromInterleaved(CuZn_k, false, alloc);
-    SpectrumHandle mgoeta =
-        PiecewiseLinearSpectrum::FromInterleaved(MgO_eta, false, alloc);
-    SpectrumHandle mgok = PiecewiseLinearSpectrum::FromInterleaved(MgO_k, false, alloc);
-    SpectrumHandle tio2eta =
-        PiecewiseLinearSpectrum::FromInterleaved(TiO2_eta, false, alloc);
-    SpectrumHandle tio2k = PiecewiseLinearSpectrum::FromInterleaved(TiO2_k, false, alloc);
-    SpectrumHandle glassbk7eta =
+    Spectrum ageta = PiecewiseLinearSpectrum::FromInterleaved(Ag_eta, false, alloc);
+    Spectrum agk = PiecewiseLinearSpectrum::FromInterleaved(Ag_k, false, alloc);
+    Spectrum aleta = PiecewiseLinearSpectrum::FromInterleaved(Al_eta, false, alloc);
+    Spectrum alk = PiecewiseLinearSpectrum::FromInterleaved(Al_k, false, alloc);
+    Spectrum aueta = PiecewiseLinearSpectrum::FromInterleaved(Au_eta, false, alloc);
+    Spectrum auk = PiecewiseLinearSpectrum::FromInterleaved(Au_k, false, alloc);
+    Spectrum cueta = PiecewiseLinearSpectrum::FromInterleaved(Cu_eta, false, alloc);
+    Spectrum cuk = PiecewiseLinearSpectrum::FromInterleaved(Cu_k, false, alloc);
+    Spectrum cuzneta = PiecewiseLinearSpectrum::FromInterleaved(CuZn_eta, false, alloc);
+    Spectrum cuznk = PiecewiseLinearSpectrum::FromInterleaved(CuZn_k, false, alloc);
+    Spectrum mgoeta = PiecewiseLinearSpectrum::FromInterleaved(MgO_eta, false, alloc);
+    Spectrum mgok = PiecewiseLinearSpectrum::FromInterleaved(MgO_k, false, alloc);
+    Spectrum tio2eta = PiecewiseLinearSpectrum::FromInterleaved(TiO2_eta, false, alloc);
+    Spectrum tio2k = PiecewiseLinearSpectrum::FromInterleaved(TiO2_k, false, alloc);
+    Spectrum glassbk7eta =
         PiecewiseLinearSpectrum::FromInterleaved(GlassBK7_eta, false, alloc);
-    SpectrumHandle glassbaf10eta =
+    Spectrum glassbaf10eta =
         PiecewiseLinearSpectrum::FromInterleaved(GlassBAF10_eta, false, alloc);
-    SpectrumHandle glassfk51aeta =
+    Spectrum glassfk51aeta =
         PiecewiseLinearSpectrum::FromInterleaved(GlassFK51A_eta, false, alloc);
-    SpectrumHandle glasslasf9eta =
+    Spectrum glasslasf9eta =
         PiecewiseLinearSpectrum::FromInterleaved(GlassLASF9_eta, false, alloc);
-    SpectrumHandle glasssf5eta =
+    Spectrum glasssf5eta =
         PiecewiseLinearSpectrum::FromInterleaved(GlassSF5_eta, false, alloc);
-    SpectrumHandle glasssf10eta =
+    Spectrum glasssf10eta =
         PiecewiseLinearSpectrum::FromInterleaved(GlassSF10_eta, false, alloc);
-    SpectrumHandle glasssf11eta =
+    Spectrum glasssf11eta =
         PiecewiseLinearSpectrum::FromInterleaved(GlassSF11_eta, false, alloc);
 
     namedSpectra = {
@@ -2876,15 +2869,15 @@ void Init(Allocator alloc) {
 
 }  // namespace Spectra
 
-SpectrumHandle GetNamedSpectrum(const std::string &name) {
+Spectrum GetNamedSpectrum(const std::string &name) {
     auto iter = Spectra::namedSpectra.find(name);
     if (iter != Spectra::namedSpectra.end())
         return iter->second;
     return nullptr;
 }
 
-std::string FindMatchingNamedSpectrum(SpectrumHandle s) {
-    auto sampledLambdasMatch = [](SpectrumHandle a, SpectrumHandle b) {
+std::string FindMatchingNamedSpectrum(Spectrum s) {
+    auto sampledLambdasMatch = [](Spectrum a, Spectrum b) {
         const Float wls[] = {306, 360.932007, 380, 402, 455, 503, 579,
                              610, 660,        692, 702, 760, 800, 860};
         for (Float lambda : wls)

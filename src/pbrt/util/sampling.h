@@ -28,23 +28,20 @@ namespace pbrt {
 
 // Sampling Function Declarations
 PBRT_CPU_GPU
-pstd::array<Float, 3> SampleSphericalTriangle(const pstd::array<Point3f, 3> &v,
-                                              const Point3f &p, const Point2f &u,
-                                              Float *pdf = nullptr);
+pstd::array<Float, 3> SampleSphericalTriangle(const pstd::array<Point3f, 3> &v, Point3f p,
+                                              Point2f u, Float *pdf = nullptr);
 
 PBRT_CPU_GPU
-Point2f InvertSphericalTriangleSample(const pstd::array<Point3f, 3> &v, const Point3f &p,
-                                      const Vector3f &w);
+Point2f InvertSphericalTriangleSample(const pstd::array<Point3f, 3> &v, Point3f p,
+                                      Vector3f w);
 
 PBRT_CPU_GPU
-Point3f SampleSphericalRectangle(const Point3f &p, const Point3f &v00, const Vector3f &ex,
-                                 const Vector3f &ey, const Point2f &u,
-                                 Float *pdf = nullptr);
+Point3f SampleSphericalRectangle(Point3f p, Point3f v00, Vector3f eu, Vector3f ev,
+                                 Point2f u, Float *pdf = nullptr);
 
 PBRT_CPU_GPU
-Point2f InvertSphericalRectangleSample(const Point3f &pRef, const Point3f &v00,
-                                       const Vector3f &ex, const Vector3f &ey,
-                                       const Point3f &pRect);
+Point2f InvertSphericalRectangleSample(Point3f pRef, Point3f v00, Vector3f eu,
+                                       Vector3f ev, Point3f pRect);
 
 PBRT_CPU_GPU
 Vector3f SampleHenyeyGreenstein(Vector3f wo, Float g, Point2f u, Float *pdf = nullptr);
@@ -67,19 +64,17 @@ Float SampleCatmullRom2D(pstd::span<const Float> nodes1, pstd::span<const Float>
                          Float *pdf = nullptr);
 
 // Sampling Inline Functions
-PBRT_CPU_GPU
-inline Float XYZMatchingPDF(Float lambda) {
+PBRT_CPU_GPU inline Float XYZMatchingPDF(Float lambda) {
     if (lambda < 360 || lambda > 830)
         return 0;
     return 0.0039398042f / Sqr(std::cosh(0.0072f * (lambda - 538)));
 }
 
-PBRT_CPU_GPU
-inline Float SampleXYZMatching(Float u) {
+PBRT_CPU_GPU inline Float SampleXYZMatching(Float u) {
     return 538 - 138.888889f * std::atanh(0.85691062f - 1.82750197f * u);
 }
 
-PBRT_CPU_GPU inline pstd::array<Float, 3> SampleUniformTriangle(const Point2f &u) {
+PBRT_CPU_GPU inline pstd::array<Float, 3> SampleUniformTriangle(Point2f u) {
     Float b0, b1;
     if (u[0] < u[1]) {
         b0 = u[0] / 2;
@@ -102,19 +97,17 @@ inline Point2f InvertUniformTriangleSample(const pstd::array<Float, 3> &b) {
     }
 }
 
-PBRT_CPU_GPU
-inline Float TentPDF(Float x, Float radius) {
-    if (std::abs(x) >= radius)
-        return 0;
-    return 1 / radius - std::abs(x) / Sqr(radius);
-}
-
-PBRT_CPU_GPU
-inline Float SampleTent(Float u, Float radius) {
+PBRT_CPU_GPU inline Float SampleTent(Float u, Float radius) {
     if (SampleDiscrete({0.5f, 0.5f}, u, nullptr, &u) == 0)
         return -radius + radius * SampleLinear(u, 0, 1);
     else
         return radius * SampleLinear(u, 1, 0);
+}
+
+PBRT_CPU_GPU inline Float TentPDF(Float x, Float radius) {
+    if (std::abs(x) >= radius)
+        return 0;
+    return 1 / radius - std::abs(x) / Sqr(radius);
 }
 
 PBRT_CPU_GPU
@@ -804,13 +797,16 @@ class PiecewiseConstant2D {
     Float Integral() const { return pMarginal.Integral(); }
 
     PBRT_CPU_GPU
-    Point2f Sample(const Point2f &u, Float *pdf = nullptr) const {
+    Point2f Sample(const Point2f &u, Float *pdf = nullptr,
+                   Point2i *offset = nullptr) const {
         Float pdfs[2];
-        int v;
-        Float d1 = pMarginal.Sample(u[1], &pdfs[1], &v);
-        Float d0 = pConditionalV[v].Sample(u[0], &pdfs[0]);
+        Point2i uv;
+        Float d1 = pMarginal.Sample(u[1], &pdfs[1], &uv[1]);
+        Float d0 = pConditionalV[uv[1]].Sample(u[0], &pdfs[0], &uv[0]);
         if (pdf != nullptr)
             *pdf = pdfs[0] * pdfs[1];
+        if (offset != nullptr)
+            *offset = uv;
         return Point2f(d0, d1);
     }
 
@@ -991,7 +987,7 @@ class WindowedPiecewiseConstant2D {
     }
 
     PBRT_CPU_GPU
-    Float PDF(const Point2f &p, const Bounds2f &b) const {
+    Float PDF(Point2f p, const Bounds2f &b) const {
         if (sat.Integral(b) == 0)
             return 0;
         return Eval(p) / sat.Integral(b);
@@ -1019,7 +1015,7 @@ class WindowedPiecewiseConstant2D {
     }
 
     PBRT_CPU_GPU
-    Float Eval(const Point2f &p) const {
+    Float Eval(Point2f p) const {
         Point2i pi(std::min<int>(p[0] * func.xSize(), func.xSize() - 1),
                    std::min<int>(p[1] * func.ySize(), func.ySize() - 1));
         return func[pi];
@@ -1482,7 +1478,7 @@ class PiecewiseLinear2D {
 
     struct PLSample {
         Vector2f p;
-        float pdf;
+        Float pdf;
     };
 
     /**
@@ -1511,10 +1507,10 @@ class PiecewiseLinear2D {
                 return m_param_values[dim].data()[idx] <= param[dim];
             });
 
-            float p0 = m_param_values[dim][param_index],
+            Float p0 = m_param_values[dim][param_index],
                   p1 = m_param_values[dim][param_index + 1];
 
-            param_weight[2 * dim + 1] = Clamp((param[dim] - p0) / (p1 - p0), 0.f, 1.f);
+            param_weight[2 * dim + 1] = Clamp((param[dim] - p0) / (p1 - p0), 0, 1);
             param_weight[2 * dim] = 1.f - param_weight[2 * dim + 1];
             slice_offset += m_param_strides[dim] * param_index;
         }
@@ -1539,7 +1535,7 @@ class PiecewiseLinear2D {
         if (Dimension != 0)
             offset += slice_offset * slice_size;
 
-        float r0 = lookup<Dimension>(m_conditional_cdf.data(), offset + m_size.x - 1,
+        Float r0 = lookup<Dimension>(m_conditional_cdf.data(), offset + m_size.x - 1,
                                      slice_size, param_weight),
               r1 =
                   lookup<Dimension>(m_conditional_cdf.data(), offset + (m_size.x * 2 - 1),
@@ -1569,7 +1565,7 @@ class PiecewiseLinear2D {
 
         offset += col;
 
-        float v00 = lookup<Dimension>(m_data.data(), offset, slice_size, param_weight),
+        Float v00 = lookup<Dimension>(m_data.data(), offset, slice_size, param_weight),
               v10 =
                   lookup<Dimension>(m_data.data() + 1, offset, slice_size, param_weight),
               v01 = lookup<Dimension>(m_data.data() + m_size.x, offset, slice_size,
@@ -1626,7 +1622,7 @@ class PiecewiseLinear2D {
             offset += slice_offset * slice_size;
 
         /* Invert the X component */
-        float v00 = lookup<Dimension>(m_data.data(), offset, slice_size, param_weight),
+        Float v00 = lookup<Dimension>(m_data.data(), offset, slice_size, param_weight),
               v10 =
                   lookup<Dimension>(m_data.data() + 1, offset, slice_size, param_weight),
               v01 = lookup<Dimension>(m_data.data() + m_size.x, offset, slice_size,
@@ -1636,12 +1632,12 @@ class PiecewiseLinear2D {
 
         Vector2f w1 = sample, w0 = Vector2f(1, 1) - w1;
 
-        float c0 = FMA(w0.y, v00, w1.y * v01), c1 = FMA(w0.y, v10, w1.y * v11),
+        Float c0 = FMA(w0.y, v00, w1.y * v01), c1 = FMA(w0.y, v10, w1.y * v11),
               pdf = FMA(w0.x, c0, w1.x * c1);
 
         sample.x *= c0 + .5f * sample.x * (c1 - c0);
 
-        float v0 = lookup<Dimension>(m_conditional_cdf.data(), offset, slice_size,
+        Float v0 = lookup<Dimension>(m_conditional_cdf.data(), offset, slice_size,
                                      param_weight),
               v1 = lookup<Dimension>(m_conditional_cdf.data() + m_size.x, offset,
                                      slice_size, param_weight);
@@ -1652,7 +1648,7 @@ class PiecewiseLinear2D {
         if (Dimension != 0)
             offset += slice_offset * slice_size;
 
-        float r0 = lookup<Dimension>(m_conditional_cdf.data(), offset + m_size.x - 1,
+        Float r0 = lookup<Dimension>(m_conditional_cdf.data(), offset + m_size.x - 1,
                                      slice_size, param_weight),
               r1 =
                   lookup<Dimension>(m_conditional_cdf.data(), offset + (m_size.x * 2 - 1),
@@ -1715,7 +1711,7 @@ class PiecewiseLinear2D {
         if (Dimension != 0)
             index += slice_offset * size;
 
-        float v00 = lookup<Dimension>(m_data.data(), index, size, param_weight),
+        Float v00 = lookup<Dimension>(m_data.data(), index, size, param_weight),
               v10 = lookup<Dimension>(m_data.data() + 1, index, size, param_weight),
               v01 =
                   lookup<Dimension>(m_data.data() + m_size.x, index, size, param_weight),
@@ -1737,11 +1733,11 @@ class PiecewiseLinear2D {
 
   private:
     template <size_t Dim, std::enable_if_t<Dim != 0, int> = 0>
-    PBRT_CPU_GPU float lookup(const float *data, uint32_t i0, uint32_t size,
+    PBRT_CPU_GPU Float lookup(const float *data, uint32_t i0, uint32_t size,
                               const float *param_weight) const {
         uint32_t i1 = i0 + m_param_strides[Dim - 1] * size;
 
-        float w0 = param_weight[2 * Dim - 2], w1 = param_weight[2 * Dim - 1],
+        Float w0 = param_weight[2 * Dim - 2], w1 = param_weight[2 * Dim - 1],
               v0 = lookup<Dim - 1>(data, i0, size, param_weight),
               v1 = lookup<Dim - 1>(data, i1, size, param_weight);
 
@@ -1749,7 +1745,7 @@ class PiecewiseLinear2D {
     }
 
     template <size_t Dim, std::enable_if_t<Dim == 0, int> = 0>
-    PBRT_CPU_GPU float lookup(const float *data, uint32_t index, uint32_t,
+    PBRT_CPU_GPU Float lookup(const float *data, uint32_t index, uint32_t,
                               const float *) const {
         return data[index];
     }

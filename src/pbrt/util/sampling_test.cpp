@@ -144,41 +144,12 @@ TEST(LowDiscrepancy, RadicalInverse) {
     }
 }
 
-TEST(LowDiscrepancy, Sobol) {
-    // Check that float and double variants match (as float values).
-    for (int i = 0; i < 256; ++i) {
-        for (int dim = 0; dim < 100; ++dim) {
-            EXPECT_EQ(SobolSampleFloat(i, dim, NoRandomizer()),
-                      (float)SobolSampleDouble(i, dim, NoRandomizer()));
-        }
-    }
-
+TEST(LowDiscrepancy, SobolFirstDimension) {
     // Make sure first dimension is the regular base 2 radical inverse
     for (int i = 0; i < 8192; ++i) {
-        EXPECT_EQ(SobolSampleFloat(i, 0, NoRandomizer()),
+        EXPECT_EQ(SobolSample(i, 0, NoRandomizer()),
                   ReverseBits32(i) * 2.3283064365386963e-10f);
     }
-}
-
-TEST(CranleyPattersonRotator, Basics) {
-    auto toFixed = [](Float v) { return uint32_t(v * 0x1p+32); };
-    auto fromFixed = [](uint32_t v) { return Float(v) * 0x1p-32; };
-    EXPECT_EQ(0, toFixed(0));
-    EXPECT_EQ(0x80000000, toFixed(0.5f));
-    EXPECT_EQ(0x40000000, toFixed(0.25f));
-    EXPECT_EQ(fromFixed(0x80000000), 0.5f);
-    EXPECT_EQ(fromFixed(0xc0000000), 0.75f);
-    for (int i = 1; i < 31; ++i) {
-        Float v = 1.f / (1 << i);
-        EXPECT_EQ(toFixed(v), 1u << (32 - i));
-        EXPECT_EQ(fromFixed(1u << (32 - i)), v);
-    }
-
-    EXPECT_EQ(toFixed(0.5), CranleyPattersonRotator(0.5f)(0));
-    EXPECT_EQ(toFixed(0.5), CranleyPattersonRotator(0.25f)(toFixed(0.25)));
-    EXPECT_EQ(toFixed(0.5), CranleyPattersonRotator(toFixed(0.25f))(toFixed(0.25)));
-    EXPECT_EQ(toFixed(0.75), CranleyPattersonRotator(toFixed(0.5f))(toFixed(0.25)));
-    EXPECT_EQ(toFixed(0.375f), CranleyPattersonRotator(toFixed(0.25f))(toFixed(0.125)));
 }
 
 TEST(Sobol, IntervalToIndex) {
@@ -481,10 +452,14 @@ TEST(Sampling, SphericalTriangleInverse) {
                        Lerp(rng.Uniform<Float>(), low, high));
     };
 
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < 100; ++i) {
         pstd::array<Point3f, 3> v = {rp(), rp(), rp()};
         Point3f p = rp(-1, 1);
-        for (int j = 0; j < 10; ++j) {
+        if (SphericalTriangleArea(Normalize(v[0] - p), Normalize(v[1] - p),
+                                  Normalize(v[2] - p)) < 5e-3)
+            continue;
+
+        for (int j = 0; j < 100; ++j) {
             Float pdf;
             Point2f u(rng.Uniform<Float>(), rng.Uniform<Float>());
             pstd::array<Float, 3> bs = SampleSphericalTriangle(v, p, u, &pdf);
@@ -494,14 +469,14 @@ TEST(Sampling, SphericalTriangleInverse) {
             Point2f ui = InvertSphericalTriangleSample(v, p, Normalize(pTri - p));
 
             auto err = [](Float a, Float ref) {
-                if (ref < 1e-3)
+                if (ref < 0.05f)
                     return std::abs(a - ref);
                 else
                     return std::abs((a - ref) / ref);
             };
-            // The tolerance has to be fiarly high, unfortunately...
-            EXPECT_LT(err(ui[0], u[0]), 0.04f) << u << " vs inverse " << ui;
-            EXPECT_LT(err(ui[1], u[1]), 0.04f) << u << " vs inverse " << ui;
+            // The tolerance has to be fairly high, unfortunately...
+            EXPECT_LT(std::abs(ui[0] - u[0]), 0.025f) << u << " vs inverse " << ui;
+            EXPECT_LT(err(ui[1], u[1]), 0.005f) << u << " vs inverse " << ui;
         }
     }
 }

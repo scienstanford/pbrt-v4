@@ -20,9 +20,9 @@
 
 namespace pbrt {
 
-TextureMapping2DHandle TextureMapping2DHandle::Create(
-    const ParameterDictionary &parameters, const Transform &renderFromTexture,
-    const FileLoc *loc, Allocator alloc) {
+TextureMapping2D TextureMapping2D::Create(const ParameterDictionary &parameters,
+                                          const Transform &renderFromTexture,
+                                          const FileLoc *loc, Allocator alloc) {
     std::string type = parameters.GetOneString("mapping", "uv");
     if (type == "uv") {
         Float su = parameters.GetOneFloat("uscale", 1.);
@@ -45,13 +45,13 @@ TextureMapping2DHandle TextureMapping2DHandle::Create(
     }
 }
 
-TextureMapping3DHandle TextureMapping3DHandle::Create(
-    const ParameterDictionary &parameters, const Transform &renderFromTexture,
-    const FileLoc *loc, Allocator alloc) {
+TextureMapping3D TextureMapping3D::Create(const ParameterDictionary &parameters,
+                                          const Transform &renderFromTexture,
+                                          const FileLoc *loc, Allocator alloc) {
     return alloc.new_object<TransformMapping3D>(Inverse(renderFromTexture));
 }
 
-std::string FloatTextureHandle::ToString() const {
+std::string FloatTexture::ToString() const {
     if (ptr() == nullptr)
         return "(nullptr)";
 
@@ -59,7 +59,7 @@ std::string FloatTextureHandle::ToString() const {
     return DispatchCPU(toStr);
 }
 
-std::string SpectrumTextureHandle::ToString() const {
+std::string SpectrumTexture::ToString() const {
     if (ptr() == nullptr)
         return "(nullptr)";
 
@@ -107,8 +107,8 @@ std::string SpectrumConstantTexture::ToString() const {
 SpectrumConstantTexture *SpectrumConstantTexture::Create(
     const Transform &renderFromTexture, const TextureParameterDictionary &parameters,
     SpectrumType spectrumType, const FileLoc *loc, Allocator alloc) {
-    SpectrumHandle one = alloc.new_object<ConstantSpectrum>(1.);
-    SpectrumHandle c = parameters.GetOneSpectrum("value", one, spectrumType, alloc);
+    Spectrum one = alloc.new_object<ConstantSpectrum>(1.);
+    Spectrum c = parameters.GetOneSpectrum("value", one, spectrumType, alloc);
     return alloc.new_object<SpectrumConstantTexture>(c);
 }
 
@@ -116,8 +116,8 @@ FloatBilerpTexture *FloatBilerpTexture::Create(
     const Transform &renderFromTexture, const TextureParameterDictionary &parameters,
     const FileLoc *loc, Allocator alloc) {
     // Initialize 2D texture mapping _map_ from _tp_
-    TextureMapping2DHandle map =
-        TextureMapping2DHandle::Create(parameters, renderFromTexture, loc, alloc);
+    TextureMapping2D map =
+        TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
 
     return alloc.new_object<FloatBilerpTexture>(
         map, parameters.GetOneFloat("v00", 0.f), parameters.GetOneFloat("v01", 1.f),
@@ -134,11 +134,11 @@ SpectrumBilerpTexture *SpectrumBilerpTexture::Create(
     const Transform &renderFromTexture, const TextureParameterDictionary &parameters,
     SpectrumType spectrumType, const FileLoc *loc, Allocator alloc) {
     // Initialize 2D texture mapping _map_ from _tp_
-    TextureMapping2DHandle map =
-        TextureMapping2DHandle::Create(parameters, renderFromTexture, loc, alloc);
+    TextureMapping2D map =
+        TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
 
-    SpectrumHandle zero = alloc.new_object<ConstantSpectrum>(0.);
-    SpectrumHandle one = alloc.new_object<ConstantSpectrum>(1.);
+    Spectrum zero = alloc.new_object<ConstantSpectrum>(0.);
+    Spectrum one = alloc.new_object<ConstantSpectrum>(1.);
 
     return alloc.new_object<SpectrumBilerpTexture>(
         map, parameters.GetOneSpectrum("v00", zero, spectrumType, alloc),
@@ -154,8 +154,8 @@ std::string SpectrumBilerpTexture::ToString() const {
 }
 
 // CheckerboardTexture Function Definitions
-Float Checkerboard(TextureEvalContext ctx, TextureMapping2DHandle map2D,
-                   TextureMapping3DHandle map3D) {
+Float Checkerboard(TextureEvalContext ctx, TextureMapping2D map2D,
+                   TextureMapping3D map3D) {
     // Define 1D checkerboard filtered integral functions
     auto d = [](Float x) {
         Float y = x / 2 - std::floor(x / 2) - 0.5f;
@@ -200,18 +200,18 @@ FloatCheckerboardTexture *FloatCheckerboardTexture::Create(
         Error(loc, "%d dimensional checkerboard texture not supported", dim);
         return nullptr;
     }
-    FloatTextureHandle tex1 = parameters.GetFloatTexture("tex1", 1.f, alloc);
-    FloatTextureHandle tex2 = parameters.GetFloatTexture("tex2", 0.f, alloc);
+    FloatTexture tex1 = parameters.GetFloatTexture("tex1", 1.f, alloc);
+    FloatTexture tex2 = parameters.GetFloatTexture("tex2", 0.f, alloc);
     if (dim == 2) {
         // Initialize 2D texture mapping _map_ from _tp_
-        TextureMapping2DHandle map =
-            TextureMapping2DHandle::Create(parameters, renderFromTexture, loc, alloc);
+        TextureMapping2D map =
+            TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
 
         return alloc.new_object<FloatCheckerboardTexture>(map, nullptr, tex1, tex2);
     } else {
         // Initialize 3D texture mapping _map_ from _tp_
-        TextureMapping3DHandle map =
-            TextureMapping3DHandle::Create(parameters, renderFromTexture, loc, alloc);
+        TextureMapping3D map =
+            TextureMapping3D::Create(parameters, renderFromTexture, loc, alloc);
         return alloc.new_object<FloatCheckerboardTexture>(nullptr, map, tex1, tex2);
     }
 }
@@ -232,23 +232,23 @@ SpectrumCheckerboardTexture *SpectrumCheckerboardTexture::Create(
         return nullptr;
     }
 
-    SpectrumHandle zero = alloc.new_object<ConstantSpectrum>(0.);
-    SpectrumHandle one = alloc.new_object<ConstantSpectrum>(1.);
+    Spectrum zero = alloc.new_object<ConstantSpectrum>(0.);
+    Spectrum one = alloc.new_object<ConstantSpectrum>(1.);
 
-    SpectrumTextureHandle tex1 =
+    SpectrumTexture tex1 =
         parameters.GetSpectrumTexture("tex1", one, spectrumType, alloc);
-    SpectrumTextureHandle tex2 =
+    SpectrumTexture tex2 =
         parameters.GetSpectrumTexture("tex2", zero, spectrumType, alloc);
     if (dim == 2) {
         // Initialize 2D texture mapping _map_ from _tp_
-        TextureMapping2DHandle map =
-            TextureMapping2DHandle::Create(parameters, renderFromTexture, loc, alloc);
+        TextureMapping2D map =
+            TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
 
         return alloc.new_object<SpectrumCheckerboardTexture>(map, nullptr, tex1, tex2);
     } else {
         // Initialize 3D texture mapping _map_ from _tp_
-        TextureMapping3DHandle map =
-            TextureMapping3DHandle::Create(parameters, renderFromTexture, loc, alloc);
+        TextureMapping3D map =
+            TextureMapping3D::Create(parameters, renderFromTexture, loc, alloc);
         return alloc.new_object<SpectrumCheckerboardTexture>(nullptr, map, tex1, tex2);
     }
 }
@@ -282,8 +282,8 @@ FloatDotsTexture *FloatDotsTexture::Create(const Transform &renderFromTexture,
                                            const TextureParameterDictionary &parameters,
                                            const FileLoc *loc, Allocator alloc) {
     // Initialize 2D texture mapping _map_ from _tp_
-    TextureMapping2DHandle map =
-        TextureMapping2DHandle::Create(parameters, renderFromTexture, loc, alloc);
+    TextureMapping2D map =
+        TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
 
     return alloc.new_object<FloatDotsTexture>(
         map, parameters.GetFloatTexture("inside", 1.f, alloc),
@@ -299,10 +299,10 @@ SpectrumDotsTexture *SpectrumDotsTexture::Create(
     const Transform &renderFromTexture, const TextureParameterDictionary &parameters,
     SpectrumType spectrumType, const FileLoc *loc, Allocator alloc) {
     // Initialize 2D texture mapping _map_ from _tp_
-    TextureMapping2DHandle map =
-        TextureMapping2DHandle::Create(parameters, renderFromTexture, loc, alloc);
-    SpectrumHandle zero = alloc.new_object<ConstantSpectrum>(0.);
-    SpectrumHandle one = alloc.new_object<ConstantSpectrum>(1.);
+    TextureMapping2D map =
+        TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
+    Spectrum zero = alloc.new_object<ConstantSpectrum>(0.);
+    Spectrum one = alloc.new_object<ConstantSpectrum>(1.);
 
     return alloc.new_object<SpectrumDotsTexture>(
         map, parameters.GetSpectrumTexture("inside", one, spectrumType, alloc),
@@ -320,8 +320,8 @@ FBmTexture *FBmTexture::Create(const Transform &renderFromTexture,
                                const TextureParameterDictionary &parameters,
                                const FileLoc *loc, Allocator alloc) {
     // Initialize 3D texture mapping _map_ from _tp_
-    TextureMapping3DHandle map =
-        TextureMapping3DHandle::Create(parameters, renderFromTexture, loc, alloc);
+    TextureMapping3D map =
+        TextureMapping3D::Create(parameters, renderFromTexture, loc, alloc);
     return alloc.new_object<FBmTexture>(map, parameters.GetOneInt("octaves", 8),
                                         parameters.GetOneFloat("roughness", .5f));
 }
@@ -388,8 +388,8 @@ FloatImageTexture *FloatImageTexture::Create(const Transform &renderFromTexture,
                                              const TextureParameterDictionary &parameters,
                                              const FileLoc *loc, Allocator alloc) {
     // Initialize 2D texture mapping _map_ from _tp_
-    TextureMapping2DHandle map =
-        TextureMapping2DHandle::Create(parameters, renderFromTexture, loc, alloc);
+    TextureMapping2D map =
+        TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
 
     // Initialize _ImageTexture_ parameters
     Float maxAniso = parameters.GetOneFloat("maxanisotropy", 8.f);
@@ -412,7 +412,7 @@ FloatImageTexture *FloatImageTexture::Create(const Transform &renderFromTexture,
 
     const char *defaultEncoding = HasExtension(filename, "png") ? "sRGB" : "linear";
     std::string encodingString = parameters.GetOneString("encoding", defaultEncoding);
-    ColorEncodingHandle encoding = ColorEncodingHandle::Get(encodingString, alloc);
+    ColorEncoding encoding = ColorEncoding::Get(encodingString, alloc);
 
     return alloc.new_object<FloatImageTexture>(map, filename, filterOptions, *wrapMode,
                                                scale, invert, encoding, alloc);
@@ -422,8 +422,8 @@ SpectrumImageTexture *SpectrumImageTexture::Create(
     const Transform &renderFromTexture, const TextureParameterDictionary &parameters,
     SpectrumType spectrumType, const FileLoc *loc, Allocator alloc) {
     // Initialize 2D texture mapping _map_ from _tp_
-    TextureMapping2DHandle map =
-        TextureMapping2DHandle::Create(parameters, renderFromTexture, loc, alloc);
+    TextureMapping2D map =
+        TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
 
     // Initialize _ImageTexture_ parameters
     Float maxAniso = parameters.GetOneFloat("maxanisotropy", 8.f);
@@ -446,7 +446,7 @@ SpectrumImageTexture *SpectrumImageTexture::Create(
 
     const char *defaultEncoding = HasExtension(filename, "png") ? "sRGB" : "linear";
     std::string encodingString = parameters.GetOneString("encoding", defaultEncoding);
-    ColorEncodingHandle encoding = ColorEncodingHandle::Get(encodingString, alloc);
+    ColorEncoding encoding = ColorEncoding::Get(encodingString, alloc);
 
     return alloc.new_object<SpectrumImageTexture>(map, filename, filterOptions, *wrapMode,
                                                   scale, invert, encoding, spectrumType,
@@ -489,8 +489,8 @@ MarbleTexture *MarbleTexture::Create(const Transform &renderFromTexture,
                                      const TextureParameterDictionary &parameters,
                                      const FileLoc *loc, Allocator alloc) {
     // Initialize 3D texture mapping _map_ from _tp_
-    TextureMapping3DHandle map =
-        TextureMapping3DHandle::Create(parameters, renderFromTexture, loc, alloc);
+    TextureMapping3D map =
+        TextureMapping3D::Create(parameters, renderFromTexture, loc, alloc);
     return alloc.new_object<MarbleTexture>(
         map, parameters.GetOneInt("octaves", 8), parameters.GetOneFloat("roughness", .5f),
         parameters.GetOneFloat("scale", 1.f), parameters.GetOneFloat("variation", .2f));
@@ -519,8 +519,8 @@ FloatMixTexture *FloatMixTexture::Create(const Transform &renderFromTexture,
 SpectrumMixTexture *SpectrumMixTexture::Create(
     const Transform &renderFromTexture, const TextureParameterDictionary &parameters,
     SpectrumType spectrumType, const FileLoc *loc, Allocator alloc) {
-    SpectrumHandle zero = alloc.new_object<ConstantSpectrum>(0.);
-    SpectrumHandle one = alloc.new_object<ConstantSpectrum>(1.);
+    Spectrum zero = alloc.new_object<ConstantSpectrum>(0.);
+    Spectrum one = alloc.new_object<ConstantSpectrum>(1.);
     return alloc.new_object<SpectrumMixTexture>(
         parameters.GetSpectrumTexture("tex1", zero, spectrumType, alloc),
         parameters.GetSpectrumTexture("tex2", one, spectrumType, alloc),
@@ -533,6 +533,8 @@ STAT_COUNTER("Texture/Ptex lookups", nLookups);
 STAT_COUNTER("Texture/Ptex files accessed", nFilesAccessed);
 STAT_COUNTER("Texture/Ptex block reads", nBlockReads);
 STAT_MEMORY_COUNTER("Memory/Ptex peak memory used", peakMemoryUsed);
+STAT_MEMORY_COUNTER("Memory/GPU Ptex memory used", gpuPtexMemoryUsed);
+STAT_RATIO("Texture/Ptex file cache hits", ptexCacheHits, ptexCacheLookups);
 
 struct : public PtexErrorHandler {
     void reportError(const char *error) override { Error("%s", error); }
@@ -540,9 +542,11 @@ struct : public PtexErrorHandler {
 
 // PtexTexture Method Definitions
 
-PtexTextureBase::PtexTextureBase(const std::string &filename,
-                                 ColorEncodingHandle encoding)
-    : filename(filename), encoding(encoding) {
+PtexTextureBase::PtexTextureBase(const std::string &filename, ColorEncoding encoding,
+                                 Float scale)
+    : filename(filename), encoding(encoding), scale(scale) {
+    std::mutex mutex;
+    mutex.lock();
     if (cache == nullptr) {
         int maxFiles = 100;
         size_t maxMem = 1ull << 32;  // 4GB
@@ -552,6 +556,7 @@ PtexTextureBase::PtexTextureBase(const std::string &filename,
                                         &errorHandler);
         // TODO? cache->setSearchPath(...);
     }
+    mutex.unlock();
 
     // Issue an error if the texture doesn't exist or has an unsupported
     // number of channels.
@@ -563,10 +568,8 @@ PtexTextureBase::PtexTextureBase(const std::string &filename,
     else {
         if (texture->numChannels() != 1 && texture->numChannels() != 3)
             Error("%s: only one and three channel ptex textures are supported", filename);
-        else {
+        else
             valid = true;
-            LOG_VERBOSE("%s: added ptex texture", filename);
-        }
         texture->release();
     }
 }
@@ -604,7 +607,7 @@ int PtexTextureBase::SampleTexture(TextureEvalContext ctx, float result[3]) cons
     filter->release();
     texture->release();
 
-    if (encoding != ColorEncodingHandle::Linear) {
+    if (encoding != ColorEncoding::Linear) {
         // It feels a little dirty to convert to 8-bits to run through the
         // encoding, but it's probably fine.
         uint8_t result8[3];
@@ -618,11 +621,15 @@ int PtexTextureBase::SampleTexture(TextureEvalContext ctx, float result[3]) cons
             result[c] = fResult[c];
     }
 
+    for (int c = 0; c < nc; ++c)
+        result[c] *= scale;
+
     return nc;
 }
 
 std::string PtexTextureBase::BaseToString() const {
-    return StringPrintf("valid: %s filename: %s encoding: %s", valid, filename, encoding);
+    return StringPrintf("valid: %s filename: %s encoding: %s scale: %f", valid, filename,
+                        encoding, scale);
 }
 
 std::string FloatPtexTexture::ToString() const {
@@ -673,8 +680,9 @@ FloatPtexTexture *FloatPtexTexture::Create(const Transform &renderFromTexture,
                                            const FileLoc *loc, Allocator alloc) {
     std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
     std::string encodingString = parameters.GetOneString("encoding", "gamma 2.2");
-    ColorEncodingHandle encoding = ColorEncodingHandle::Get(encodingString, alloc);
-    return alloc.new_object<FloatPtexTexture>(filename, encoding);
+    ColorEncoding encoding = ColorEncoding::Get(encodingString, alloc);
+    Float scale = parameters.GetOneFloat("scale", 1.f);
+    return alloc.new_object<FloatPtexTexture>(filename, encoding, scale);
 }
 
 SpectrumPtexTexture *SpectrumPtexTexture::Create(
@@ -682,8 +690,137 @@ SpectrumPtexTexture *SpectrumPtexTexture::Create(
     SpectrumType spectrumType, const FileLoc *loc, Allocator alloc) {
     std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
     std::string encodingString = parameters.GetOneString("encoding", "gamma 2.2");
-    ColorEncodingHandle encoding = ColorEncodingHandle::Get(encodingString, alloc);
-    return alloc.new_object<SpectrumPtexTexture>(filename, encoding, spectrumType);
+    ColorEncoding encoding = ColorEncoding::Get(encodingString, alloc);
+    Float scale = parameters.GetOneFloat("scale", 1.f);
+    return alloc.new_object<SpectrumPtexTexture>(filename, encoding, scale, spectrumType);
+}
+
+GPUFloatPtexTexture::GPUFloatPtexTexture(const std::string &filename,
+                                         ColorEncoding encoding, Float scale,
+                                         Allocator alloc)
+    : faceValues(alloc) {
+    FloatPtexTexture tex(filename, encoding, scale);
+
+    Ptex::String error;
+    Ptex::PtexTexture *texture = cache->get(filename.c_str(), error);
+    CHECK(texture != nullptr);
+    int nFaces = texture->getInfo().numFaces;
+    texture->release();
+
+    faceValues.resize(nFaces);
+    for (int i = 0; i < nFaces; ++i) {
+        Float filterWidth = 0.75f;
+        TextureEvalContext ctx(Point3f(), Vector3f(), Vector3f(), Point2f(0.5f, 0.5f),
+                               filterWidth, filterWidth, filterWidth, filterWidth, i);
+        faceValues[i] = Evaluate(ctx);
+    }
+
+    gpuPtexMemoryUsed += nFaces * sizeof(faceValues[0]);
+}
+
+static std::mutex ptexCacheMutex;
+static std::map<std::tuple<std::string, std::string, Float>, GPUFloatPtexTexture *>
+    ptexFloatTextureCache;
+
+GPUFloatPtexTexture *GPUFloatPtexTexture::Create(
+    const Transform &renderFromTexture, const TextureParameterDictionary &parameters,
+    const FileLoc *loc, Allocator alloc) {
+    std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
+    std::string encodingString = parameters.GetOneString("encoding", "gamma 2.2");
+    Float scale = parameters.GetOneFloat("scale", 1.f);
+
+    auto key = std::make_tuple(filename, encodingString, scale);
+    ++ptexCacheLookups;
+    ptexCacheMutex.lock();
+    if (auto iter = ptexFloatTextureCache.find(key);
+        iter != ptexFloatTextureCache.end()) {
+        GPUFloatPtexTexture *tex = iter->second;
+        ptexCacheMutex.unlock();
+        ++ptexCacheHits;
+        return tex;
+    } else {
+        ptexCacheMutex.unlock();
+        ColorEncoding encoding = ColorEncoding::Get(encodingString, alloc);
+        GPUFloatPtexTexture *tex =
+            alloc.new_object<GPUFloatPtexTexture>(filename, encoding, scale, alloc);
+
+        ptexCacheMutex.lock();
+        CHECK(ptexFloatTextureCache.find(key) == ptexFloatTextureCache.end());
+        ptexFloatTextureCache[key] = tex;
+        ptexCacheMutex.unlock();
+        return tex;
+    }
+}
+
+std::string GPUFloatPtexTexture::ToString() const {
+    return StringPrintf("[ GPUFloatPtexTexture faceValues: %s ]", faceValues);
+}
+
+GPUSpectrumPtexTexture::GPUSpectrumPtexTexture(const std::string &filename,
+                                               ColorEncoding encoding, Float scale,
+                                               SpectrumType spectrumType, Allocator alloc)
+    : spectrumType(spectrumType), faceValues(alloc) {
+    SpectrumPtexTexture tex(filename, encoding, scale, spectrumType);
+
+    Ptex::String error;
+    Ptex::PtexTexture *texture = cache->get(filename.c_str(), error);
+    CHECK(texture != nullptr);
+    int nFaces = texture->getInfo().numFaces;
+    texture->release();
+
+    faceValues.resize(nFaces);
+    for (int i = 0; i < nFaces; ++i) {
+        Float filterWidth = 0.75f;
+        TextureEvalContext ctx(Point3f(), Vector3f(), Vector3f(), Point2f(0.5f, 0.5f),
+                               filterWidth, filterWidth, filterWidth, filterWidth, i);
+
+        float result[3];
+        int nc = tex.SampleTexture(ctx, result);
+        if (nc == 1)
+            result[1] = result[2] = result[0];
+        else
+            DCHECK_EQ(3, nc);
+
+        faceValues[i] = RGB(result[0], result[1], result[2]);
+    }
+
+    gpuPtexMemoryUsed += nFaces * sizeof(faceValues[0]);
+}
+
+static std::map<std::tuple<std::string, std::string, Float>, GPUSpectrumPtexTexture *>
+    ptexSpectrumTextureCache;
+
+GPUSpectrumPtexTexture *GPUSpectrumPtexTexture::Create(
+    const Transform &renderFromTexture, const TextureParameterDictionary &parameters,
+    SpectrumType spectrumType, const FileLoc *loc, Allocator alloc) {
+    std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
+    std::string encodingString = parameters.GetOneString("encoding", "gamma 2.2");
+    Float scale = parameters.GetOneFloat("scale", 1.f);
+
+    auto key = std::make_tuple(filename, encodingString, scale);
+    ptexCacheMutex.lock();
+    if (auto iter = ptexSpectrumTextureCache.find(key);
+        iter != ptexSpectrumTextureCache.end()) {
+        GPUSpectrumPtexTexture *tex = iter->second;
+        ptexCacheMutex.unlock();
+        return tex;
+    } else {
+        ptexCacheMutex.unlock();
+        ColorEncoding encoding = ColorEncoding::Get(encodingString, alloc);
+        GPUSpectrumPtexTexture *tex = alloc.new_object<GPUSpectrumPtexTexture>(
+            filename, encoding, scale, spectrumType, alloc);
+
+        ptexCacheMutex.lock();
+        CHECK(ptexSpectrumTextureCache.find(key) == ptexSpectrumTextureCache.end());
+        ptexSpectrumTextureCache[key] = tex;
+        ptexCacheMutex.unlock();
+        return tex;
+    }
+}
+
+std::string GPUSpectrumPtexTexture::ToString() const {
+    return StringPrintf("[ GPUSpectrumPtexTexture spectrumType: %s faceValues: %s ]",
+                        spectrumType, faceValues);
 }
 
 // ScaledTexture Method Definitions
@@ -695,23 +832,21 @@ std::string SpectrumScaledTexture::ToString() const {
     return StringPrintf("[ SpectrumScaledTexture tex: %s scale: %s ]", tex, scale);
 }
 
-FloatTextureHandle FloatScaledTexture::Create(
-    const Transform &renderFromTexture, const TextureParameterDictionary &parameters,
-    const FileLoc *loc, Allocator alloc) {
-    FloatTextureHandle tex = parameters.GetFloatTexture("tex", 1.f, alloc);
-    FloatTextureHandle scale = parameters.GetFloatTexture("scale", 1.f, alloc);
+FloatTexture FloatScaledTexture::Create(const Transform &renderFromTexture,
+                                        const TextureParameterDictionary &parameters,
+                                        const FileLoc *loc, Allocator alloc) {
+    FloatTexture tex = parameters.GetFloatTexture("tex", 1.f, alloc);
+    FloatTexture scale = parameters.GetFloatTexture("scale", 1.f, alloc);
 
     for (int i = 0; i < 2; ++i) {
         if (FloatConstantTexture *cscale = scale.CastOrNullptr<FloatConstantTexture>()) {
             Float cs = cscale->Evaluate({});
             if (cs == 1) {
-                LOG_VERBOSE("Dropping useless scale by 1");
                 return tex;
             } else if (FloatImageTexture *image =
                            tex.CastOrNullptr<FloatImageTexture>()) {
                 FloatImageTexture *imageCopy =
                     alloc.new_object<FloatImageTexture>(*image);
-                LOG_VERBOSE("Flattened scale %f * image texture", cs);
                 imageCopy->MultiplyScale(cs);
                 return imageCopy;
             }
@@ -720,7 +855,6 @@ FloatTextureHandle FloatScaledTexture::Create(
                          tex.CastOrNullptr<GPUFloatImageTexture>()) {
                 GPUFloatImageTexture *gimageCopy =
                     alloc.new_object<GPUFloatImageTexture>(*gimage);
-                LOG_VERBOSE("Flattened scale %f * gpu image texture", cs);
                 gimageCopy->MultiplyScale(cs);
                 return gimageCopy;
             }
@@ -733,24 +867,21 @@ FloatTextureHandle FloatScaledTexture::Create(
     return alloc.new_object<FloatScaledTexture>(tex, scale);
 }
 
-SpectrumTextureHandle SpectrumScaledTexture::Create(
+SpectrumTexture SpectrumScaledTexture::Create(
     const Transform &renderFromTexture, const TextureParameterDictionary &parameters,
     SpectrumType spectrumType, const FileLoc *loc, Allocator alloc) {
-    SpectrumHandle one = alloc.new_object<ConstantSpectrum>(1.);
-    SpectrumTextureHandle tex =
-        parameters.GetSpectrumTexture("tex", one, spectrumType, alloc);
-    FloatTextureHandle scale = parameters.GetFloatTexture("scale", 1.f, alloc);
+    Spectrum one = alloc.new_object<ConstantSpectrum>(1.);
+    SpectrumTexture tex = parameters.GetSpectrumTexture("tex", one, spectrumType, alloc);
+    FloatTexture scale = parameters.GetFloatTexture("scale", 1.f, alloc);
 
     if (FloatConstantTexture *cscale = scale.CastOrNullptr<FloatConstantTexture>()) {
         Float cs = cscale->Evaluate({});
         if (cs == 1) {
-            LOG_VERBOSE("Dropping useless scale by 1");
             return tex;
         } else if (SpectrumImageTexture *image =
                        tex.CastOrNullptr<SpectrumImageTexture>()) {
             SpectrumImageTexture *imageCopy =
                 alloc.new_object<SpectrumImageTexture>(*image);
-            LOG_VERBOSE("Flattened scale %f * image texture", cs);
             imageCopy->MultiplyScale(cs);
             return imageCopy;
         }
@@ -759,7 +890,6 @@ SpectrumTextureHandle SpectrumScaledTexture::Create(
                      tex.CastOrNullptr<GPUSpectrumImageTexture>()) {
             GPUSpectrumImageTexture *gimageCopy =
                 alloc.new_object<GPUSpectrumImageTexture>(*gimage);
-            LOG_VERBOSE("Flattened scale %f * gpu image texture", cs);
             gimageCopy->MultiplyScale(cs);
             return gimageCopy;
         }
@@ -778,8 +908,8 @@ WindyTexture *WindyTexture::Create(const Transform &renderFromTexture,
                                    const TextureParameterDictionary &parameters,
                                    const FileLoc *loc, Allocator alloc) {
     // Initialize 3D texture mapping _map_ from _tp_
-    TextureMapping3DHandle map =
-        TextureMapping3DHandle::Create(parameters, renderFromTexture, loc, alloc);
+    TextureMapping3D map =
+        TextureMapping3D::Create(parameters, renderFromTexture, loc, alloc);
     return alloc.new_object<WindyTexture>(map);
 }
 
@@ -794,8 +924,8 @@ WrinkledTexture *WrinkledTexture::Create(const Transform &renderFromTexture,
                                          const TextureParameterDictionary &parameters,
                                          const FileLoc *loc, Allocator alloc) {
     // Initialize 3D texture mapping _map_ from _tp_
-    TextureMapping3DHandle map =
-        TextureMapping3DHandle::Create(parameters, renderFromTexture, loc, alloc);
+    TextureMapping3D map =
+        TextureMapping3D::Create(parameters, renderFromTexture, loc, alloc);
     return alloc.new_object<WrinkledTexture>(map, parameters.GetOneInt("octaves", 8),
                                              parameters.GetOneFloat("roughness", .5f));
 }
@@ -871,7 +1001,7 @@ GPUSpectrumImageTexture *GPUSpectrumImageTexture::Create(
       const char *defaultEncoding = HasExtension(filename, "png") ? "sRGB" :
       "linear"; std::string encodingString = parameters.GetOneString("encoding",
       defaultEncoding); const ColorEncoding *encoding =
-      ColorEncodingHandle::Get(encodingString, alloc);
+      ColorEncoding::Get(encodingString, alloc);
     */
 
     std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
@@ -1048,8 +1178,8 @@ GPUSpectrumImageTexture *GPUSpectrumImageTexture::Create(
     cudaTextureObject_t texObj;
     CUDA_CHECK(cudaCreateTextureObject(&texObj, &resDesc, &texDesc, nullptr));
 
-    TextureMapping2DHandle mapping =
-        TextureMapping2DHandle::Create(parameters, renderFromTexture, loc, alloc);
+    TextureMapping2D mapping =
+        TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
 
     Float scale = parameters.GetOneFloat("scale", 1.f);
     bool invert = parameters.GetOneBool("invert", false);
@@ -1067,7 +1197,7 @@ GPUFloatImageTexture *GPUFloatImageTexture::Create(
       const char *defaultEncoding = HasExtension(filename, "png") ? "sRGB" :
       "linear"; std::string encodingString = parameters.GetOneString("encoding",
       defaultEncoding); const ColorEncoding *encoding =
-      ColorEncodingHandle::Get(encodingString, alloc);
+      ColorEncoding::Get(encodingString, alloc);
     */
     std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
 
@@ -1150,8 +1280,8 @@ GPUFloatImageTexture *GPUFloatImageTexture::Create(
     cudaTextureObject_t texObj;
     CUDA_CHECK(cudaCreateTextureObject(&texObj, &resDesc, &texDesc, nullptr));
 
-    TextureMapping2DHandle mapping =
-        TextureMapping2DHandle::Create(parameters, renderFromTexture, loc, alloc);
+    TextureMapping2D mapping =
+        TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
 
     Float scale = parameters.GetOneFloat("scale", 1.f);
     bool invert = parameters.GetOneBool("invert", false);
@@ -1163,11 +1293,11 @@ GPUFloatImageTexture *GPUFloatImageTexture::Create(
 
 STAT_COUNTER("Scene/Textures", nTextures);
 
-FloatTextureHandle FloatTextureHandle::Create(
-    const std::string &name, const Transform &renderFromTexture,
-    const TextureParameterDictionary &parameters, const FileLoc *loc, Allocator alloc,
-    bool gpu) {
-    FloatTextureHandle tex;
+FloatTexture FloatTexture::Create(const std::string &name,
+                                  const Transform &renderFromTexture,
+                                  const TextureParameterDictionary &parameters,
+                                  const FileLoc *loc, Allocator alloc, bool gpu) {
+    FloatTexture tex;
     if (name == "constant")
         tex = FloatConstantTexture::Create(renderFromTexture, parameters, loc, alloc);
     else if (name == "scale")
@@ -1193,7 +1323,7 @@ FloatTextureHandle FloatTextureHandle::Create(
         tex = WindyTexture::Create(renderFromTexture, parameters, loc, alloc);
     else if (name == "ptex") {
         if (gpu)
-            ErrorExit(loc, "ptex texture is not supported on the GPU.");
+            tex = GPUFloatPtexTexture::Create(renderFromTexture, parameters, loc, alloc);
         else
             tex = FloatPtexTexture::Create(renderFromTexture, parameters, loc, alloc);
     } else
@@ -1209,11 +1339,12 @@ FloatTextureHandle FloatTextureHandle::Create(
     return tex;
 }
 
-SpectrumTextureHandle SpectrumTextureHandle::Create(
-    const std::string &name, const Transform &renderFromTexture,
-    const TextureParameterDictionary &parameters, SpectrumType spectrumType,
-    const FileLoc *loc, Allocator alloc, bool gpu) {
-    SpectrumTextureHandle tex;
+SpectrumTexture SpectrumTexture::Create(const std::string &name,
+                                        const Transform &renderFromTexture,
+                                        const TextureParameterDictionary &parameters,
+                                        SpectrumType spectrumType, const FileLoc *loc,
+                                        Allocator alloc, bool gpu) {
+    SpectrumTexture tex;
     if (name == "constant")
         tex = SpectrumConstantTexture::Create(renderFromTexture, parameters, spectrumType,
                                               loc, alloc);
@@ -1243,7 +1374,8 @@ SpectrumTextureHandle SpectrumTextureHandle::Create(
         tex = MarbleTexture::Create(renderFromTexture, parameters, loc, alloc);
     else if (name == "ptex") {
         if (gpu)
-            ErrorExit(loc, "ptex texture is not supported on the GPU.");
+            tex = GPUSpectrumPtexTexture::Create(renderFromTexture, parameters,
+                                                 spectrumType, loc, alloc);
         else
             tex = SpectrumPtexTexture::Create(renderFromTexture, parameters, spectrumType,
                                               loc, alloc);
@@ -1261,12 +1393,11 @@ SpectrumTextureHandle SpectrumTextureHandle::Create(
 }
 
 // UniversalTextureEvaluator Method Definitions
-Float UniversalTextureEvaluator::operator()(FloatTextureHandle tex,
-                                            TextureEvalContext ctx) {
+Float UniversalTextureEvaluator::operator()(FloatTexture tex, TextureEvalContext ctx) {
     return tex.Evaluate(ctx);
 }
 
-SampledSpectrum UniversalTextureEvaluator::operator()(SpectrumTextureHandle tex,
+SampledSpectrum UniversalTextureEvaluator::operator()(SpectrumTexture tex,
                                                       TextureEvalContext ctx,
                                                       SampledWavelengths lambda) {
     return tex.Evaluate(ctx, lambda);

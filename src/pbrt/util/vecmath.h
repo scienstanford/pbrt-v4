@@ -536,6 +536,9 @@ class Vector3fi : public Vector3<Interval> {
     PBRT_CPU_GPU
     Vector3fi(const Vector3f &p)
         : Vector3<Interval>(Interval(p.x), Interval(p.y), Interval(p.z)) {}
+    template <typename T>
+    PBRT_CPU_GPU explicit Vector3fi(Point3<T> p)
+        : Vector3<Interval>(Interval(p.x), Interval(p.y), Interval(p.z)) {}
 
     PBRT_CPU_GPU Vector3fi(const Vector3<Interval> &pfi) : Vector3<Interval>(pfi) {}
 
@@ -1622,7 +1625,7 @@ PBRT_CPU_GPU inline Float SphericalTriangleArea(Vector3f a, Vector3f b, Vector3f
     n_bc = Normalize(n_bc);
     n_ca = Normalize(n_ca);
 
-    // Compute angles $\alpha$, $\beta$, and $\gamma$ at spherical triangle vertices
+    // Find angles $\alpha$, $\beta$, and $\gamma$ at spherical triangle vertices
     Float alpha = AngleBetween(n_ab, -n_ca);
     Float beta = AngleBetween(n_bc, -n_ab);
     Float gamma = AngleBetween(n_ca, -n_bc);

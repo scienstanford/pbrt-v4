@@ -154,16 +154,15 @@ class Sphere {
         // Solve quadratic equation to compute sphere _t0_ and _t1_
         Interval t0, t1;
         // Compute sphere quadratic coefficients
-        Interval a = SumSquares(di.x, di.y, di.z);
+        Interval a = Sqr(di.x) + Sqr(di.y) + Sqr(di.z);
         Interval b = 2 * (di.x * oi.x + di.y * oi.y + di.z * oi.z);
-        Interval c = SumSquares(oi.x, oi.y, oi.z) - Sqr(Interval(radius));
+        Interval c = Sqr(oi.x) + Sqr(oi.y) + Sqr(oi.z) - Sqr(Interval(radius));
 
         // Compute sphere quadratic discriminant _discrim_
-        Interval f = b / (2 * a);
-        Point3fi fp = oi - f * di;
-        Interval sqrtf = Sqrt(Sqr(fp.x) + Sqr(fp.y) + Sqr(fp.z));
+        Vector3fi v(oi - b / (2 * a) * di);
+        Interval length = Length(v);
         Interval discrim =
-            4 * a * (Interval(radius) + sqrtf) * (Interval(radius) - sqrtf);
+            4 * a * (Interval(radius) + length) * (Interval(radius) - length);
         if (discrim.LowerBound() < 0)
             return {};
 
@@ -245,11 +244,11 @@ class Sphere {
         Float theta = SafeACos(cosTheta);
         Float v = (theta - thetaZMin) / (thetaZMax - thetaZMin);
         // Compute sphere $\dpdu$ and $\dpdv$
-        Float zRadius = std::sqrt(pHit.x * pHit.x + pHit.y * pHit.y);
+        Float zRadius = std::sqrt(Sqr(pHit.x) + Sqr(pHit.y));
         Float cosPhi = pHit.x / zRadius;
         Float sinPhi = pHit.y / zRadius;
         Vector3f dpdu(-phiMax * pHit.y, phiMax * pHit.x, 0);
-        Float sinTheta = SafeSqrt(1 - cosTheta * cosTheta);
+        Float sinTheta = SafeSqrt(1 - Sqr(cosTheta));
         Vector3f dpdv = (thetaZMax - thetaZMin) *
                         Vector3f(pHit.z * cosPhi, pHit.z * sinPhi, -radius * sinTheta);
 
@@ -257,8 +256,7 @@ class Sphere {
         Vector3f d2Pduu = -phiMax * phiMax * Vector3f(pHit.x, pHit.y, 0);
         Vector3f d2Pduv =
             (thetaZMax - thetaZMin) * pHit.z * phiMax * Vector3f(-sinPhi, cosPhi, 0.);
-        Vector3f d2Pdvv = -(thetaZMax - thetaZMin) * (thetaZMax - thetaZMin) *
-                          Vector3f(pHit.x, pHit.y, pHit.z);
+        Vector3f d2Pdvv = -Sqr(thetaZMax - thetaZMin) * Vector3f(pHit.x, pHit.y, pHit.z);
         // Compute coefficients for fundamental forms
         Float E = Dot(dpdu, dpdu);
         Float F = Dot(dpdu, dpdv);
@@ -270,7 +268,7 @@ class Sphere {
 
         // Compute $\dndu$ and $\dndv$ from fundamental form coefficients
         Float EGF2 = DifferenceOfProducts(E, G, F, F);
-        Float invEGF2 = (EGF2 == 0) ? 0.f : 1.f / EGF2;
+        Float invEGF2 = (EGF2 == 0) ? Float(0) : 1 / EGF2;
         Normal3f dndu =
             Normal3f((f * F - e * G) * invEGF2 * dpdu + (e * F - f * E) * invEGF2 * dpdv);
         Normal3f dndv =
@@ -291,18 +289,17 @@ class Sphere {
     Float Area() const { return phiMax * radius * (zMax - zMin); }
 
     PBRT_CPU_GPU
-    pstd::optional<ShapeSample> Sample(const Point2f &u) const;
+    pstd::optional<ShapeSample> Sample(Point2f u) const;
 
     PBRT_CPU_GPU
     Float PDF(const Interaction &) const { return 1 / Area(); }
 
     PBRT_CPU_GPU
-    pstd::optional<ShapeSample> Sample(const ShapeSampleContext &ctx,
-                                       const Point2f &u) const {
+    pstd::optional<ShapeSample> Sample(const ShapeSampleContext &ctx, Point2f u) const {
         // Sample uniformly on sphere if $\pt{}$ is inside it
         Point3f pCenter = (*renderFromObject)(Point3f(0, 0, 0));
         Point3f pOrigin = ctx.OffsetRayOrigin(pCenter);
-        if (DistanceSquared(pOrigin, pCenter) <= radius * radius) {
+        if (DistanceSquared(pOrigin, pCenter) <= Sqr(radius)) {
             // Uniformly sample shape and compute incident direction _wi_
             pstd::optional<ShapeSample> ss = Sample(u);
             DCHECK(ss.has_value());
@@ -323,13 +320,13 @@ class Sphere {
         // Sample sphere uniformly inside subtended cone
         // Compute quantities related the $\theta_\roman{max}$ for cone
         Float sinThetaMax = radius / Distance(ctx.p(), pCenter);
-        Float sin2ThetaMax = sinThetaMax * sinThetaMax;
+        Float sin2ThetaMax = Sqr(sinThetaMax);
         Float cosThetaMax = SafeSqrt(1 - sin2ThetaMax);
         Float oneMinusCosThetaMax = 1 - cosThetaMax;
 
         // Compute $\theta$ and $\phi$ values for sample in cone
         Float cosTheta = (cosThetaMax - 1) * u[0] + 1;
-        Float sin2Theta = 1 - cosTheta * cosTheta;
+        Float sin2Theta = 1 - Sqr(cosTheta);
         if (sin2ThetaMax < 0.00068523f /* sin^2(1.5 deg) */) {
             // Compute cone sample via Taylor series expansion for small angles
             sin2Theta = sin2ThetaMax * u[0];
@@ -361,10 +358,10 @@ class Sphere {
     }
 
     PBRT_CPU_GPU
-    Float PDF(const ShapeSampleContext &ctx, const Vector3f &wi) const {
+    Float PDF(const ShapeSampleContext &ctx, Vector3f wi) const {
         Point3f pCenter = (*renderFromObject)(Point3f(0, 0, 0));
         Point3f pOrigin = ctx.OffsetRayOrigin(pCenter);
-        if (DistanceSquared(pOrigin, pCenter) <= radius * radius) {
+        if (DistanceSquared(pOrigin, pCenter) <= Sqr(radius)) {
             // Return solid angle PDF for point inside sphere
             // Intersect sample ray with shape geometry
             Ray ray = ctx.SpawnRay(wi);
@@ -459,8 +456,8 @@ class Disk {
 
         // See if hit point is inside disk radii and $\phimax$
         Point3f pHit = Point3f(oi) + (Float)tShapeHit * Vector3f(di);
-        Float dist2 = pHit.x * pHit.x + pHit.y * pHit.y;
-        if (dist2 > radius * radius || dist2 < innerRadius * innerRadius)
+        Float dist2 = Sqr(pHit.x) + Sqr(pHit.y);
+        if (dist2 > Sqr(radius) || dist2 < Sqr(innerRadius))
             return {};
         // Test disk $\phi$ value against $\phimax$
         Float phi = std::atan2(pHit.y, pHit.x);
@@ -506,7 +503,7 @@ class Disk {
     }
 
     PBRT_CPU_GPU
-    pstd::optional<ShapeSample> Sample(const Point2f &u) const {
+    pstd::optional<ShapeSample> Sample(Point2f u) const {
         Point2f pd = SampleUniformDiskConcentric(u);
         Point3f pObj(pd.x * radius, pd.y * radius, height);
         Point3fi pi = (*renderFromObject)(Point3fi(pObj));
@@ -520,8 +517,7 @@ class Disk {
     Float PDF(const Interaction &) const { return 1 / Area(); }
 
     PBRT_CPU_GPU
-    pstd::optional<ShapeSample> Sample(const ShapeSampleContext &ctx,
-                                       const Point2f &u) const {
+    pstd::optional<ShapeSample> Sample(const ShapeSampleContext &ctx, Point2f u) const {
         // Uniformly sample shape and compute incident direction _wi_
         pstd::optional<ShapeSample> ss = Sample(u);
         DCHECK(ss.has_value());
@@ -540,7 +536,7 @@ class Disk {
     }
 
     PBRT_CPU_GPU
-    Float PDF(const ShapeSampleContext &ctx, const Vector3f &wi) const {
+    Float PDF(const ShapeSampleContext &ctx, Vector3f wi) const {
         // Intersect sample ray with shape geometry
         Ray ray = ctx.SpawnRay(wi);
         pstd::optional<ShapeIntersection> isect = Intersect(ray);
@@ -567,7 +563,7 @@ class Disk {
 class Cylinder {
   public:
     // Cylinder Public Methods
-    Cylinder(const Transform *renderFromObject, const Transform *objectFromRender,
+    Cylinder(const Transform *renderFromObj, const Transform *objFromRender,
              bool reverseOrientation, Float radius, Float zMin, Float zMax, Float phiMax);
 
     static Cylinder *Create(const Transform *renderFromObject,
@@ -607,16 +603,16 @@ class Cylinder {
         // Solve quadratic equation to find cylinder _t0_ and _t1_ values
         Interval t0, t1;
         // Compute cylinder quadratic coefficients
-        Interval a = SumSquares(di.x, di.y);
+        Interval a = Sqr(di.x) + Sqr(di.y);
         Interval b = 2 * (di.x * oi.x + di.y * oi.y);
-        Interval c = SumSquares(oi.x, oi.y) - Sqr(Interval(radius));
+        Interval c = Sqr(oi.x) + Sqr(oi.y) - Sqr(Interval(radius));
 
         // Compute cylinder quadratic discriminant _discrim_
         Interval f = b / (2 * a);
-        Interval fx = oi.x - f * di.x, fy = oi.y - f * di.y;
-        Interval sqrtf = Sqrt(Sqr(fx) + Sqr(fy));
+        Interval vx = oi.x - f * di.x, vy = oi.y - f * di.y;
+        Interval length = Sqrt(Sqr(vx) + Sqr(vy));
         Interval discrim =
-            4 * a * (Interval(radius) + sqrtf) * (Interval(radius) - sqrtf);
+            4 * a * (Interval(radius) + length) * (Interval(radius) - length);
         if (discrim.LowerBound() < 0)
             return {};
 
@@ -646,7 +642,7 @@ class Cylinder {
         // Compute cylinder hit point and $\phi$
         pHit = Point3f(oi) + (Float)tShapeHit * Vector3f(di);
         // Refine cylinder intersection point
-        Float hitRad = std::sqrt(pHit.x * pHit.x + pHit.y * pHit.y);
+        Float hitRad = std::sqrt(Sqr(pHit.x) + Sqr(pHit.y));
         pHit.x *= radius / hitRad;
         pHit.y *= radius / hitRad;
 
@@ -664,7 +660,7 @@ class Cylinder {
             // Compute cylinder hit point and $\phi$
             pHit = Point3f(oi) + (Float)tShapeHit * Vector3f(di);
             // Refine cylinder intersection point
-            Float hitRad = std::sqrt(pHit.x * pHit.x + pHit.y * pHit.y);
+            Float hitRad = std::sqrt(Sqr(pHit.x) + Sqr(pHit.y));
             pHit.x *= radius / hitRad;
             pHit.y *= radius / hitRad;
 
@@ -711,7 +707,7 @@ class Cylinder {
 
         // Compute $\dndu$ and $\dndv$ from fundamental form coefficients
         Float EGF2 = DifferenceOfProducts(E, G, F, F);
-        Float invEGF2 = (EGF2 == 0) ? 0.f : 1.f / EGF2;
+        Float invEGF2 = (EGF2 == 0) ? Float(0) : 1 / EGF2;
         Normal3f dndu =
             Normal3f((f * F - e * G) * invEGF2 * dpdu + (e * F - f * E) * invEGF2 * dpdv);
         Normal3f dndv =
@@ -729,13 +725,13 @@ class Cylinder {
     }
 
     PBRT_CPU_GPU
-    pstd::optional<ShapeSample> Sample(const Point2f &u) const {
+    pstd::optional<ShapeSample> Sample(Point2f u) const {
         Float z = Lerp(u[0], zMin, zMax);
         Float phi = u[1] * phiMax;
         // Compute cylinder sample position _pi_ and normal _n_ from $z$ and $\phi$
         Point3f pObj = Point3f(radius * std::cos(phi), radius * std::sin(phi), z);
         // Reproject _pObj_ to cylinder surface and compute _pObjError_
-        Float hitRad = std::sqrt(pObj.x * pObj.x + pObj.y * pObj.y);
+        Float hitRad = std::sqrt(Sqr(pObj.x) + Sqr(pObj.y));
         pObj.x *= radius / hitRad;
         pObj.y *= radius / hitRad;
         Vector3f pObjError = gamma(3) * Abs(Vector3f(pObj.x, pObj.y, 0));
@@ -752,8 +748,7 @@ class Cylinder {
     Float PDF(const Interaction &) const { return 1 / Area(); }
 
     PBRT_CPU_GPU
-    pstd::optional<ShapeSample> Sample(const ShapeSampleContext &ctx,
-                                       const Point2f &u) const {
+    pstd::optional<ShapeSample> Sample(const ShapeSampleContext &ctx, Point2f u) const {
         // Uniformly sample shape and compute incident direction _wi_
         pstd::optional<ShapeSample> ss = Sample(u);
         DCHECK(ss.has_value());
@@ -772,7 +767,7 @@ class Cylinder {
     }
 
     PBRT_CPU_GPU
-    Float PDF(const ShapeSampleContext &ctx, const Vector3f &wi) const {
+    Float PDF(const ShapeSampleContext &ctx, Vector3f wi) const {
         // Intersect sample ray with shape geometry
         Ray ray = ctx.SpawnRay(wi);
         pstd::optional<ShapeIntersection> isect = Intersect(ray);
@@ -823,16 +818,14 @@ struct TriangleIntersection {
 // Triangle Function Declarations
 PBRT_CPU_GPU
 pstd::optional<TriangleIntersection> IntersectTriangle(const Ray &ray, Float tMax,
-                                                       const Point3f &p0,
-                                                       const Point3f &p1,
-                                                       const Point3f &p2);
+                                                       Point3f p0, Point3f p1,
+                                                       Point3f p2);
 
 // Triangle Definition
 class Triangle {
   public:
     // Triangle Public Methods
-    static pstd::vector<ShapeHandle> CreateTriangles(const TriangleMesh *mesh,
-                                                     Allocator alloc);
+    static pstd::vector<Shape> CreateTriangles(const TriangleMesh *mesh, Allocator alloc);
 
     Triangle() = default;
     Triangle(int meshIndex, int triIndex) : meshIndex(meshIndex), triIndex(triIndex) {}
@@ -1015,7 +1008,7 @@ class Triangle {
     }
 
     PBRT_CPU_GPU
-    pstd::optional<ShapeSample> Sample(const Point2f &u) const {
+    pstd::optional<ShapeSample> Sample(Point2f u) const {
         // Get triangle vertices in _p0_, _p1_, and _p2_
         const TriangleMesh *mesh = GetMesh();
         const int *v = &mesh->vertexIndices[3 * triIndex];
@@ -1086,7 +1079,7 @@ class Triangle {
 
             u = SampleBilinear(u, w);
             DCHECK(u[0] >= 0 && u[0] < 1 && u[1] >= 0 && u[1] < 1);
-            pdf *= BilinearPDF(u, w);
+            pdf = BilinearPDF(u, w);
         }
 
         Float triPDF;
@@ -1095,8 +1088,13 @@ class Triangle {
         if (triPDF == 0)
             return {};
         pdf *= triPDF;
-        Point3f p = b[0] * p0 + b[1] * p1 + b[2] * p2;
 
+        // Compute error bounds _pError_ for sampled point on triangle
+        Point3f pAbsSum = Abs(b[0] * p0) + Abs(b[1] * p1) + Abs((1 - b[0] - b[1]) * p2);
+        Vector3f pError = Vector3f(gamma(6) * pAbsSum);
+
+        // Return _ShapeSample_ for uniform solid angle sampled point on triangle
+        Point3f p = b[0] * p0 + b[1] * p1 + b[2] * p2;
         // Compute surface normal for sampled point on triangle
         Normal3f n = Normalize(Normal3f(Cross(p1 - p0, p2 - p0)));
         if (mesh->n != nullptr) {
@@ -1106,16 +1104,11 @@ class Triangle {
         } else if (mesh->reverseOrientation ^ mesh->transformSwapsHandedness)
             n *= -1;
 
-        // Compute error bounds _pError_ for sampled point on triangle
-        Point3f pAbsSum = Abs(b[0] * p0) + Abs(b[1] * p1) + Abs((1 - b[0] - b[1]) * p2);
-        Vector3f pError = Vector3f(gamma(6) * pAbsSum);
-
-        // Return _ShapeSample_ for uniform solid angle sampled point on triangle
         return ShapeSample{Interaction(Point3fi(p, pError), n, ctx.time), pdf};
     }
 
     PBRT_CPU_GPU
-    Float PDF(const ShapeSampleContext &ctx, const Vector3f &wi) const {
+    Float PDF(const ShapeSampleContext &ctx, Vector3f wi) const {
         Float solidAngle = SolidAngle(ctx.p());
         // Return PDF based on uniform area sampling for challenging triangles
         if (solidAngle < MinSphericalSampleArea || solidAngle > MaxSphericalSampleArea) {
@@ -1204,11 +1197,11 @@ struct CurveCommon {
 class Curve {
   public:
     // Curve Public Methods
-    static pstd::vector<ShapeHandle> Create(const Transform *renderFromObject,
-                                            const Transform *objectFromRender,
-                                            bool reverseOrientation,
-                                            const ParameterDictionary &parameters,
-                                            const FileLoc *loc, Allocator alloc);
+    static pstd::vector<Shape> Create(const Transform *renderFromObject,
+                                      const Transform *objectFromRender,
+                                      bool reverseOrientation,
+                                      const ParameterDictionary &parameters,
+                                      const FileLoc *loc, Allocator alloc);
 
     PBRT_CPU_GPU
     Bounds3f Bounds() const;
@@ -1218,15 +1211,14 @@ class Curve {
     Float Area() const;
 
     PBRT_CPU_GPU
-    pstd::optional<ShapeSample> Sample(const Point2f &u) const;
+    pstd::optional<ShapeSample> Sample(Point2f u) const;
     PBRT_CPU_GPU
     Float PDF(const Interaction &) const;
 
     PBRT_CPU_GPU
-    pstd::optional<ShapeSample> Sample(const ShapeSampleContext &ctx,
-                                       const Point2f &u) const;
+    pstd::optional<ShapeSample> Sample(const ShapeSampleContext &ctx, Point2f u) const;
     PBRT_CPU_GPU
-    Float PDF(const ShapeSampleContext &ctx, const Vector3f &wi) const;
+    Float PDF(const ShapeSampleContext &ctx, Vector3f wi) const;
 
     std::string ToString() const;
 
@@ -1263,8 +1255,7 @@ struct BilinearIntersection {
 
 // Bilinear Patch Inline Functions
 PBRT_CPU_GPU inline pstd::optional<BilinearIntersection> IntersectBilinearPatch(
-    const Ray &ray, Float tMax, const Point3f &p00, const Point3f &p10,
-    const Point3f &p01, const Point3f &p11) {
+    const Ray &ray, Float tMax, Point3f p00, Point3f p10, Point3f p01, Point3f p11) {
     // Find quadratic coefficients for distance from ray to $u$ iso-lines
     Float a = Dot(Cross(p10 - p00, p01 - p11), ray.d);
     Float c = Dot(Cross(p00 - ray.o, ray.d), p01 - p00);
@@ -1275,8 +1266,8 @@ PBRT_CPU_GPU inline pstd::optional<BilinearIntersection> IntersectBilinearPatch(
     if (!Quadratic(a, b, c, &u1, &u2))
         return {};
 
+    // Compute $v$ and $t$ for the first $u$ intersection
     Float t = tMax, u, v;
-    // Compute $v$ and $t$ for to first $u$ intersection
     if (0 <= u1 && u1 <= 1) {
         // Precompute common terms for $v$ and $t$ computation
         Point3f uo = Lerp(u1, p00, p10);
@@ -1301,7 +1292,7 @@ PBRT_CPU_GPU inline pstd::optional<BilinearIntersection> IntersectBilinearPatch(
         }
     }
 
-    // Compute $v$ and $t$ for to second $u$ intersection
+    // Compute $v$ and $t$ for the second $u$ intersection
     if (0 <= u2 && u2 <= 1 && u2 != u1) {
         Point3f uo = Lerp(u2, p00, p10);
         Vector3f ud = Lerp(u2, p01, p11) - uo;
@@ -1342,8 +1333,8 @@ class BilinearPatch {
                                          const ParameterDictionary &parameters,
                                          const FileLoc *loc, Allocator alloc);
 
-    static pstd::vector<ShapeHandle> CreatePatches(const BilinearPatchMesh *mesh,
-                                                   Allocator alloc);
+    static pstd::vector<Shape> CreatePatches(const BilinearPatchMesh *mesh,
+                                             Allocator alloc);
 
     PBRT_CPU_GPU
     Bounds3f Bounds() const;
@@ -1359,7 +1350,7 @@ class BilinearPatch {
     pstd::optional<ShapeSample> Sample(const ShapeSampleContext &ctx, Point2f u) const;
 
     PBRT_CPU_GPU
-    Float PDF(const ShapeSampleContext &ctx, const Vector3f &wi) const;
+    Float PDF(const ShapeSampleContext &ctx, Vector3f wi) const;
 
     PBRT_CPU_GPU
     pstd::optional<ShapeSample> Sample(Point2f u) const;
@@ -1377,41 +1368,36 @@ class BilinearPatch {
 
     PBRT_CPU_GPU
     static SurfaceInteraction InteractionFromIntersection(const BilinearPatchMesh *mesh,
-                                                          int patchIndex,
-                                                          const Point2f &uv, Float time,
-                                                          const Vector3f &wo) {
-        // Compute bilinear patch intersection point, $\dpdu$, and $\dpdv$
-        const int *v = &mesh->vertexIndices[4 * patchIndex];
-        Point3f p00 = mesh->p[v[0]], p10 = mesh->p[v[1]], p01 = mesh->p[v[2]],
-                p11 = mesh->p[v[3]];
-        Point3f pHit = Lerp(uv[0], Lerp(uv[1], p00, p01), Lerp(uv[1], p10, p11));
+                                                          int blpIndex, Point2f uv,
+                                                          Float time, Vector3f wo) {
+        // Compute bilinear patch point $\pt{}$, $\dpdu$, and $\dpdv$ for $(u,v)$
+        // Get bilinear patch vertices in _p00_, _p01_, _p10_, and _p11_
+        const int *v = &mesh->vertexIndices[4 * blpIndex];
+        const Point3f &p00 = mesh->p[v[0]], &p10 = mesh->p[v[1]];
+        const Point3f &p01 = mesh->p[v[2]], &p11 = mesh->p[v[3]];
+
+        Point3f p = Lerp(uv[0], Lerp(uv[1], p00, p01), Lerp(uv[1], p10, p11));
         Vector3f dpdu = Lerp(uv[1], p10, p11) - Lerp(uv[1], p00, p01);
         Vector3f dpdv = Lerp(uv[0], p01, p11) - Lerp(uv[0], p00, p10);
 
-        Point2f uvTex = uv;
+        // Compute $(s,t)$ texture coordinates at bilinear patch $(u,v)$
+        Point2f st = uv;
+        Float duds = 1, dudt = 0, dvds = 0, dvdt = 1;
         if (mesh->uv != nullptr) {
             // Compute texture coordinates for bilinear patch intersection point
-            const Point2f &uv00 = mesh->uv[v[0]], &uv10 = mesh->uv[v[1]];
-            const Point2f &uv01 = mesh->uv[v[2]], &uv11 = mesh->uv[v[3]];
-            uvTex = Lerp(uv[0], Lerp(uv[1], uv00, uv01), Lerp(uv[1], uv10, uv11));
-            // Update bilinear patch $\dpdu$ and $\dpdv$ accounting for texture
-            // coordinates Compute partial derivatives of $(u,v)$ with respect to
-            // interpolated texture coordinates
-            Float dsdu =
-                -uv00[0] + uv10[0] + uv[1] * (uv00[0] - uv01[0] - uv10[0] + uv11[0]);
-            Float dsdv =
-                -uv00[0] + uv01[0] + uv[0] * (uv00[0] - uv01[0] - uv10[0] + uv11[0]);
-            Float dtdu =
-                -uv00[1] + uv10[1] + uv[1] * (uv00[1] - uv01[1] - uv10[1] + uv11[1]);
-            Float dtdv =
-                -uv00[1] + uv01[1] + uv[0] * (uv00[1] - uv01[1] - uv10[1] + uv11[1]);
-            Float duds = std::abs(dsdu) < 1e-8f ? 0 : 1 / dsdu;
-            Float dvds = std::abs(dsdv) < 1e-8f ? 0 : 1 / dsdv;
-            Float dudt = std::abs(dtdu) < 1e-8f ? 0 : 1 / dtdu;
-            Float dvdt = std::abs(dtdv) < 1e-8f ? 0 : 1 / dtdv;
+            Point2f uv00 = mesh->uv[v[0]], uv10 = mesh->uv[v[1]];
+            Point2f uv01 = mesh->uv[v[2]], uv11 = mesh->uv[v[3]];
+            st = Lerp(uv[0], Lerp(uv[1], uv00, uv01), Lerp(uv[1], uv10, uv11));
+            // Update bilinear patch $\dpdu$ and $\dpdv$ accounting for $(s,t)$
+            // Compute partial derivatives of $(u,v)$ with respect to $(s,t)$
+            Vector2f dstdu = Lerp(uv[1], uv10, uv11) - Lerp(uv[1], uv00, uv01);
+            Vector2f dstdv = Lerp(uv[0], uv01, uv11) - Lerp(uv[0], uv00, uv10);
+            duds = std::abs(dstdu[0]) < 1e-8f ? 0 : 1 / dstdu[0];
+            dvds = std::abs(dstdv[0]) < 1e-8f ? 0 : 1 / dstdv[0];
+            dudt = std::abs(dstdu[1]) < 1e-8f ? 0 : 1 / dstdu[1];
+            dvdt = std::abs(dstdv[1]) < 1e-8f ? 0 : 1 / dstdv[1];
 
-            // Compute partial derivatives of $\pt{}$ with respect to interpolated texture
-            // coordinates
+            // Compute partial derivatives of $\pt{}$ with respect to $(s,t)$
             Vector3f dpds = dpdu * duds + dpdv * dvds;
             Vector3f dpdt = dpdu * dudt + dpdv * dvdt;
 
@@ -1419,16 +1405,16 @@ class BilinearPatch {
             if (Cross(dpds, dpdt) != Vector3f(0, 0, 0)) {
                 if (Dot(Cross(dpdu, dpdv), Cross(dpds, dpdt)) < 0)
                     dpdt = -dpdt;
-                CHECK_GE(Dot(Normalize(Cross(dpdu, dpdv)), Normalize(Cross(dpds, dpdt))),
-                         -1e-3);
+                DCHECK_GE(Dot(Normalize(Cross(dpdu, dpdv)), Normalize(Cross(dpds, dpdt))),
+                          -1e-3);
                 dpdu = dpds;
                 dpdv = dpdt;
             }
         }
+
         // Find partial derivatives $\dndu$ and $\dndv$ for bilinear patch
         Vector3f d2Pduu(0, 0, 0), d2Pdvv(0, 0, 0);
-        Vector3f d2Pduv(p00.x - p01.x - p10.x + p11.x, p00.y - p01.y - p10.y + p11.y,
-                        p00.z - p01.z - p10.z + p11.z);
+        Vector3f d2Pduv = (p00 - p01) + (p11 - p10);
         // Compute coefficients for fundamental forms
         Float E = Dot(dpdu, dpdu);
         Float F = Dot(dpdu, dpdv);
@@ -1440,45 +1426,50 @@ class BilinearPatch {
 
         // Compute $\dndu$ and $\dndv$ from fundamental form coefficients
         Float EGF2 = DifferenceOfProducts(E, G, F, F);
-        Float invEGF2 = (EGF2 == 0) ? 0.f : 1.f / EGF2;
+        Float invEGF2 = (EGF2 == 0) ? Float(0) : 1 / EGF2;
         Normal3f dndu =
             Normal3f((f * F - e * G) * invEGF2 * dpdu + (e * F - f * E) * invEGF2 * dpdv);
         Normal3f dndv =
             Normal3f((g * F - f * G) * invEGF2 * dpdu + (f * F - g * E) * invEGF2 * dpdv);
+
+        // Update $\dndu$ and $\dndv$ to account for $(s,t)$ parameterization
+        Normal3f dnds = dndu * duds + dndv * dvds;
+        Normal3f dndt = dndu * dudt + dndv * dvdt;
+        dndu = dnds;
+        dndv = dndt;
 
         // Initialize bilinear patch intersection point error _pError_
         Vector3f pError =
             gamma(4) * Vector3f(Max(Max(Abs(p00), Abs(p10)), Max(Abs(p01), Abs(p11))));
 
         // Initialize _SurfaceInteraction_ for bilinear patch intersection
-        int faceIndex = mesh->faceIndices ? mesh->faceIndices[patchIndex] : 0;
+        int faceIndex = mesh->faceIndices ? mesh->faceIndices[blpIndex] : 0;
         bool flipNormal = mesh->reverseOrientation ^ mesh->transformSwapsHandedness;
-        SurfaceInteraction isect(Point3fi(pHit, pError), uvTex, wo, dpdu, dpdv, dndu,
-                                 dndv, time, flipNormal, faceIndex);
+        SurfaceInteraction isect(Point3fi(p, pError), st, wo, dpdu, dpdv, dndu, dndv,
+                                 time, flipNormal, faceIndex);
 
+        // Compute bilinear patch shading normal if necessary
         if (mesh->n != nullptr) {
             // Compute shading normals for bilinear patch intersection point
-            Normal3f n00 = mesh->n[v[0]], n10 = mesh->n[v[1]], n01 = mesh->n[v[2]],
-                     n11 = mesh->n[v[3]];
+            Normal3f n00 = mesh->n[v[0]], n10 = mesh->n[v[1]];
+            Normal3f n01 = mesh->n[v[2]], n11 = mesh->n[v[3]];
             Normal3f ns = Lerp(uv[0], Lerp(uv[1], n00, n01), Lerp(uv[1], n10, n11));
             if (LengthSquared(ns) > 0) {
                 ns = Normalize(ns);
-                Normal3f n = Normal3f(Normalize(isect.n));
-                Vector3f axis = Cross(Vector3f(n), Vector3f(ns));
-                if (LengthSquared(axis) > 1e-14f) {
-                    // Set shading geometry for bilinear patch intersection
-                    Normal3f dndu = Lerp(uv[1], n10, n11) - Lerp(uv[1], n00, n01);
-                    Normal3f dndv = Lerp(uv[0], n01, n11) - Lerp(uv[0], n00, n10);
-                    axis = Normalize(axis);
-                    Float cosTheta = Dot(n, ns),
-                          sinTheta = SafeSqrt(1 - cosTheta * cosTheta);
-                    Transform r = Rotate(sinTheta, cosTheta, axis);
-                    Vector3f sdpdu = r(dpdu), sdpdv = r(dpdv);
-                    sdpdu = GramSchmidt(sdpdu, Vector3f(ns));
-                    isect.SetShadingGeometry(ns, sdpdu, sdpdv, dndu, dndv, true);
-                }
+                // Set shading geometry for bilinear patch intersection
+                Normal3f dndu = Lerp(uv[1], n10, n11) - Lerp(uv[1], n00, n01);
+                Normal3f dndv = Lerp(uv[0], n01, n11) - Lerp(uv[0], n00, n10);
+                // Update $\dndu$ and $\dndv$ to account for $(s,t)$ parameterization
+                Normal3f dnds = dndu * duds + dndv * dvds;
+                Normal3f dndt = dndu * dudt + dndv * dvdt;
+                dndu = dnds;
+                dndv = dndt;
+
+                Transform r = RotateFromTo(Vector3f(Normalize(isect.n)), Vector3f(ns));
+                isect.SetShadingGeometry(ns, r(dpdu), r(dpdv), dndu, dndv, true);
             }
         }
+
         return isect;
     }
 
@@ -1495,9 +1486,11 @@ class BilinearPatch {
 
     PBRT_CPU_GPU
     bool IsRectangle(const BilinearPatchMesh *mesh) const {
+        // Get bilinear patch vertices in _p00_, _p01_, _p10_, and _p11_
         const int *v = &mesh->vertexIndices[4 * blpIndex];
         const Point3f &p00 = mesh->p[v[0]], &p10 = mesh->p[v[1]];
         const Point3f &p01 = mesh->p[v[2]], &p11 = mesh->p[v[3]];
+
         if (p00 == p01 || p01 == p11 || p11 == p10 || p10 == p00)
             return false;
         // Check if bilinear patch vertices are coplanar
@@ -1517,54 +1510,54 @@ class BilinearPatch {
 
     // BilinearPatch Private Members
     int meshIndex, blpIndex;
-    Float area;
     static pstd::vector<const BilinearPatchMesh *> *allMeshes;
+    Float area;
     static constexpr Float MinSphericalSampleArea = 1e-4;
 };
 
-inline Bounds3f ShapeHandle::Bounds() const {
+inline Bounds3f Shape::Bounds() const {
     auto bounds = [&](auto ptr) { return ptr->Bounds(); };
     return Dispatch(bounds);
 }
 
-inline pstd::optional<ShapeIntersection> ShapeHandle::Intersect(const Ray &ray,
-                                                                Float tMax) const {
+inline pstd::optional<ShapeIntersection> Shape::Intersect(const Ray &ray,
+                                                          Float tMax) const {
     auto intr = [&](auto ptr) { return ptr->Intersect(ray, tMax); };
     return Dispatch(intr);
 }
 
-inline bool ShapeHandle::IntersectP(const Ray &ray, Float tMax) const {
+inline bool Shape::IntersectP(const Ray &ray, Float tMax) const {
     auto intr = [&](auto ptr) { return ptr->IntersectP(ray, tMax); };
     return Dispatch(intr);
 }
 
-inline Float ShapeHandle::Area() const {
+inline Float Shape::Area() const {
     auto area = [&](auto ptr) { return ptr->Area(); };
     return Dispatch(area);
 }
 
-inline pstd::optional<ShapeSample> ShapeHandle::Sample(const Point2f &u) const {
+inline pstd::optional<ShapeSample> Shape::Sample(Point2f u) const {
     auto sample = [&](auto ptr) { return ptr->Sample(u); };
     return Dispatch(sample);
 }
 
-inline Float ShapeHandle::PDF(const Interaction &in) const {
+inline Float Shape::PDF(const Interaction &in) const {
     auto pdf = [&](auto ptr) { return ptr->PDF(in); };
     return Dispatch(pdf);
 }
 
-inline pstd::optional<ShapeSample> ShapeHandle::Sample(const ShapeSampleContext &ctx,
-                                                       const Point2f &u) const {
+inline pstd::optional<ShapeSample> Shape::Sample(const ShapeSampleContext &ctx,
+                                                 Point2f u) const {
     auto sample = [&](auto ptr) { return ptr->Sample(ctx, u); };
     return Dispatch(sample);
 }
 
-inline Float ShapeHandle::PDF(const ShapeSampleContext &ctx, const Vector3f &wi) const {
+inline Float Shape::PDF(const ShapeSampleContext &ctx, Vector3f wi) const {
     auto pdf = [&](auto ptr) { return ptr->PDF(ctx, wi); };
     return Dispatch(pdf);
 }
 
-inline DirectionCone ShapeHandle::NormalBounds() const {
+inline DirectionCone Shape::NormalBounds() const {
     auto nb = [&](auto ptr) { return ptr->NormalBounds(); };
     return Dispatch(nb);
 }

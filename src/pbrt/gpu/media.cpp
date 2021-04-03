@@ -71,21 +71,21 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
             Float uDist = raySamples.media.uDist;
             Float uMode = raySamples.media.uMode;
 
-            SampledSpectrum Tmaj = ray.medium.SampleTmaj(
+            SampledSpectrum T_maj = ray.medium.SampleT_maj(
                 ray, tMax, uDist, rng, lambda, [&](const MediumSample &mediumSample) {
                     rescale(T_hat, uniPathPDF, lightPathPDF);
 
                     const MediumInteraction &intr = mediumSample.intr;
                     const SampledSpectrum &sigma_a = intr.sigma_a;
                     const SampledSpectrum &sigma_s = intr.sigma_s;
-                    const SampledSpectrum &Tmaj = mediumSample.Tmaj;
+                    const SampledSpectrum &T_maj = mediumSample.T_maj;
 
-                    PBRT_DBG(
-                        "Medium event Tmaj %f %f %f %f sigma_a %f %f %f %f sigma_s %f %f "
-                        "%f %f\n",
-                        Tmaj[0], Tmaj[1], Tmaj[2], Tmaj[3], sigma_a[0], sigma_a[1],
-                        sigma_a[2], sigma_a[3], sigma_s[0], sigma_s[1], sigma_s[2],
-                        sigma_s[3]);
+                    PBRT_DBG("Medium event T_maj %f %f %f %f sigma_a %f %f %f %f sigma_s "
+                             "%f %f "
+                             "%f %f\n",
+                             T_maj[0], T_maj[1], T_maj[2], T_maj[3], sigma_a[0],
+                             sigma_a[1], sigma_a[2], sigma_a[3], sigma_s[0], sigma_s[1],
+                             sigma_s[2], sigma_s[3]);
 
                     // Add emission, if present.  Always do this and scale
                     // by sigma_a/sigma_maj rather than only doing it
@@ -113,8 +113,8 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
                     } else if (mode == 1) {
                         // Scattering.
                         PBRT_DBG("scattered\n");
-                        T_hat *= Tmaj * sigma_s;
-                        uniPathPDF *= Tmaj * sigma_s;
+                        T_hat *= T_maj * sigma_s;
+                        uniPathPDF *= T_maj * sigma_s;
 
                         // TODO: don't hard code a phase function.
                         const HGPhaseFunction *phase =
@@ -131,9 +131,9 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
                         PBRT_DBG("null-scattered\n");
                         SampledSpectrum sigma_n = intr.sigma_n();
 
-                        T_hat *= Tmaj * sigma_n;
-                        uniPathPDF *= Tmaj * sigma_n;
-                        lightPathPDF *= Tmaj * intr.sigma_maj;
+                        T_hat *= T_maj * sigma_n;
+                        uniPathPDF *= T_maj * sigma_n;
+                        lightPathPDF *= T_maj * intr.sigma_maj;
 
                         uMode = rng.Uniform<Float>();
 
@@ -141,9 +141,9 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
                     }
                 });
             if (!scattered && T_hat) {
-                T_hat *= Tmaj;
-                uniPathPDF *= Tmaj;
-                lightPathPDF *= Tmaj;
+                T_hat *= T_maj;
+                uniPathPDF *= T_maj;
+                lightPathPDF *= T_maj;
             }
 
             PBRT_DBG("Post ray medium sample L %f %f %f %f T_hat %f %f %f %f\n", L[0],
@@ -156,7 +156,7 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
             // Add any emission found to its pixel sample's L value.
             if (L) {
                 SampledSpectrum Lp = pixelSampleState.L[w.pixelIndex];
-                pixelSampleState.L[w.pixelIndex] = Lp + SafeDiv(L, lambda.PDF());
+                pixelSampleState.L[w.pixelIndex] = Lp + L;
                 PBRT_DBG("Added emitted radiance %f %f %f %f at pixel index %d\n", L[0],
                          L[1], L[2], L[3], w.pixelIndex);
             }
@@ -179,7 +179,7 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
                 }
             }
 
-            MaterialHandle material = w.material;
+            Material material = w.material;
             if (!material) {
                 Interaction intr(w.pi, w.n);
                 intr.mediumInterface = &w.mediumInterface;
@@ -202,7 +202,7 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
                     w.pixelIndex});
             }
 
-            FloatTextureHandle displacement = material.GetDisplacement();
+            FloatTexture displacement = material.GetDisplacement();
 
             MaterialEvalQueue *q =
                 (material.CanEvaluateTextures(BasicTextureEvaluator()) &&
@@ -244,7 +244,7 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
                 lightSampler.Sample(ctx, raySamples.direct.uc);
 
             if (sampledLight) {
-                LightHandle light = sampledLight->light;
+                Light light = sampledLight->light;
                 // And now sample a point on the light.
                 pstd::optional<LightLiSample> ls = light.SampleLi(
                     ctx, raySamples.direct.u, w.lambda, LightSamplingMode::WithMIS);
@@ -262,7 +262,7 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
                     SampledSpectrum uniPathPDF = w.uniPathPDF * phasePDF;
                     SampledSpectrum lightPathPDF = w.uniPathPDF * lightPDF;
 
-                    SampledSpectrum Ld = SafeDiv(T_hat * ls->L, w.lambda.PDF());
+                    SampledSpectrum Ld = T_hat * ls->L;
                     Ray ray(w.p, ls->pLight.p() - w.p, time, w.medium);
 
                     // Enqueue shadow ray

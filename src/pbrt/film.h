@@ -42,24 +42,41 @@ class PixelSensor {
 
     static PixelSensor *CreateDefault(Allocator alloc = {});
 
-    PixelSensor(SpectrumHandle r_bar, SpectrumHandle g_bar, SpectrumHandle b_bar,
-                const RGBColorSpace *outputColorSpace, Float wbTemp, Float imagingRatio,
-                Allocator alloc)
-        : r_bar(r_bar, alloc),
-          g_bar(g_bar, alloc),
-          b_bar(b_bar, alloc),
-          imagingRatio(imagingRatio) {
+    PixelSensor(Spectrum r, Spectrum g, Spectrum b, const RGBColorSpace *outputColorSpace,
+                Float wbTemp, Float imagingRatio, Allocator alloc)
+        : r_bar(r, alloc), g_bar(g, alloc), b_bar(b, alloc), imagingRatio(imagingRatio) {
         // Compute XYZ from camera RGB matrix
-        DenselySampledSpectrum sensorIlluminant = Spectra::D(wbTemp, alloc);
+        // Compute _rgbCamera_ values for training swatches
+        DenselySampledSpectrum sensorIllum = Spectra::D(wbTemp, alloc);
+        Float rgbCamera[nSwatchReflectances][3];
+        for (int i = 0; i < nSwatchReflectances; ++i) {
+            RGB rgb = ProjectReflectance<RGB>(swatchReflectances[i], &sensorIllum, &r_bar,
+                                              &g_bar, &b_bar);
+            for (int c = 0; c < 3; ++c)
+                rgbCamera[i][c] = rgb[c];
+        }
+
+        // Compute _xyzOutput_ values for training swatches
+        Float xyzOutput[24][3];
+        Float sensorWhiteG = InnerProduct(&sensorIllum, &g_bar);
+        Float sensorWhiteY = InnerProduct(&sensorIllum, &Spectra::Y());
+        for (size_t i = 0; i < nSwatchReflectances; ++i) {
+            Spectrum s = swatchReflectances[i];
+            XYZ xyz =
+                ProjectReflectance<XYZ>(s, &outputColorSpace->illuminant, &Spectra::X(),
+                                        &Spectra::Y(), &Spectra::Z()) *
+                (sensorWhiteY / sensorWhiteG);
+            for (int c = 0; c < 3; ++c)
+                xyzOutput[i][c] = xyz[c];
+        }
+
+        // Initialize _XYZFromSensorRGB_ using linear least squares
         pstd::optional<SquareMatrix<3>> m =
-            SolveXYZFromSensorRGB(&sensorIlluminant, &outputColorSpace->illuminant);
+            LinearLeastSquares<3>(rgbCamera, xyzOutput, nSwatchReflectances);
         if (!m)
             ErrorExit("Sensor XYZ from RGB matrix could not be solved.");
         XYZFromSensorRGB = *m;
     }
-
-    PBRT_CPU_GPU
-    Float ImagingRatio() const { return imagingRatio; }
 
     PixelSensor(const RGBColorSpace *outputColorSpace, Float wbTemp, Float imagingRatio,
                 Allocator alloc)
@@ -77,10 +94,11 @@ class PixelSensor {
     }
 
     PBRT_CPU_GPU
-    RGB ToSensorRGB(const SampledSpectrum &s, const SampledWavelengths &lambda) const {
-        return RGB((r_bar.Sample(lambda) * s).Average(),
-                   (g_bar.Sample(lambda) * s).Average(),
-                   (b_bar.Sample(lambda) * s).Average());
+    RGB ToSensorRGB(SampledSpectrum L, const SampledWavelengths &lambda) const {
+        L = SafeDiv(L, lambda.PDF());
+        return imagingRatio * RGB((r_bar.Sample(lambda) * L).Average(),
+                                  (g_bar.Sample(lambda) * L).Average(),
+                                  (b_bar.Sample(lambda) * L).Average());
     }
 
     // PixelSensor Public Members
@@ -88,31 +106,21 @@ class PixelSensor {
 
   private:
     // PixelSensor Private Methods
-    pstd::optional<SquareMatrix<3>> SolveXYZFromSensorRGB(
-        SpectrumHandle sensorIlluminant, SpectrumHandle outputIlluminant) const;
-
-    RGB IlluminantToSensorRGB(SpectrumHandle illum) const {
-        RGB rgb(InnerProduct(illum, &r_bar), InnerProduct(illum, &g_bar),
-                InnerProduct(illum, &b_bar));
-        return rgb / rgb.g;
-    }
-
     template <typename Triplet>
-    static Triplet ProjectReflectance(SpectrumHandle refl, SpectrumHandle illum,
-                                      SpectrumHandle b1, SpectrumHandle b2,
-                                      SpectrumHandle b3);
+    static Triplet ProjectReflectance(Spectrum r, Spectrum illum, Spectrum b1,
+                                      Spectrum b2, Spectrum b3);
 
     // PixelSensor Private Members
     DenselySampledSpectrum r_bar, g_bar, b_bar;
     Float imagingRatio;
-    static std::vector<SpectrumHandle> swatchReflectances;
+    static constexpr int nSwatchReflectances = 24;
+    static Spectrum swatchReflectances[nSwatchReflectances];
 };
 
 // PixelSensor Inline Methods
 template <typename Triplet>
-inline Triplet PixelSensor::ProjectReflectance(SpectrumHandle refl, SpectrumHandle illum,
-                                               SpectrumHandle b1, SpectrumHandle b2,
-                                               SpectrumHandle b3) {
+inline Triplet PixelSensor::ProjectReflectance(Spectrum refl, Spectrum illum, Spectrum b1,
+                                               Spectrum b2, Spectrum b3) {
     Triplet result;
     Float g_integral = 0;
     for (Float lambda = Lambda_min; lambda <= Lambda_max; ++lambda) {
@@ -151,9 +159,9 @@ class VisibleSurface {
 
 // FilmBaseParameters Definition
 struct FilmBaseParameters {
-    FilmBaseParameters(const ParameterDictionary &parameters, FilterHandle filter,
+    FilmBaseParameters(const ParameterDictionary &parameters, Filter filter,
                        const PixelSensor *sensor, const FileLoc *loc);
-    FilmBaseParameters(Point2i fullResolution, Bounds2i pixelBounds, FilterHandle filter,
+    FilmBaseParameters(Point2i fullResolution, Bounds2i pixelBounds, Filter filter,
                        Float diagonal, const PixelSensor *sensor, std::string filename)
         : fullResolution(fullResolution),
           pixelBounds(pixelBounds),
@@ -164,7 +172,7 @@ struct FilmBaseParameters {
 
     Point2i fullResolution;
     Bounds2i pixelBounds;
-    FilterHandle filter;
+    Filter filter;
     Float diagonal;
     const PixelSensor *sensor;
     std::string filename;
@@ -197,21 +205,26 @@ class FilmBase {
     PBRT_CPU_GPU
     Float Diagonal() const { return diagonal; }
     PBRT_CPU_GPU
-    FilterHandle GetFilter() const { return filter; }
+    Filter GetFilter() const { return filter; }
     PBRT_CPU_GPU
     const PixelSensor *GetPixelSensor() const { return sensor; }
     std::string GetFilename() const { return filename; }
 
-    std::string BaseToString() const;
+    PBRT_CPU_GPU
+    SampledWavelengths SampleWavelengths(Float u) const {
+        return SampledWavelengths::SampleXYZ(u);
+    }
 
     PBRT_CPU_GPU
     Bounds2f SampleBounds() const;
+
+    std::string BaseToString() const;
 
   protected:
     // FilmBase Protected Members
     Point2i fullResolution;
     Bounds2i pixelBounds;
-    FilterHandle filter;
+    Filter filter;
     Float diagonal;
     const PixelSensor *sensor;
     std::string filename;
@@ -229,13 +242,11 @@ class RGBFilm : public FilmBase {
                    const SampledWavelengths &lambda, const VisibleSurface *,
                    Float weight) {
         // Convert sample radiance to _PixelSensor_ RGB
-        SampledSpectrum H = L * sensor->ImagingRatio();
-        RGB rgb = sensor->ToSensorRGB(H, lambda);
+        RGB rgb = sensor->ToSensorRGB(L, lambda);
 
         // Optionally clamp sensor RGB value
         Float m = std::max({rgb.r, rgb.g, rgb.b});
         if (m > maxComponentValue) {
-            H *= maxComponentValue / m;
             rgb *= maxComponentValue / m;
         }
 
@@ -271,17 +282,13 @@ class RGBFilm : public FilmBase {
         return rgb;
     }
 
-    RGBFilm() = default;
     RGBFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
             Float maxComponentValue = Infinity, bool writeFP16 = true,
             Allocator alloc = {});
 
     static RGBFilm *Create(const ParameterDictionary &parameters, Float exposureTime,
-                           FilterHandle filter, const RGBColorSpace *colorSpace,
+                           Filter filter, const RGBColorSpace *colorSpace,
                            const FileLoc *loc, Allocator alloc);
-
-    PBRT_CPU_GPU
-    SampledWavelengths SampleWavelengths(Float u) const;
 
     PBRT_CPU_GPU
     void AddSplat(const Point2f &p, SampledSpectrum v, const SampledWavelengths &lambda);
@@ -292,8 +299,8 @@ class RGBFilm : public FilmBase {
     std::string ToString() const;
 
     PBRT_CPU_GPU
-    RGB ToOutputRGB(const SampledSpectrum &L, const SampledWavelengths &lambda) const {
-        RGB sensorRGB = sensor->ToSensorRGB(L * sensor->ImagingRatio(), lambda);
+    RGB ToOutputRGB(SampledSpectrum L, const SampledWavelengths &lambda) const {
+        RGB sensorRGB = sensor->ToSensorRGB(L, lambda);
         return outputRGBFromSensorRGB * sensorRGB;
     }
 
@@ -330,11 +337,8 @@ class GBufferFilm : public FilmBase {
                 Allocator alloc = {});
 
     static GBufferFilm *Create(const ParameterDictionary &parameters, Float exposureTime,
-                               FilterHandle filter, const RGBColorSpace *colorSpace,
+                               Filter filter, const RGBColorSpace *colorSpace,
                                const FileLoc *loc, Allocator alloc);
-
-    PBRT_CPU_GPU
-    SampledWavelengths SampleWavelengths(Float u) const;
 
     PBRT_CPU_GPU
     void AddSample(const Point2i &pFilm, SampledSpectrum L,
@@ -346,7 +350,7 @@ class GBufferFilm : public FilmBase {
 
     PBRT_CPU_GPU
     RGB ToOutputRGB(const SampledSpectrum &L, const SampledWavelengths &lambda) const {
-        RGB cameraRGB = sensor->ToSensorRGB(L * sensor->ImagingRatio(), lambda);
+        RGB cameraRGB = sensor->ToSensorRGB(L, lambda);
         return outputRGBFromSensorRGB * cameraRGB;
     }
 
@@ -417,64 +421,64 @@ class GBufferFilm : public FilmBase {
 };
 
 PBRT_CPU_GPU
-inline SampledWavelengths FilmHandle::SampleWavelengths(Float u) const {
+inline SampledWavelengths Film::SampleWavelengths(Float u) const {
     auto sample = [&](auto ptr) { return ptr->SampleWavelengths(u); };
     return Dispatch(sample);
 }
 
 PBRT_CPU_GPU
-inline Bounds2f FilmHandle::SampleBounds() const {
+inline Bounds2f Film::SampleBounds() const {
     auto sb = [&](auto ptr) { return ptr->SampleBounds(); };
     return Dispatch(sb);
 }
 
 PBRT_CPU_GPU
-inline Bounds2i FilmHandle::PixelBounds() const {
+inline Bounds2i Film::PixelBounds() const {
     auto pb = [&](auto ptr) { return ptr->PixelBounds(); };
     return Dispatch(pb);
 }
 
 PBRT_CPU_GPU
-inline Point2i FilmHandle::FullResolution() const {
+inline Point2i Film::FullResolution() const {
     auto fr = [&](auto ptr) { return ptr->FullResolution(); };
     return Dispatch(fr);
 }
 
 PBRT_CPU_GPU
-inline Float FilmHandle::Diagonal() const {
+inline Float Film::Diagonal() const {
     auto diag = [&](auto ptr) { return ptr->Diagonal(); };
     return Dispatch(diag);
 }
 
 PBRT_CPU_GPU
-inline FilterHandle FilmHandle::GetFilter() const {
+inline Filter Film::GetFilter() const {
     auto filter = [&](auto ptr) { return ptr->GetFilter(); };
     return Dispatch(filter);
 }
 
 PBRT_CPU_GPU
-inline bool FilmHandle::UsesVisibleSurface() const {
+inline bool Film::UsesVisibleSurface() const {
     auto uses = [&](auto ptr) { return ptr->UsesVisibleSurface(); };
     return Dispatch(uses);
 }
 
 PBRT_CPU_GPU
-inline RGB FilmHandle::GetPixelRGB(const Point2i &p, Float splatScale) const {
+inline RGB Film::GetPixelRGB(const Point2i &p, Float splatScale) const {
     auto get = [&](auto ptr) { return ptr->GetPixelRGB(p, splatScale); };
     return Dispatch(get);
 }
 
 PBRT_CPU_GPU
-inline RGB FilmHandle::ToOutputRGB(const SampledSpectrum &L,
-                                   const SampledWavelengths &lambda) const {
+inline RGB Film::ToOutputRGB(const SampledSpectrum &L,
+                             const SampledWavelengths &lambda) const {
     auto out = [&](auto ptr) { return ptr->ToOutputRGB(L, lambda); };
     return Dispatch(out);
 }
 
 PBRT_CPU_GPU
-inline void FilmHandle::AddSample(const Point2i &pFilm, SampledSpectrum L,
-                                  const SampledWavelengths &lambda,
-                                  const VisibleSurface *visibleSurface, Float weight) {
+inline void Film::AddSample(const Point2i &pFilm, SampledSpectrum L,
+                            const SampledWavelengths &lambda,
+                            const VisibleSurface *visibleSurface, Float weight) {
     auto add = [&](auto ptr) {
         return ptr->AddSample(pFilm, L, lambda, visibleSurface, weight);
     };
@@ -482,7 +486,7 @@ inline void FilmHandle::AddSample(const Point2i &pFilm, SampledSpectrum L,
 }
 
 PBRT_CPU_GPU
-inline const PixelSensor *FilmHandle::GetPixelSensor() const {
+inline const PixelSensor *Film::GetPixelSensor() const {
     auto filter = [&](auto ptr) { return ptr->GetPixelSensor(); };
     return Dispatch(filter);
 }
