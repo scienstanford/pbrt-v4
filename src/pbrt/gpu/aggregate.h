@@ -2,23 +2,23 @@
 // The pbrt source code is licensed under the Apache License, Version 2.0.
 // SPDX: Apache-2.0
 
-#ifndef PBRT_GPU_ACCEL_H
-#define PBRT_GPU_ACCEL_H
+#ifndef PBRT_GPU_AGGREGATE_H
+#define PBRT_GPU_AGGREGATE_H
 
 #include <pbrt/pbrt.h>
 
 #include <pbrt/gpu/optix.h>
-#include <pbrt/gpu/workitems.h>
 #include <pbrt/materials.h>
 #include <pbrt/parsedscene.h>
 #include <pbrt/util/containers.h>
 #include <pbrt/util/pstd.h>
 #include <pbrt/util/soa.h>
+#include <pbrt/util/vecmath.h>
+#include <pbrt/wavefront/integrator.h>
+#include <pbrt/wavefront/workitems.h>
 
 #include <map>
 #include <string>
-#include <utility>
-#include <vector>
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -26,22 +26,21 @@
 
 namespace pbrt {
 
-class GPUAccel {
+class OptiXAggregate : public WavefrontAggregate {
   public:
-    GPUAccel(const ParsedScene &scene, Allocator alloc, CUstream cudaStream,
+    OptiXAggregate(const ParsedScene &scene, Allocator alloc, NamedTextures &textures,
              const std::map<int, pstd::vector<Light> *> &shapeIndexToAreaLights,
              const std::map<std::string, Medium> &media,
-             pstd::array<bool, Material::NumTags()> *haveBasicEvalMaterial,
-             pstd::array<bool, Material::NumTags()> *haveUniversalEvalMaterial,
-             bool *haveSubsurface);
+             const std::map<std::string, pbrt::Material> &namedMaterials,
+             const std::vector<pbrt::Material> &materials);
 
     Bounds3f Bounds() const { return bounds; }
 
     void IntersectClosest(
-        int maxRays, EscapedRayQueue *escapedRayQueue,
+        int maxRays, const RayQueue *rayQueue, EscapedRayQueue *escapedRayQueue,
         HitAreaLightQueue *hitAreaLightQueue, MaterialEvalQueue *basicEvalMaterialQueue,
         MaterialEvalQueue *universalEvalMaterialQueue,
-        MediumSampleQueue *mediumSampleQueue, RayQueue *rayQueue, RayQueue *nextRayQueue) const;
+        MediumSampleQueue *mediumSampleQueue, RayQueue *nextRayQueue) const;
 
     void IntersectShadow(int maxRays, ShadowRayQueue *shadowRayQueue,
                          SOA<PixelSampleState> *pixelSampleState) const;
@@ -112,6 +111,6 @@ class GPUAccel {
     OptixTraversableHandle rootTraversable = {};
 };
 
-}  // namespace pbrt
+} // namespace pbrt
 
-#endif  // PBRT_GPU_ACCEL_H
+#endif // PBRT_GPU_AGGREGATE_H

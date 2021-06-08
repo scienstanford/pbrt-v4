@@ -37,6 +37,7 @@
 // too old school
 #define STBI_NO_PIC
 #define STBI_ASSERT CHECK
+#define STBI_WINDOWS_UTF8
 #include <stb/stb_image.h>
 
 namespace pbrt {
@@ -248,7 +249,7 @@ std::vector<ResampleWeight> Image::ResampleWeights(int oldRes, int newRes) {
     for (int i = 0; i < newRes; ++i) {
         // Compute image resampling weights for _i_th pixel
         Float center = (i + .5f) * oldRes / newRes;
-        wt[i].firstPixel = std::floor((center - filterRadius) + 0.5f);
+        wt[i].firstPixel = pstd::floor((center - filterRadius) + 0.5f);
         for (int j = 0; j < 4; ++j) {
             Float pos = wt[i].firstPixel + j + .5f;
             wt[i].weight[j] = WindowedSinc(pos - center, filterRadius, tau);
@@ -522,7 +523,7 @@ ImageChannelValues Image::MAE(const ImageChannelDesc &desc, const Image &ref,
 
             for (int c = 0; c < desc.size(); ++c) {
                 Float error = v[c] - vref[c];
-                if (std::isinf(error))
+                if (IsInf(error))
                     continue;
                 sumError[c] += error;
                 if (errorImage)
@@ -556,7 +557,7 @@ ImageChannelValues Image::MSE(const ImageChannelDesc &desc, const Image &ref,
 
             for (int c = 0; c < desc.size(); ++c) {
                 Float se = Sqr(v[c] - vref[c]);
-                if (std::isinf(se))
+                if (IsInf(se))
                     continue;
                 sumSE[c] += se;
                 if (mseImage)
@@ -588,7 +589,7 @@ ImageChannelValues Image::MRSE(const ImageChannelDesc &desc, const Image &ref,
 
             for (int c = 0; c < desc.size(); ++c) {
                 Float rse = Sqr(v[c] - vref[c]) / Sqr(vref[c] + 0.01);
-                if (std::isinf(rse))
+                if (IsInf(rse))
                     continue;
                 sumRSE[c] += rse;
                 if (mrseImage)
@@ -943,7 +944,7 @@ static Imf::FrameBuffer imageToFrameBuffer(const Image &image,
     size_t xStride = image.NChannels() * TexelBytes(image.Format());
     size_t yStride = image.Resolution().x * xStride;
     // Would be nice to use PixelOffset(-dw.min.x, -dw.min.y) but
-    // it checks to make sure the coordiantes are >= 0 (which
+    // it checks to make sure the coordinates are >= 0 (which
     // usually makes sense...)
     char *originPtr = (((char *)image.RawPointer({0, 0})) - dataWindow.min.x * xStride -
                        dataWindow.min.y * yStride);
@@ -1217,7 +1218,7 @@ static ImageAndMetadata ReadPNG(const std::string &name, Allocator alloc,
         std::vector<unsigned char> buf;
         int bpp = state.info_png.color.bitdepth == 16 ? 16 : 8;
         bool hasAlpha = (state.info_png.color.colortype == LCT_RGBA);
-        // Force RGB if it's palletted or whatever.
+        // Force RGB if it's paletted or whatever.
         error =
             lodepng::decode(buf, width, height, (const unsigned char *)contents.data(),
                             contents.size(), hasAlpha ? LCT_RGBA : LCT_RGB, bpp);
@@ -1441,7 +1442,7 @@ static ImageAndMetadata ReadPFM(const std::string &filename, Allocator alloc) {
     bool fileLittleEndian;
     ImageMetadata metadata;
 
-    FILE *fp = fopen(filename.c_str(), "rb");
+    FILE *fp = FOpenRead(filename);
     if (fp == nullptr)
         ErrorExit("%s: unable to open PFM file", filename);
 
@@ -1546,7 +1547,7 @@ static ImageAndMetadata ReadHDR(const std::string &filename, Allocator alloc) {
 }
 
 bool Image::WritePFM(const std::string &filename, const ImageMetadata &metadata) const {
-    FILE *fp = fopen(filename.c_str(), "wb");
+    FILE *fp = FOpenWrite(filename);
     if (fp == nullptr) {
         Error("Unable to open output PFM file \"%s\"", filename);
         return false;

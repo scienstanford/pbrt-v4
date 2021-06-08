@@ -21,11 +21,11 @@ inline Vector3f Reflect(const Vector3f &wo, const Vector3f &n) {
 }
 
 PBRT_CPU_GPU inline bool Refract(Vector3f wi, Normal3f n, Float eta, Vector3f *wt) {
-    // Compute $\cos\,\theta_\roman{t}$ using Snell's law
     Float cosTheta_i = Dot(n, wi);
+    // Compute $\cos\,\theta_\roman{t}$ using Snell's law
     Float sin2Theta_i = std::max<Float>(0, 1 - cosTheta_i * cosTheta_i);
     Float sin2Theta_t = sin2Theta_i / Sqr(eta);
-    // Handle total internal reflection for transmission
+    // Handle total internal reflection case
     if (sin2Theta_t >= 1)
         return false;
 
@@ -42,50 +42,47 @@ PBRT_CPU_GPU inline Float HenyeyGreenstein(Float cosTheta, Float g) {
 
 // Fresnel Inline Functions
 PBRT_CPU_GPU
-inline Float FrConductor2(Float cosTheta_i, pstd::complex<Float> eta) {
-    cosTheta_i = Clamp(cosTheta_i, 0, 1);
-    using Complex = pstd::complex<Float>;
-
-    // Compute _cosTheta_t_ using Snell's law
-    Complex sinTheta_i = pstd::sqrt(1.f - cosTheta_i * cosTheta_i);
-    Complex sinTheta_t = sinTheta_i / eta;
-    Complex cosTheta_t = pstd::sqrt(1.f - sinTheta_t * sinTheta_t);
-    Complex r_parl = (eta * cosTheta_i - cosTheta_t) / (eta * cosTheta_i + cosTheta_t);
-    Complex r_perp = (eta * cosTheta_t - cosTheta_i) / (eta * cosTheta_t + cosTheta_i);
-    return (pstd::norm(r_parl) + pstd::norm(r_perp)) * .5f;
-}
-
-PBRT_CPU_GPU
-inline SampledSpectrum FrConductor(Float cosTheta_i, SampledSpectrum eta,
-                                   SampledSpectrum k) {
-    SampledSpectrum result;
-    for (int i = 0; i < NSpectrumSamples; ++i)
-        result[i] = FrConductor2(cosTheta_i, pstd::complex<Float>(eta[i], k[i]));
-    return result;
-}
-
-PBRT_CPU_GPU
 inline Float FrDielectric(Float cosTheta_i, Float eta) {
     cosTheta_i = Clamp(cosTheta_i, -1, 1);
     // Potentially swap indices of refraction
-    bool entering = cosTheta_i > 0;
-    if (!entering) {
+    if (cosTheta_i < 0) {
         eta = 1 / eta;
-        cosTheta_i = std::abs(cosTheta_i);
+        cosTheta_i = -cosTheta_i;
     }
 
-    // Compute _cosTheta_t_ using Snell's law
-    Float sinTheta_i = SafeSqrt(1 - cosTheta_i * cosTheta_i);
-    Float sinTheta_t = sinTheta_i / eta;
-    // Handle total internal reflection
-    if (sinTheta_t >= 1)
-        return 1;
-
-    Float cosTheta_t = SafeSqrt(1 - sinTheta_t * sinTheta_t);
+    // Compute $\cos\,\theta_\roman{t}$ for Fresnel equations using Snell's law
+    Float sin2Theta_i = 1 - cosTheta_i * cosTheta_i;
+    Float sin2Theta_t = sin2Theta_i / Sqr(eta);
+    if (sin2Theta_t >= 1)
+        return 1.f;
+    Float cosTheta_t = SafeSqrt(1 - sin2Theta_t);
 
     Float r_parl = (eta * cosTheta_i - cosTheta_t) / (eta * cosTheta_i + cosTheta_t);
     Float r_perp = (cosTheta_i - eta * cosTheta_t) / (cosTheta_i + eta * cosTheta_t);
     return (r_parl * r_parl + r_perp * r_perp) / 2;
+}
+
+PBRT_CPU_GPU
+inline Float FrComplex(Float cosTheta_i, pstd::complex<Float> eta) {
+    using Complex = pstd::complex<Float>;
+    cosTheta_i = Clamp(cosTheta_i, 0, 1);
+    // Compute complex $\cos\,\theta_\roman{t}$ for Fresnel equations using Snell's law
+    Float sin2Theta_i = 1 - cosTheta_i * cosTheta_i;
+    Complex sin2Theta_t = sin2Theta_i / Sqr(eta);
+    Complex cosTheta_t = pstd::sqrt(1.f - sin2Theta_t);
+
+    Complex r_parl = (eta * cosTheta_i - cosTheta_t) / (eta * cosTheta_i + cosTheta_t);
+    Complex r_perp = (cosTheta_i - eta * cosTheta_t) / (cosTheta_i + eta * cosTheta_t);
+    return (pstd::norm(r_parl) + pstd::norm(r_perp)) * .5f;
+}
+
+PBRT_CPU_GPU
+inline SampledSpectrum FrComplex(Float cosTheta_i, SampledSpectrum eta,
+                                 SampledSpectrum k) {
+    SampledSpectrum result;
+    for (int i = 0; i < NSpectrumSamples; ++i)
+        result[i] = FrComplex(cosTheta_i, pstd::complex<Float>(eta[i], k[i]));
+    return result;
 }
 
 // BSSRDF Utility Declarations

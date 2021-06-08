@@ -25,6 +25,19 @@
 
 namespace pbrt {
 
+std::string MaterialEvalContext::ToString() const {
+    return StringPrintf("[ MaterialEvalContext %s wo: %s n: %s ns: %s dpdus: %s ]",
+                        TextureEvalContext::ToString(), wo, n, ns, dpdus);
+}
+
+std::string BumpEvalContext::ToString() const {
+    return StringPrintf("[ BumpEvalContext p: %s uv: %s shading.n: %s shading.dpdu: %s "
+                        "shading.dpdv: %s shading.dndu: %s shading.dndv: %s dudx: %f "
+                        "dudy: %f dvdx: %f dvdy: %f dpdx: %s dpdy: %s faceIndex: %d ]",
+                        p, uv, shading.n, shading.dpdu, shading.dpdv, shading.dndu,
+                        shading.dndv, dudx, dudy, dvdx, dvdy, dpdx, dpdy, faceIndex);
+}
+
 // DielectricMaterial Method Definitions
 std::string DielectricMaterial::ToString() const {
     return StringPrintf("[ DielectricMaterial displacement: %s uRoughness: %s "
@@ -92,15 +105,19 @@ MixMaterial *MixMaterial::Create(Material materials[2],
                                  const FileLoc *loc, Allocator alloc) {
     FloatTexture amount = parameters.GetFloatTexture("amount", 0.5f, alloc);
 
-    if (Options->useGPU) {
-        // Check for this stuff here, where we can include the FileLoc in
-        // the error message. Note that both of these limitations could be
-        // relaxed if they were problematic; the issue is that we currently
-        // resolve MixMaterials in the closest hit shader...
-        if (!BasicTextureEvaluator().CanEvaluate({amount}, {}))
-            ErrorExit(loc, "The GPU renderer currently only supports basic textures "
-                           "for its \"amount\" parameter.");
-    }
+    // Check for this stuff here, where we can include the FileLoc in
+    // the error message. Note that both of these limitations could be
+    // relaxed if they were problematic; the issue is that we currently
+    // resolve MixMaterials in the closest hit shader...
+#ifdef PBRT_BUILD_GPU_RENDERER
+    if (Options->useGPU && !BasicTextureEvaluator().CanEvaluate({amount}, {}))
+        ErrorExit(loc, "The GPU renderer currently only supports basic textures "
+                       "for its \"amount\" parameter.");
+#else
+    if (Options->wavefront && !BasicTextureEvaluator().CanEvaluate({amount}, {}))
+        ErrorExit(loc, "The wavefront renderer currently only supports basic textures "
+                       "for its \"amount\" parameter.");
+#endif
 
     return alloc.new_object<MixMaterial>(materials, amount);
 }
@@ -228,6 +245,50 @@ ConductorMaterial *ConductorMaterial::Create(const TextureParameterDictionary &p
 }
 
 // CoatedDiffuseMaterial Method Definitions
+template <typename TextureEvaluator>
+BSDF CoatedDiffuseMaterial::GetBSDF(TextureEvaluator texEval,
+                                    const MaterialEvalContext &ctx,
+                                    SampledWavelengths &lambda,
+                                    CoatedDiffuseBxDF *bxdf) const {
+    // Initialize diffuse component of plastic material
+    SampledSpectrum r = Clamp(texEval(reflectance, ctx, lambda), 0, 1);
+
+    // Create microfacet distribution _distrib_ for coated diffuse material
+    Float urough = texEval(uRoughness, ctx);
+    Float vrough = texEval(vRoughness, ctx);
+    if (remapRoughness) {
+        urough = TrowbridgeReitzDistribution::RoughnessToAlpha(urough);
+        vrough = TrowbridgeReitzDistribution::RoughnessToAlpha(vrough);
+    }
+    TrowbridgeReitzDistribution distrib(urough, vrough);
+
+    Float thick = texEval(thickness, ctx);
+
+    Float sampledEta = eta(lambda[0]);
+    if (!eta.template Is<ConstantSpectrum>())
+        lambda.TerminateSecondary();
+    if (sampledEta == 0)
+        sampledEta = 1;
+
+    SampledSpectrum a = Clamp(texEval(albedo, ctx, lambda), 0, 1);
+    Float gg = Clamp(texEval(g, ctx), -1, 1);
+
+    *bxdf = CoatedDiffuseBxDF(
+        DielectricInterfaceBxDF(sampledEta, SampledSpectrum(1.f), distrib),
+        DiffuseBxDF(r), thick, a, gg, maxDepth, nSamples);
+    return BSDF(ctx.ns, ctx.dpdus, bxdf);
+}
+
+// Explicit template instantiation
+template BSDF CoatedDiffuseMaterial::GetBSDF(BasicTextureEvaluator,
+                                             const MaterialEvalContext &ctx,
+                                             SampledWavelengths &lambda,
+                                             CoatedDiffuseBxDF *bxdf) const;
+template BSDF CoatedDiffuseMaterial::GetBSDF(UniversalTextureEvaluator,
+                                             const MaterialEvalContext &ctx,
+                                             SampledWavelengths &lambda,
+                                             CoatedDiffuseBxDF *bxdf) const;
+
 std::string CoatedDiffuseMaterial::ToString() const {
     return StringPrintf(
         "[ CoatedDiffuseMaterial displacement: %s reflectance: %s uRoughness: %s "
@@ -279,6 +340,63 @@ CoatedDiffuseMaterial *CoatedDiffuseMaterial::Create(
         reflectance, uRoughness, vRoughness, thickness, albedo, g, eta, displacement,
         normalMap, remapRoughness, maxDepth, nSamples);
 }
+
+template <typename TextureEvaluator>
+BSDF CoatedConductorMaterial::GetBSDF(TextureEvaluator texEval,
+                                      const MaterialEvalContext &ctx,
+                                      SampledWavelengths &lambda,
+                                      CoatedConductorBxDF *bxdf) const {
+    Float iurough = texEval(interfaceURoughness, ctx);
+    Float ivrough = texEval(interfaceVRoughness, ctx);
+    if (remapRoughness) {
+        iurough = TrowbridgeReitzDistribution::RoughnessToAlpha(iurough);
+        ivrough = TrowbridgeReitzDistribution::RoughnessToAlpha(ivrough);
+    }
+    TrowbridgeReitzDistribution interfaceDistrib(iurough, ivrough);
+
+    Float thick = texEval(thickness, ctx);
+
+    Float ieta = interfaceEta(lambda[0]);
+    if (!interfaceEta.template Is<ConstantSpectrum>())
+        lambda.TerminateSecondary();
+    if (ieta == 0)
+        ieta = 1;
+
+    SampledSpectrum ce, ck;
+    if (conductorEta) {
+        ce = texEval(conductorEta, ctx, lambda);
+        ck = texEval(k, ctx, lambda);
+    } else {
+        SampledSpectrum r = texEval(reflectance, ctx, lambda);
+        ce = SampledSpectrum(1.f);
+        ck = 2 * Sqrt(r) / Sqrt(ClampZero(SampledSpectrum(1) - r));
+    }
+
+    Float curough = texEval(conductorURoughness, ctx);
+    Float cvrough = texEval(conductorVRoughness, ctx);
+    if (remapRoughness) {
+        curough = TrowbridgeReitzDistribution::RoughnessToAlpha(curough);
+        cvrough = TrowbridgeReitzDistribution::RoughnessToAlpha(cvrough);
+    }
+    TrowbridgeReitzDistribution conductorDistrib(curough, cvrough);
+
+    SampledSpectrum a = Clamp(texEval(albedo, ctx, lambda), 0, 1);
+    Float gg = Clamp(texEval(g, ctx), -1, 1);
+
+    *bxdf = CoatedConductorBxDF(
+        DielectricInterfaceBxDF(ieta, SampledSpectrum(1.f), interfaceDistrib),
+        ConductorBxDF(conductorDistrib, ce, ck), thick, a, gg, maxDepth, nSamples);
+    return BSDF(ctx.ns, ctx.dpdus, bxdf);
+}
+
+template BSDF CoatedConductorMaterial::GetBSDF(BasicTextureEvaluator,
+                                               const MaterialEvalContext &ctx,
+                                               SampledWavelengths &lambda,
+                                               CoatedConductorBxDF *bxdf) const;
+template BSDF CoatedConductorMaterial::GetBSDF(UniversalTextureEvaluator,
+                                               const MaterialEvalContext &ctx,
+                                               SampledWavelengths &lambda,
+                                               CoatedConductorBxDF *bxdf) const;
 
 std::string CoatedConductorMaterial::ToString() const {
     return StringPrintf("[ CoatedConductorMaterial displacement: %f interfaceURoughness: "
@@ -369,7 +487,7 @@ CoatedConductorMaterial *CoatedConductorMaterial::Create(
 
 // SubsurfaceMaterial Method Definitions
 std::string SubsurfaceMaterial::ToString() const {
-    return StringPrintf("[ SubsurfaceMaterial displacment: %s scale: %f "
+    return StringPrintf("[ SubsurfaceMaterial displacement: %s scale: %f "
                         "sigma_a: %s sigma_s: %s "
                         "reflectance: %s mfp: %s uRoughness: %s vRoughness: %s "
                         "eta: %f remapRoughness: %s ]",
@@ -450,7 +568,7 @@ SubsurfaceMaterial *SubsurfaceMaterial::Create(
 
 // DiffuseTransmissionMaterial Method Definitions
 std::string DiffuseTransmissionMaterial::ToString() const {
-    return StringPrintf("[ DiffuseTransmissionMaterial displacment: %s reflectance: %s "
+    return StringPrintf("[ DiffuseTransmissionMaterial displacement: %s reflectance: %s "
                         "transmittance: %s sigma: %s ]",
                         displacement, reflectance, transmittance, sigma);
 }
@@ -518,7 +636,11 @@ Material Material::Create(const std::string &name,
                           /*const */ std::map<std::string, Material> &namedMaterials,
                           const FileLoc *loc, Allocator alloc) {
     Material material;
-    if (name.empty() || name == "none")
+    if (name.empty() || name == "none") {
+        Warning(loc, "Material \"%s\" is deprecated; use \"interface\" instead.",
+                name.c_str());
+        return nullptr;
+    } else if (name == "interface")
         return nullptr;
     else if (name == "diffuse")
         material = DiffuseMaterial::Create(parameters, normalMap, loc, alloc);

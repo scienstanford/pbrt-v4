@@ -4,7 +4,10 @@
 
 #include <pbrt/pbrt.h>
 
-#include <pbrt/gpu/init.h>
+#ifdef PBRT_BUILD_GPU_RENDERER
+#include <pbrt/gpu/memory.h>
+#include <pbrt/gpu/util.h>
+#endif  // PBRT_BUILD_GPU_RENDERER
 #include <pbrt/options.h>
 #include <pbrt/shapes.h>
 #include <pbrt/util/check.h>
@@ -27,7 +30,7 @@ void InitPBRT(const PBRTOptions &opt) {
     Options = new PBRTOptions(opt);
     // API Initialization
 
-#ifdef PBRT_IS_WINDOWS
+#if defined(PBRT_IS_WINDOWS) && defined(PBRT_BUILD_GPU_RENDERER)
     if (Options->useGPU && Options->gpuDevice &&
         getenv("CUDA_VISIBLE_DEVICES") == nullptr) {
         // Limit CUDA to considering only a single GPU on Windows.  pbrt
@@ -41,12 +44,12 @@ void InitPBRT(const PBRTOptions &opt) {
         // is the one to use.
         *Options->gpuDevice = 0;
     }
-#endif  // PBRT_IS_WINDOWS
+#endif  // PBRT_IS_WINDOWS && PBRT_BUILD_GPU_RENDERER
 
     if (Options->quiet)
         SuppressErrorMessages();
 
-    InitLogging(opt.logLevel, Options->useGPU);
+    InitLogging(opt.logLevel, opt.logFile, Options->useGPU);
 
     // General \pbrt Initialization
     int nThreads = Options->nThreads != 0 ? Options->nThreads : AvailableCores();
@@ -92,7 +95,7 @@ void CleanupPBRT() {
     if (Options->recordPixelStatistics)
         StatsWritePixelImages();
 
-    if (!Options->quiet) {
+    if (Options->printStatistics) {
         PrintStats(stdout);
         ClearStats();
     }

@@ -118,11 +118,19 @@ FilmBaseParameters::FilmBaseParameters(const ParameterDictionary &parameters,
     std::vector<Float> cr = parameters.GetFloatArray("cropwindow");
     if (Options->cropWindow) {
         Bounds2f crop = *Options->cropWindow;
+        if (Intersect(crop, Bounds2f(Point2f(0, 0), Point2f(1, 1))) != crop) {
+            Error(loc,
+                  "Film crop window %s is not in [0,1] range; did you "
+                  "mean to use \"pixelbounds\"? Clamping to valid range.",
+                  crop);
+            crop = Intersect(crop, Bounds2f(Point2f(0, 0), Point2f(1, 1)));
+        }
+
         // Compute film image bounds
-        pixelBounds = Bounds2i(Point2i(std::ceil(fullResolution.x * crop.pMin.x),
-                                       std::ceil(fullResolution.y * crop.pMin.y)),
-                               Point2i(std::ceil(fullResolution.x * crop.pMax.x),
-                                       std::ceil(fullResolution.y * crop.pMax.y)));
+        pixelBounds = Bounds2i(Point2i(pstd::ceil(fullResolution.x * crop.pMin.x),
+                                       pstd::ceil(fullResolution.y * crop.pMin.y)),
+                               Point2i(pstd::ceil(fullResolution.x * crop.pMax.x),
+                                       pstd::ceil(fullResolution.y * crop.pMax.y)));
 
         if (!cr.empty())
             Warning(loc, "Crop window supplied on command line will override "
@@ -147,10 +155,10 @@ FilmBaseParameters::FilmBaseParameters(const ParameterDictionary &parameters,
             crop.pMax.y = Clamp(std::max(cr[2], cr[3]), 0.f, 1.f);
 
             // Compute film image bounds
-            pixelBounds = Bounds2i(Point2i(std::ceil(fullResolution.x * crop.pMin.x),
-                                           std::ceil(fullResolution.y * crop.pMin.y)),
-                                   Point2i(std::ceil(fullResolution.x * crop.pMax.x),
-                                           std::ceil(fullResolution.y * crop.pMax.y)));
+            pixelBounds = Bounds2i(Point2i(pstd::ceil(fullResolution.x * crop.pMin.x),
+                                           pstd::ceil(fullResolution.y * crop.pMin.y)),
+                                   Point2i(pstd::ceil(fullResolution.x * crop.pMax.x),
+                                           pstd::ceil(fullResolution.y * crop.pMax.y)));
         } else
             Error(loc, "%d values supplied for \"cropwindow\". Expected 4.",
                   (int)cr.size());

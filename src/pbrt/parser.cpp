@@ -12,7 +12,9 @@
 #include <pbrt/util/file.h>
 #include <pbrt/util/memory.h>
 #include <pbrt/util/print.h>
+#include <pbrt/util/progressreporter.h>
 #include <pbrt/util/stats.h>
+#include <pbrt/util/string.h>
 
 #include <double-conversion/double-conversion.h>
 
@@ -66,7 +68,7 @@ std::string ParsedParameter::ToString() const {
     if (!floats.empty())
         for (Float d : floats)
             str += StringPrintf("%f ", d);
-    if (!ints.empty())
+    else if (!ints.empty())
         for (int i : ints)
             str += StringPrintf("%d ", i);
     else if (!strings.empty())
@@ -170,8 +172,9 @@ std::unique_ptr<Tokenizer> Tokenizer::CreateFromFile(
         return nullptr;
     };
 
-    HANDLE fileHandle = CreateFileA(filename.c_str(), GENERIC_READ, FILE_SHARE_READ, 0,
-                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+    HANDLE fileHandle =
+        CreateFileW(WStringFromUTF8(filename).c_str(), GENERIC_READ, FILE_SHARE_READ, 0,
+                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
     if (!fileHandle) {
         return errorReportLambda();
     }
@@ -194,17 +197,7 @@ std::unique_ptr<Tokenizer> Tokenizer::CreateFromFile(
 
     return std::make_unique<Tokenizer>(ptr, len, filename, std::move(errorCallback));
 #else
-    FILE *f = fopen(filename.c_str(), "r");
-    if (!f) {
-        errorCallback(StringPrintf("%s: %s", filename, ErrorString()).c_str(), nullptr);
-        return nullptr;
-    }
-
-    std::string str;
-    int ch;
-    while ((ch = fgetc(f)) != EOF)
-        str.push_back(char(ch));
-    fclose(f);
+    std::string str = ReadFileContents(filename);
     return std::make_unique_ptr<Tokenizer>(std::move(str), std::move(errorCallback));
 #endif
 }
@@ -220,6 +213,7 @@ Tokenizer::Tokenizer(std::string str,
     pos = contents.data();
     end = pos + contents.size();
     tokenizerMemory += contents.size();
+    CheckUTF(str.data(), str.size());
 }
 
 #if defined(PBRT_HAVE_MMAP) || defined(PBRT_IS_WINDOWS)
@@ -232,6 +226,7 @@ Tokenizer::Tokenizer(void *ptr, size_t len, std::string filename,
     loc = FileLoc(*new std::string(filename));
     pos = (const char *)ptr;
     end = pos + len;
+    CheckUTF(ptr, len);
 }
 #endif
 
@@ -245,6 +240,15 @@ Tokenizer::~Tokenizer() {
         errorCallback(StringPrintf("UnmapViewOfFile: %s", ErrorString()).c_str(),
                       nullptr);
 #endif
+}
+
+void Tokenizer::CheckUTF(const void *ptr, int len) const {
+    const unsigned char *c = (const unsigned char *)ptr;
+    // https://en.wikipedia.org/wiki/Byte_order_mark
+    if (len >= 2 && ((c[0] == 0xfe && c[1] == 0xff) || (c[0] == 0xff && c[1] == 0xfe)))
+        errorCallback("File is encoded with UTF-16, which is not currently "
+                      "supported by pbrt (https://github.com/mmp/pbrt-v4/issues/136).",
+                      &loc);
 }
 
 pstd::optional<Token> Tokenizer::Next() {
@@ -661,13 +665,6 @@ void parse(SceneRepresentation *scene, std::unique_ptr<Tokenizer> t) {
     };
 
     pstd::optional<Token> tok;
-    CheckCallbackScope _([&tok]() -> std::string {
-        if (!tok.has_value())
-            return "";
-        std::string filename(tok->loc.filename.begin(), tok->loc.filename.end());
-        return StringPrintf("Current parser location %s:%d:%d", filename, tok->loc.line,
-                            tok->loc.column);
-    });
 
     while (true) {
         tok = nextToken(TokenOptional);
@@ -772,13 +769,38 @@ void parse(SceneRepresentation *scene, std::unique_ptr<Tokenizer> t) {
                     if (timport) {
                         ParsedScene *importScene = parsedScene->CopyForImport();
 
-                        std::thread importThread(
-                            [](ParsedScene *scene, std::unique_ptr<Tokenizer> timport) {
-                                parse(scene, std::move(timport));
-                            },
-                            importScene, std::move(timport));
-                        imports.push_back(
-                            std::make_pair(std::move(importThread), importScene));
+                        static int maxThreads = MaxThreadIndex();
+                        if (maxThreads == 1) {
+                            parse(importScene, std::move(timport));
+                            parsedScene->MergeImported(importScene);
+                        } else {
+                            static std::mutex importThreadMutex;
+                            static std::condition_variable importThreadCV;
+                            static int nRunningImportThreads = 0;
+
+                            std::unique_lock<std::mutex> lock(importThreadMutex);
+                            while (nRunningImportThreads == maxThreads)
+                                importThreadCV.wait(lock);
+                            ++nRunningImportThreads;
+                            lock.unlock();
+
+                            std::thread importThread(
+                                [filename](ParsedScene *scene,
+                                           std::unique_ptr<Tokenizer> timport) {
+                                    Timer timer;
+                                    parse(scene, std::move(timport));
+                                    LOG_VERBOSE("Elapsed time to parse \"%s\": %.2fs",
+                                                filename, timer.ElapsedSeconds());
+
+                                    std::unique_lock<std::mutex> lock(importThreadMutex);
+                                    --nRunningImportThreads;
+                                    importThreadCV.notify_all();
+                                    lock.unlock();
+                                },
+                                importScene, std::move(timport));
+                            imports.push_back(
+                                std::make_pair(std::move(importThread), importScene));
+                        }
                     }
                 }
             } else if (tok->token == "Identity")

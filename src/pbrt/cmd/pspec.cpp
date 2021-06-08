@@ -22,9 +22,8 @@
 #include <pbrt/util/pstd.h>
 
 #ifdef PBRT_BUILD_GPU_RENDERER
-#include <pbrt/gpu/init.h>
-#include <pbrt/gpu/launch.h>
-#include <pbrt/util/memory.h>
+#include <pbrt/gpu/util.h>
+#include <pbrt/gpu/memory.h>
 #endif
 
 #include <string>
@@ -250,7 +249,8 @@ GenerateSamples(std::string samplerName, int nPoints, int iter) {
             points.push_back(u);
         }
 
-        sampler.DispatchCPU([&](auto sampler) { delete sampler; });
+        auto del = [&](auto sampler) { delete sampler; };
+        sampler.DispatchCPU(del);
     }
 
     return points;
@@ -262,32 +262,33 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    std::vector<std::string> args = GetCommandLineArguments(argv);
+
     std::string samplerName;
     int nPoints = 1024;
     int nSets = 0;
     int res = 1500;
     std::string baseOutFilename;
 
-    argv += 1;
-    while (*argv != nullptr) {
+    for (auto iter = args.begin(); iter != args.end(); ++iter) {
         auto onError = [](const std::string &err) {
             usage(err);
             exit(1);
         };
 
-        if (ParseArg(&argv, "npoints", &nPoints, onError) ||
-            ParseArg(&argv, "resolution", &res, onError) ||
-            ParseArg(&argv, "outbase", &baseOutFilename, onError) ||
-            ParseArg(&argv, "nsets", &nSets, onError))
+        if (ParseArg(&iter, args.end(), "npoints", &nPoints, onError) ||
+            ParseArg(&iter, args.end(), "resolution", &res, onError) ||
+            ParseArg(&iter, args.end(), "outbase", &baseOutFilename, onError) ||
+            ParseArg(&iter, args.end(), "nsets", &nSets, onError))
             ;
         else if (samplerName.empty()) {
-            if (*argv[0] == '-') {
+            if ((*iter)[0] == '-') {
                 usage();
                 return 0;
             }
-            samplerName = *argv++;
+            samplerName = *iter;
         } else {
-            usage(StringPrintf("unknown argument \"%s\"", *argv));
+            usage(StringPrintf("unknown argument \"%s\"", *iter));
             return 1;
         }
     }
@@ -317,11 +318,12 @@ int main(int argc, char *argv[]) {
     Image *pspec = alloc.new_object<Image>(
         PixelFormat::Float, Point2i(res, res),
         std::vector<std::string>{"power"}, nullptr, alloc);
-    ProgressReporter progress(nSets, "Analyzing", nSets == 1, options.useGPU);
-
 #ifdef PBRT_BUILD_GPU_RENDERER
+    ProgressReporter progress(nSets, "Analyzing", nSets == 1, options.useGPU);
     GPUInit();
     UPSInit(nPoints);
+#else
+    ProgressReporter progress(nSets, "Analyzing", nSets == 1);
 #endif
 
     int actualNSets = 0;

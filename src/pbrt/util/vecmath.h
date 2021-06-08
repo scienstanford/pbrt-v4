@@ -189,13 +189,13 @@ PBRT_CPU_GPU inline C<T> Abs(const Tuple2<C, T> &t) {
 
 template <template <class> class C, typename T>
 PBRT_CPU_GPU inline C<T> Ceil(const Tuple2<C, T> &t) {
-    using std::ceil;
+    using pstd::ceil;
     return {ceil(t.x), ceil(t.y)};
 }
 
 template <template <class> class C, typename T>
 PBRT_CPU_GPU inline C<T> Floor(const Tuple2<C, T> &t) {
-    using std::floor;
+    using pstd::floor;
     return {floor(t.x), floor(t.y)};
 }
 
@@ -396,13 +396,13 @@ PBRT_CPU_GPU inline C<T> Abs(const Tuple3<C, T> &t) {
 
 template <template <class> class C, typename T>
 PBRT_CPU_GPU inline C<T> Ceil(const Tuple3<C, T> &t) {
-    using std::ceil;
+    using pstd::ceil;
     return {ceil(t.x), ceil(t.y), ceil(t.z)};
 }
 
 template <template <class> class C, typename T>
 PBRT_CPU_GPU inline C<T> Floor(const Tuple3<C, T> &t) {
-    using std::floor;
+    using pstd::floor;
     return {floor(t.x), floor(t.y), floor(t.z)};
 }
 
@@ -618,6 +618,42 @@ class Point2 : public Tuple2<Point2, T> {
         return *this;
     }
 };
+
+// Point2 Inline Functions
+PBRT_CPU_GPU inline Point2f InvertBilinear(Point2f p, pstd::span<const Point2f> vert);
+
+// https://www.iquilezles.org/www/articles/ibilinear/ibilinear.htm,
+// with a fix for perfect quads
+PBRT_CPU_GPU inline Point2f InvertBilinear(Point2f p, pstd::span<const Point2f> vert) {
+    // The below assumes a quad (vs uv parametric layout) in v....
+    Point2f a = vert[0], b = vert[1], c = vert[3], d = vert[2];
+    Vector2f e = b - a, f = d - a, g = (a - b) + (c - d), h = p - a;
+
+    auto cross2d = [](Vector2f a, Vector2f b) {
+        return DifferenceOfProducts(a.x, b.y, a.y, b.x);
+    };
+
+    Float k2 = cross2d(g, f);
+    Float k1 = cross2d(e, f) + cross2d(h, g);
+    Float k0 = cross2d(h, e);
+
+    // if edges are parallel, this is a linear equation
+    if (std::abs(k2) < 0.001f) {
+        if (std::abs(e.x * k1 - g.x * k0) < 1e-5f)
+            return Point2f((h.y * k1 + f.y * k0) / (e.y * k1 - g.y * k0), -k0 / k1);
+        else
+            return Point2f((h.x * k1 + f.x * k0) / (e.x * k1 - g.x * k0), -k0 / k1);
+    }
+
+    Float v0, v1;
+    if (!Quadratic(k2, k1, k0, &v0, &v1))
+        return Point2f(0, 0);
+
+    Float u = (h.x - f.x * v0) / (e.x + g.x * v0);
+    if (u < 0 || u > 1 || v0 < 0 || v0 > 1)
+        return Point2f((h.x - f.x * v1) / (e.x + g.x * v1), v1);
+    return Point2f(u, v0);
+}
 
 // Point3 Definition
 template <typename T>
@@ -980,7 +1016,7 @@ PBRT_CPU_GPU inline Vector3<T> Cross(const Vector3<T> &v, const Vector3<T> &w) {
 template <typename T>
 PBRT_CPU_GPU inline void CoordinateSystem(const Vector3<T> &v1, Vector3<T> *v2,
                                           Vector3<T> *v3) {
-    Float sign = std::copysign(Float(1), v1.z);
+    Float sign = pstd::copysign(Float(1), v1.z);
     Float a = -1 / (sign + v1.z);
     Float b = v1.x * v1.y * a;
     *v2 = Vector3<T>(1 + sign * v1.x * v1.x * a, sign * b, -sign * v1.x);
@@ -990,7 +1026,7 @@ PBRT_CPU_GPU inline void CoordinateSystem(const Vector3<T> &v1, Vector3<T> *v2,
 template <typename T>
 PBRT_CPU_GPU inline void CoordinateSystem(const Normal3<T> &v1, Vector3<T> *v2,
                                           Vector3<T> *v3) {
-    Float sign = std::copysign(Float(1), v1.z);
+    Float sign = pstd::copysign(Float(1), v1.z);
     Float a = -1 / (sign + v1.z);
     Float b = v1.x * v1.y * a;
     *v2 = Vector3<T>(1 + sign * v1.x * v1.x * a, sign * b, -sign * v1.x);
@@ -1713,8 +1749,7 @@ PBRT_CPU_GPU inline Float CosDPhi(Vector3f wa, Vector3f wb) {
     return Clamp((wa.x * wb.x + wa.y * wb.y) / std::sqrt(waxy * wbxy), -1, 1);
 }
 
-PBRT_CPU_GPU
-inline bool SameHemisphere(Vector3f w, Vector3f wp) {
+PBRT_CPU_GPU inline bool SameHemisphere(Vector3f w, Vector3f wp) {
     return w.z * wp.z > 0;
 }
 
@@ -1765,7 +1800,7 @@ class OctahedralVector {
     // OctahedralVector Private Methods
     PBRT_CPU_GPU
     static uint16_t Encode(Float f) {
-        return std::round(Clamp((f + 1) / 2, 0, 1) * 65535.f);
+        return pstd::round(Clamp((f + 1) / 2, 0, 1) * 65535.f);
     }
 
     PBRT_CPU_GPU

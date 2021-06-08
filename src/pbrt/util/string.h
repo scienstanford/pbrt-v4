@@ -24,6 +24,15 @@ std::vector<int> SplitStringToInts(std::string_view str, char ch);
 std::vector<Float> SplitStringToFloats(std::string_view str, char ch);
 std::vector<double> SplitStringToDoubles(std::string_view str, char ch);
 
+// String Utility Function Declarations
+std::string UTF8FromUTF16(std::u16string str);
+std::u16string UTF16FromUTF8(std::string str);
+
+#ifdef PBRT_IS_WINDOWS
+std::wstring WStringFromUTF8(std::string str);
+std::string UTF8FromWString(std::wstring str);
+#endif  // PBRT_IS_WINDOWS
+
 }  // namespace pbrt
 
 #endif  // PBRT_UTIL_STRING_H

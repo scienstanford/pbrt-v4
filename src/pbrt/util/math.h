@@ -206,6 +206,10 @@ template <int N>
 class SquareMatrix;
 
 // Math Inline Functions
+PBRT_CPU_GPU inline Float Lerp(Float x, Float a, Float b) {
+    return (1 - x) * a + x * b;
+}
+
 // http://www.plunk.org/~hatch/rightway.php
 PBRT_CPU_GPU inline Float SinXOverX(Float x) {
     if (1 + x * x == 1)
@@ -231,10 +235,6 @@ PBRT_CPU_GPU inline Float Sinc(Float x) {
     return SinXOverX(Pi * x);
 }
 
-PBRT_CPU_GPU inline Float Lerp(Float x, Float a, Float b) {
-    return (1 - x) * a + x * b;
-}
-
 #ifdef PBRT_IS_MSVC
 #pragma warning(push)
 #pragma warning(disable : 4018)  // signed/unsigned mismatch
@@ -243,9 +243,9 @@ PBRT_CPU_GPU inline Float Lerp(Float x, Float a, Float b) {
 template <typename T, typename U, typename V>
 PBRT_CPU_GPU inline constexpr T Clamp(T val, U low, V high) {
     if (val < low)
-        return low;
+        return T(low);
     else if (val > high)
-        return high;
+        return T(high);
     else
         return val;
 }
@@ -463,7 +463,7 @@ PBRT_CPU_GPU inline float FastExp(float x) {
     float xp = x * 1.442695041f;
 
     // Find integer and fractional components of $x'$
-    float fxp = std::floor(xp), f = xp - fxp;
+    float fxp = pstd::floor(xp), f = xp - fxp;
     int i = (int)fxp;
 
     // Evaluate polynomial approximation of $2^f$
@@ -638,7 +638,7 @@ PBRT_CPU_GPU inline bool Quadratic(float a, float b, float c, float *t0, float *
     float rootDiscrim = std::sqrt(discrim);
 
     // Compute quadratic _t_ values
-    float q = -0.5f * (b + std::copysign(rootDiscrim, b));
+    float q = -0.5f * (b + pstd::copysign(rootDiscrim, b));
     *t0 = q / a;
     *t1 = c / q;
     if (*t0 > *t1)
@@ -661,7 +661,7 @@ inline bool Quadratic(double a, double b, double c, double *t0, double *t1) {
     }
 
     // Compute quadratic _t_ values
-    double q = -0.5 * (b + std::copysign(rootDiscrim, b));
+    double q = -0.5 * (b + pstd::copysign(rootDiscrim, b));
     *t0 = q / a;
     *t1 = c / q;
     if (*t0 > *t1)
@@ -774,7 +774,7 @@ inline Float ErfInv(Float a) {
     // https://stackoverflow.com/a/49743348
     float p;
     float t = std::log(std::max(FMA(a, -a, 1), std::numeric_limits<Float>::min()));
-    CHECK(!IsNaN(t) && !std::isinf(t));
+    CHECK(!IsNaN(t) && !IsInf(t));
     if (std::abs(t) > 6.125f) {          // maximum ulp error = 2.35793
         p = 3.03697567e-10f;             //  0x1.4deb44p-32
         p = FMA(p, t, 2.93243101e-8f);   //  0x1.f7c9aep-26
@@ -943,7 +943,7 @@ class Interval {
 #endif
 
   private:
-    friend class SOA<Interval>;
+    friend struct SOA<Interval>;
     // Interval Private Members
     Float low, high;
 };
@@ -1015,11 +1015,11 @@ PBRT_CPU_GPU inline Interval operator/(Interval i, Float f) {
 }
 
 PBRT_CPU_GPU inline Float Floor(Interval i) {
-    return std::floor(i.LowerBound());
+    return pstd::floor(i.LowerBound());
 }
 
 PBRT_CPU_GPU inline Float Ceil(Interval i) {
-    return std::ceil(i.UpperBound());
+    return pstd::ceil(i.UpperBound());
 }
 
 PBRT_CPU_GPU inline Float floor(Interval i) {

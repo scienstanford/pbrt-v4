@@ -1007,35 +1007,35 @@ template <typename... Ts>
 tuple(Ts &&...) -> tuple<std::decay_t<Ts>...>;
 
 template <size_t I, typename T, typename... Ts>
-PBRT_CPU_GPU auto &get(tuple<T, Ts...> &tuple) {
+PBRT_CPU_GPU auto &get(tuple<T, Ts...> &t) {
     if constexpr (I == 0)
-        return tuple.value;
+        return t.value;
     else
-        return get<I - 1, Ts...>(tuple);
+        return get<I - 1>((tuple<Ts...> &)t);
 }
 
 template <size_t I, typename T, typename... Ts>
-PBRT_CPU_GPU const auto &get(const tuple<T, Ts...> &tuple) {
+PBRT_CPU_GPU const auto &get(const tuple<T, Ts...> &t) {
     if constexpr (I == 0)
-        return tuple.value;
+        return t.value;
     else
-        return get<I - 1, Ts...>(tuple);
+        return get<I - 1>((const tuple<Ts...> &)t);
 }
 
 template <typename Req, typename T, typename... Ts>
-PBRT_CPU_GPU auto &get(tuple<T, Ts...> &tuple) {
+PBRT_CPU_GPU auto &get(tuple<T, Ts...> &t) {
     if constexpr (std::is_same_v<Req, T>)
-        return tuple.value;
+        return t.value;
     else
-        return get<Req, Ts...>(tuple);
+        return get<Req>((tuple<Ts...> &)t);
 }
 
 template <typename Req, typename T, typename... Ts>
-PBRT_CPU_GPU const auto &get(const tuple<T, Ts...> &tuple) {
+PBRT_CPU_GPU const auto &get(const tuple<T, Ts...> &t) {
     if constexpr (std::is_same_v<Req, T>)
-        return tuple.value;
+        return t.value;
     else
-        return get<Req, Ts...>(tuple);
+        return get<Req>((const tuple<Ts...> &)t);
 }
 
 template <typename T>
@@ -1090,6 +1090,70 @@ PBRT_CPU_GPU inline double abs(double f) {
     return ::fabs(f);
 }
 
+PBRT_CPU_GPU inline float copysign(float mag, float sign) {
+#ifdef PBRT_IS_GPU_CODE
+    return ::copysignf(mag, sign);
+#else
+    return std::copysign(mag, sign);
+#endif
+}
+
+PBRT_CPU_GPU inline double copysign(double mag, double sign) {
+#ifdef PBRT_IS_GPU_CODE
+    return ::copysign(mag, sign);
+#else
+    return std::copysign(mag, sign);
+#endif
+}
+
+PBRT_CPU_GPU inline float floor(float arg) {
+#ifdef PBRT_IS_GPU_CODE
+    return ::floorf(arg);
+#else
+    return std::floor(arg);
+#endif
+}
+
+PBRT_CPU_GPU inline double floor(double arg) {
+#ifdef PBRT_IS_GPU_CODE
+    return ::floor(arg);
+#else
+    return std::floor(arg);
+#endif
+}
+
+PBRT_CPU_GPU inline float ceil(float arg) {
+#ifdef PBRT_IS_GPU_CODE
+    return ::ceilf(arg);
+#else
+    return std::ceil(arg);
+#endif
+}
+
+PBRT_CPU_GPU inline double ceil(double arg) {
+#ifdef PBRT_IS_GPU_CODE
+    return ::ceil(arg);
+#else
+    return std::ceil(arg);
+#endif
+}
+
+PBRT_CPU_GPU inline float round(float arg) {
+#ifdef PBRT_IS_GPU_CODE
+    return ::roundf(arg);
+#else
+    return std::round(arg);
+#endif
+}
+
+PBRT_CPU_GPU inline double round(double arg) {
+#ifdef PBRT_IS_GPU_CODE
+    return ::round(arg);
+#else
+    return std::round(arg);
+#endif
+}
+
 template <typename T>
 PBRT_CPU_GPU T real(const complex<T> &z) {
     return z.re;
@@ -1121,7 +1185,7 @@ PBRT_CPU_GPU complex<T> sqrt(const complex<T> &z) {
     if (z.re >= 0)
         return {t1, t2};
     else
-        return {pstd::abs(t2), std::copysign(t1, z.im)};
+        return {pstd::abs(t2), pstd::copysign(t1, z.im)};
 }
 
 }  // namespace pstd

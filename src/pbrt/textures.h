@@ -31,6 +31,8 @@ struct TextureEvalContext {
     // TextureEvalContext Public Methods
     TextureEvalContext() = default;
     PBRT_CPU_GPU
+    TextureEvalContext(const Interaction &intr) : p(intr.p()), uv(intr.uv) {}
+    PBRT_CPU_GPU
     TextureEvalContext(const SurfaceInteraction &si)
         : p(si.p()),
           dpdx(si.dpdx),
@@ -54,6 +56,8 @@ struct TextureEvalContext {
           dvdx(dvdx),
           dvdy(dvdy),
           faceIndex(faceIndex) {}
+
+    std::string ToString() const;
 
     Point3f p;
     Vector3f dpdx, dpdy;
@@ -526,7 +530,7 @@ class ImageTextureBase {
     ImageTextureBase(TextureMapping2D mapping, std::string filename,
                      MIPMapFilterOptions filterOptions, WrapMode wrapMode, Float scale,
                      bool invert, ColorEncoding encoding, Allocator alloc)
-        : mapping(mapping), scale(scale), invert(invert) {
+        : mapping(mapping), filename(filename), scale(scale), invert(invert) {
         // Get _MIPMap_ from texture cache if present
         TexInfo texInfo(filename, filterOptions, wrapMode, encoding);
         std::unique_lock<std::mutex> lock(textureCacheMutex);
@@ -554,6 +558,7 @@ class ImageTextureBase {
   protected:
     // ImageTextureBase Protected Members
     TextureMapping2D mapping;
+    std::string filename;
     Float scale;
     bool invert;
     MIPMap *mipmap;
@@ -625,10 +630,12 @@ class SpectrumImageTexture : public ImageTextureBase {
 #if defined(PBRT_BUILD_GPU_RENDERER) && defined(__NVCC__)
 class GPUSpectrumImageTexture {
   public:
-    GPUSpectrumImageTexture(TextureMapping2D mapping, cudaTextureObject_t texObj,
-                            Float scale, bool invert, bool isSingleChannel,
-                            const RGBColorSpace *colorSpace, SpectrumType spectrumType)
+    GPUSpectrumImageTexture(std::string filename, TextureMapping2D mapping,
+                            cudaTextureObject_t texObj, Float scale, bool invert,
+                            bool isSingleChannel, const RGBColorSpace *colorSpace,
+                            SpectrumType spectrumType)
         : mapping(mapping),
+          filename(filename),
           texObj(texObj),
           scale(scale),
           invert(invert),
@@ -648,10 +655,14 @@ class GPUSpectrumImageTexture {
         Point2f st = mapping.Map(ctx, &dstdx, &dstdy);
         RGB rgb;
         if (isSingleChannel) {
-            float tex = scale * tex2D<float>(texObj, st[0], 1 - st[1]);
+            float tex = scale * tex2DGrad<float>(texObj, st[0], 1 - st[1],
+                                                 make_float2(dstdx[0], dstdy[0]),
+                                                 make_float2(dstdx[1], dstdy[1]));
             rgb = RGB(tex, tex, tex);
         } else {
-            float4 tex = tex2D<float4>(texObj, st[0], 1 - st[1]);
+            float4 tex = tex2DGrad<float4>(texObj, st[0], 1 - st[1],
+                                           make_float2(dstdx[0], dstdy[0]),
+                                           make_float2(dstdx[1], dstdy[1]));
             rgb = scale * RGB(tex.x, tex.y, tex.z);
         }
         if (invert)
@@ -671,11 +682,12 @@ class GPUSpectrumImageTexture {
                                            SpectrumType spectrumType, const FileLoc *loc,
                                            Allocator alloc);
 
-    std::string ToString() const { return "GPUSpectrumImageTexture"; }
+    std::string ToString() const;
 
     void MultiplyScale(Float s) { scale *= s; }
 
     TextureMapping2D mapping;
+    std::string filename;
     cudaTextureObject_t texObj;
     Float scale;
     bool invert, isSingleChannel;
@@ -685,9 +697,13 @@ class GPUSpectrumImageTexture {
 
 class GPUFloatImageTexture {
   public:
-    GPUFloatImageTexture(TextureMapping2D mapping, cudaTextureObject_t texObj,
-                         Float scale, bool invert)
-        : mapping(mapping), texObj(texObj), scale(scale), invert(invert) {}
+    GPUFloatImageTexture(std::string filename, TextureMapping2D mapping,
+                         cudaTextureObject_t texObj, Float scale, bool invert)
+        : mapping(mapping),
+          filename(filename),
+          texObj(texObj),
+          scale(scale),
+          invert(invert) {}
 
     PBRT_CPU_GPU
     Float Evaluate(TextureEvalContext ctx) const {
@@ -699,7 +715,9 @@ class GPUFloatImageTexture {
         Point2f st = mapping.Map(ctx, &dstdx, &dstdy);
         // flip y coord since image has (0,0) at upper left, texture at lower
         // left
-        Float v = scale * tex2D<float>(texObj, st[0], 1 - st[1]);
+        Float v = scale * tex2DGrad<float>(texObj, st[0], 1 - st[1],
+                                           make_float2(dstdx[0], dstdy[0]),
+                                           make_float2(dstdx[1], dstdy[1]));
         return invert ? std::max<Float>(0, 1 - v) : v;
 #endif
     }
@@ -708,11 +726,12 @@ class GPUFloatImageTexture {
                                         const TextureParameterDictionary &parameters,
                                         const FileLoc *loc, Allocator alloc);
 
-    std::string ToString() const { return "GPUFloatImageTexture"; }
+    std::string ToString() const;
 
     void MultiplyScale(Float s) { scale *= s; }
 
     TextureMapping2D mapping;
+    std::string filename;
     cudaTextureObject_t texObj;
     Float scale;
     bool invert;
@@ -1089,43 +1108,54 @@ class BasicTextureEvaluator {
     PBRT_CPU_GPU
     bool CanEvaluate(std::initializer_list<FloatTexture> ftex,
                      std::initializer_list<SpectrumTexture> stex) const {
-        for (auto f : ftex)
-            if (f && (!f.Is<FloatConstantTexture>() && !f.Is<GPUFloatPtexTexture>() &&
-                      !f.Is<GPUFloatImageTexture>()))
+        // Return _false_ if any _FloatTexture_s cannot be evaluated
+        for (FloatTexture f : ftex)
+            if (f && !f.Is<FloatConstantTexture>() && !f.Is<FloatImageTexture>() &&
+                !f.Is<GPUFloatPtexTexture>() && !f.Is<GPUFloatImageTexture>())
                 return false;
-        for (auto s : stex)
-            if (s &&
-                (!s.Is<SpectrumConstantTexture>() && !s.Is<GPUSpectrumPtexTexture>() &&
-                 !s.Is<GPUSpectrumImageTexture>()))
+
+        // Return _false_ if any _SpectrumTexture_s cannot be evaluated
+        for (SpectrumTexture s : stex)
+            if (s && !s.Is<SpectrumConstantTexture>() && !s.Is<SpectrumImageTexture>() &&
+                !s.Is<GPUSpectrumPtexTexture>() && !s.Is<GPUSpectrumImageTexture>())
                 return false;
+
         return true;
     }
 
     PBRT_CPU_GPU
     Float operator()(FloatTexture tex, TextureEvalContext ctx) {
-        if (FloatConstantTexture *fcTex = tex.CastOrNullptr<FloatConstantTexture>())
-            return fcTex->Evaluate(ctx);
-        else if (GPUFloatImageTexture *fiTex = tex.CastOrNullptr<GPUFloatImageTexture>())
-            return fiTex->Evaluate(ctx);
-        else if (GPUFloatPtexTexture *fPtex = tex.CastOrNullptr<GPUFloatPtexTexture>())
-            return fPtex->Evaluate(ctx);
-        else
+        if (tex.Is<FloatConstantTexture>())
+            return tex.Cast<FloatConstantTexture>()->Evaluate(ctx);
+        else if (tex.Is<FloatImageTexture>())
+            return tex.Cast<FloatImageTexture>()->Evaluate(ctx);
+        else if (tex.Is<GPUFloatImageTexture>())
+            return tex.Cast<GPUFloatImageTexture>()->Evaluate(ctx);
+        else if (tex.Is<GPUFloatPtexTexture>())
+            return tex.Cast<GPUFloatPtexTexture>()->Evaluate(ctx);
+        else {
+            if (tex)
+                LOG_FATAL("BasicTextureEvaluator::operator() called with %s", tex);
             return 0.f;
+        }
     }
 
     PBRT_CPU_GPU
     SampledSpectrum operator()(SpectrumTexture tex, TextureEvalContext ctx,
                                SampledWavelengths lambda) {
-        if (SpectrumConstantTexture *sc = tex.CastOrNullptr<SpectrumConstantTexture>())
-            return sc->Evaluate(ctx, lambda);
-        else if (GPUSpectrumImageTexture *sg =
-                     tex.CastOrNullptr<GPUSpectrumImageTexture>())
-            return sg->Evaluate(ctx, lambda);
-        else if (GPUSpectrumPtexTexture *sPtex =
-                     tex.CastOrNullptr<GPUSpectrumPtexTexture>())
-            return sPtex->Evaluate(ctx, lambda);
-        else
+        if (tex.Is<SpectrumConstantTexture>())
+            return tex.Cast<SpectrumConstantTexture>()->Evaluate(ctx, lambda);
+        else if (tex.Is<SpectrumImageTexture>())
+            return tex.Cast<SpectrumImageTexture>()->Evaluate(ctx, lambda);
+        else if (tex.Is<GPUSpectrumImageTexture>())
+            return tex.Cast<GPUSpectrumImageTexture>()->Evaluate(ctx, lambda);
+        else if (tex.Is<GPUSpectrumPtexTexture>())
+            return tex.Cast<GPUSpectrumPtexTexture>()->Evaluate(ctx, lambda);
+        else {
+            if (tex)
+                LOG_FATAL("BasicTextureEvaluator::operator() called with %s", tex);
             return SampledSpectrum(0.f);
+        }
     }
 };
 

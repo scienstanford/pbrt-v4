@@ -26,13 +26,13 @@
 
 namespace pbrt {
 
-// IdealDiffuseBxDF Definition
-class IdealDiffuseBxDF {
+// DiffuseBxDF Definition
+class DiffuseBxDF {
   public:
-    // IdealDiffuseBxDF Public Methods
-    IdealDiffuseBxDF() = default;
+    // DiffuseBxDF Public Methods
+    DiffuseBxDF() = default;
     PBRT_CPU_GPU
-    IdealDiffuseBxDF(const SampledSpectrum &R) : R(R) {}
+    DiffuseBxDF(const SampledSpectrum &R) : R(R) {}
 
     PBRT_CPU_GPU
     SampledSpectrum f(Vector3f wo, Vector3f wi, TransportMode mode) const {
@@ -65,7 +65,7 @@ class IdealDiffuseBxDF {
     }
 
     PBRT_CPU_GPU
-    static constexpr const char *Name() { return "IdealDiffuseBxDF"; }
+    static constexpr const char *Name() { return "DiffuseBxDF"; }
 
     std::string ToString() const;
 
@@ -81,13 +81,13 @@ class IdealDiffuseBxDF {
     SampledSpectrum R;
 };
 
-// DiffuseBxDF Definition
-class DiffuseBxDF {
+// RoughDiffuseBxDF Definition
+class RoughDiffuseBxDF {
   public:
-    // DiffuseBxDF Public Methods
-    DiffuseBxDF() = default;
+    // RoughDiffuseBxDF Public Methods
+    RoughDiffuseBxDF() = default;
     PBRT_CPU_GPU
-    DiffuseBxDF(SampledSpectrum R, SampledSpectrum T, Float sigma) : R(R), T(T) {
+    RoughDiffuseBxDF(SampledSpectrum R, SampledSpectrum T, Float sigma) : R(R), T(T) {
         Float sigma2 = Sqr(Radians(sigma));
         A = 1 - sigma2 / (2 * (sigma2 + 0.33f));
         B = 0.45f * sigma2 / (sigma2 + 0.09f);
@@ -172,7 +172,7 @@ class DiffuseBxDF {
     }
 
     PBRT_CPU_GPU
-    static constexpr const char *Name() { return "DiffuseBxDF"; }
+    static constexpr const char *Name() { return "RoughDiffuseBxDF"; }
 
     std::string ToString() const;
 
@@ -186,7 +186,7 @@ class DiffuseBxDF {
     }
 
   private:
-    // DiffuseBxDF Private Members
+    // RoughDiffuseBxDF Private Members
     SampledSpectrum R, T;
     Float A, B;
 };
@@ -322,33 +322,6 @@ class ConductorBxDF {
     }
 
     PBRT_CPU_GPU
-    static constexpr const char *Name() { return "ConductorBxDF"; }
-    std::string ToString() const;
-
-    PBRT_CPU_GPU
-    SampledSpectrum f(Vector3f wo, Vector3f wi, TransportMode mode) const {
-        if (!SameHemisphere(wo, wi))
-            return {};
-        if (mfDistrib.EffectivelySmooth())
-            return {};
-        // Evaluate Torrance--Sparrow model for conductor BRDF
-        // Compute cosines and $\wh$ for conductor BRDF
-        Float cosTheta_o = AbsCosTheta(wo), cosTheta_i = AbsCosTheta(wi);
-        if (cosTheta_i == 0 || cosTheta_o == 0)
-            return {};
-        Vector3f wh = wi + wo;
-        if (wh.x == 0 && wh.y == 0 && wh.z == 0)
-            return {};
-        wh = Normalize(wh);
-
-        // Evaluate Fresnel factor _F_ for conductor BRDF
-        Float frCosTheta_i = AbsDot(wi, wh);
-        SampledSpectrum F = FrConductor(frCosTheta_i, eta, k);
-
-        return mfDistrib.D(wh) * mfDistrib.G(wo, wi) * F / (4 * cosTheta_i * cosTheta_o);
-    }
-
-    PBRT_CPU_GPU
     pstd::optional<BSDFSample> Sample_f(
         Vector3f wo, Float uc, Point2f u, TransportMode mode,
         BxDFReflTransFlags sampleFlags = BxDFReflTransFlags::All) const {
@@ -357,10 +330,10 @@ class ConductorBxDF {
         if (mfDistrib.EffectivelySmooth()) {
             // Sample perfectly specular conductor BRDF
             Vector3f wi(-wo.x, -wo.y, wo.z);
-            SampledSpectrum f = FrConductor(AbsCosTheta(wi), eta, k) / AbsCosTheta(wi);
+            SampledSpectrum f = FrComplex(AbsCosTheta(wi), eta, k) / AbsCosTheta(wi);
             return BSDFSample(f, wi, 1, BxDFFlags::SpecularReflection);
         }
-        // Sample Torrance--Sparow model for conductor BRDF
+        // Sample rough conductor BRDF
         // Sample microfacet orientation $\wh$ and reflected direction $\wi$
         if (wo.z == 0)
             return {};
@@ -378,11 +351,34 @@ class ConductorBxDF {
             return {};
         // Evaluate Fresnel factor _F_ for conductor BRDF
         Float frCosTheta_i = AbsDot(wi, wh);
-        SampledSpectrum F = FrConductor(frCosTheta_i, eta, k);
+        SampledSpectrum F = FrComplex(frCosTheta_i, eta, k);
 
         SampledSpectrum f =
             mfDistrib.D(wh) * mfDistrib.G(wo, wi) * F / (4 * cosTheta_i * cosTheta_o);
         return BSDFSample(f, wi, pdf, BxDFFlags::GlossyReflection);
+    }
+
+    PBRT_CPU_GPU
+    SampledSpectrum f(Vector3f wo, Vector3f wi, TransportMode mode) const {
+        if (!SameHemisphere(wo, wi))
+            return {};
+        if (mfDistrib.EffectivelySmooth())
+            return {};
+        // Evaluate rough conductor BRDF
+        // Compute cosines and $\wh$ for conductor BRDF
+        Float cosTheta_o = AbsCosTheta(wo), cosTheta_i = AbsCosTheta(wi);
+        if (cosTheta_i == 0 || cosTheta_o == 0)
+            return {};
+        Vector3f wh = wi + wo;
+        if (wh.x == 0 && wh.y == 0 && wh.z == 0)
+            return {};
+        wh = Normalize(wh);
+
+        // Evaluate Fresnel factor _F_ for conductor BRDF
+        Float frCosTheta_i = AbsDot(wi, wh);
+        SampledSpectrum F = FrComplex(frCosTheta_i, eta, k);
+
+        return mfDistrib.D(wh) * mfDistrib.G(wo, wi) * F / (4 * cosTheta_i * cosTheta_o);
     }
 
     PBRT_CPU_GPU
@@ -394,7 +390,7 @@ class ConductorBxDF {
             return 0;
         if (mfDistrib.EffectivelySmooth())
             return 0;
-        // Return PDF for sampling Torrance--Sparrow conductor BRDF
+        // Evaluate sampling PDF of rough conductor BRDF
         Vector3f wh = wo + wi;
         CHECK_RARE(1e-5f, LengthSquared(wh) == 0);
         CHECK_RARE(1e-5f, Dot(wo, wh) < 0);
@@ -403,6 +399,10 @@ class ConductorBxDF {
         wh = Normalize(wh);
         return mfDistrib.PDF(wo, wh) / (4 * Dot(wo, wh));
     }
+
+    PBRT_CPU_GPU
+    static constexpr const char *Name() { return "ConductorBxDF"; }
+    std::string ToString() const;
 
     PBRT_CPU_GPU
     void Regularize() { mfDistrib.Regularize(); }
@@ -931,8 +931,7 @@ class LayeredBxDF {
 };
 
 // CoatedDiffuseBxDF Definition
-class CoatedDiffuseBxDF
-    : public LayeredBxDF<DielectricInterfaceBxDF, IdealDiffuseBxDF, true> {
+class CoatedDiffuseBxDF : public LayeredBxDF<DielectricInterfaceBxDF, DiffuseBxDF, true> {
   public:
     // CoatedDiffuseBxDF Public Methods
     using LayeredBxDF::LayeredBxDF;
@@ -1162,7 +1161,6 @@ class NormalizedFresnelBxDF {
     }
 
   private:
-    friend class SOA<NormalizedFresnelBxDF>;
     Float eta;
 };
 
@@ -1196,7 +1194,7 @@ inline void BxDF::Regularize() {
     return Dispatch(regularize);
 }
 
-extern template class LayeredBxDF<DielectricInterfaceBxDF, IdealDiffuseBxDF, true>;
+extern template class LayeredBxDF<DielectricInterfaceBxDF, DiffuseBxDF, true>;
 extern template class LayeredBxDF<DielectricInterfaceBxDF, ConductorBxDF, true>;
 
 }  // namespace pbrt

@@ -59,6 +59,8 @@ class HGPhaseFunction {
     PBRT_CPU_GPU
     Float PDF(Vector3f wo, Vector3f wi) const { return p(wo, wi); }
 
+    static const char *Name() { return "Henyey-Greenstein"; }
+
     std::string ToString() const;
 
   private:
@@ -78,6 +80,13 @@ struct MediumSample {
 
     MediumInteraction intr;
     SampledSpectrum T_maj;
+};
+
+// MediumProperties Definition
+struct MediumProperties {
+    SampledSpectrum sigma_a, sigma;
+    PhaseFunction phase;
+    SampledSpectrum Le;
 };
 
 // HomogeneousMedium Definition
@@ -100,6 +109,14 @@ class HomogeneousMedium {
 
     bool IsEmissive() const { return Le_spec.MaxValue() > 0; }
 
+    PBRT_CPU_GPU
+    MediumProperties Sample(Point3f p, const SampledWavelengths &lambda) const {
+        SampledSpectrum sigma_a = sigma_a_spec.Sample(lambda);
+        SampledSpectrum sigma_s = sigma_s_spec.Sample(lambda);
+        SampledSpectrum Le = Le_spec.Sample(lambda);
+        return MediumProperties{sigma_a, sigma_s, &phase, Le};
+    }
+
     template <typename F>
     PBRT_CPU_GPU SampledSpectrum SampleT_maj(Ray ray, Float tMax, Float u, RNG &rng,
                                              const SampledWavelengths &lambda,
@@ -115,7 +132,7 @@ class HomogeneousMedium {
         SampledSpectrum sigma_maj = sigma_t;
 
         // Sample exponential function to find _t_ for scattering event
-        if (std::isinf(tMax))
+        if (IsInf(tMax))
             tMax = std::numeric_limits<Float>::max();
         if (sigma_maj[0] == 0)
             return FastExp(-tMax * sigma_maj);
@@ -171,6 +188,18 @@ class CuboidMedium {
     }
 
     bool IsEmissive() const { return provider->IsEmissive(); }
+
+    PBRT_CPU_GPU
+    MediumProperties Sample(Point3f p, const SampledWavelengths &lambda) const {
+        // Sample spectra for grid medium scattering
+        SampledSpectrum sigma_a = sigScale * sigma_a_spec.Sample(lambda);
+        SampledSpectrum sigma_s = sigScale * sigma_s_spec.Sample(lambda);
+        SampledSpectrum sigma_t = sigma_a + sigma_s;
+
+        MediumDensity d = provider->Density(p, lambda);
+        SampledSpectrum Le = provider->Le(p, lambda);
+        return MediumProperties{sigma_a * d.sigma_a, sigma_s * d.sigma_s, &phase, Le};
+    }
 
     template <typename F>
     PBRT_CPU_GPU SampledSpectrum SampleT_maj(Ray rRender, Float raytMax, Float u,
@@ -532,7 +561,6 @@ class NanoVDBBuffer {
             return;
         bytesAllocated = size;
         ptr = (uint8_t *)alloc.allocate_bytes(bytesAllocated, 128);
-        LOG_VERBOSE("this %p alloc ptr %p bytes %d", this, ptr, bytesAllocated);
     }
 
     const uint8_t *data() const { return ptr; }
@@ -541,7 +569,6 @@ class NanoVDBBuffer {
     bool empty() const { return size() == 0; }
 
     void clear() {
-        LOG_VERBOSE("this %p clear ptr %p bytes %d", this, ptr, bytesAllocated);
         alloc.deallocate_bytes(ptr, bytesAllocated, 128);
         bytesAllocated = 0;
         ptr = nullptr;
@@ -571,21 +598,30 @@ class NanoVDBMediumProvider {
                             bounds, LeScale, temperatureCutoff, temperatureScale);
     }
 
-    NanoVDBMediumProvider(const Bounds3f &bounds, nanovdb::GridHandle<NanoVDBBuffer> dg,
+    NanoVDBMediumProvider(nanovdb::GridHandle<NanoVDBBuffer> dg,
                           nanovdb::GridHandle<NanoVDBBuffer> tg, Float LeScale,
                           Float temperatureCutoff, Float temperatureScale)
-        : bounds(bounds),
-          densityGrid(std::move(dg)),
+        : densityGrid(std::move(dg)),
           temperatureGrid(std::move(tg)),
           LeScale(LeScale),
           temperatureCutoff(temperatureCutoff),
           temperatureScale(temperatureScale) {
         densityFloatGrid = densityGrid.grid<float>();
+
+        nanovdb::BBox<nanovdb::Vec3R> bbox = densityFloatGrid->worldBBox();
+        bounds = Bounds3f(Point3f(bbox.min()[0], bbox.min()[1], bbox.min()[2]),
+                          Point3f(bbox.max()[0], bbox.max()[1], bbox.max()[2]));
+
         if (temperatureGrid) {
             temperatureFloatGrid = temperatureGrid.grid<float>();
             float minTemperature, maxTemperature;
             temperatureFloatGrid->tree().extrema(minTemperature, maxTemperature);
             LOG_VERBOSE("Max temperature: %f", maxTemperature);
+
+            nanovdb::BBox<nanovdb::Vec3R> bbox = temperatureFloatGrid->worldBBox();
+            bounds = Union(
+                bounds, Bounds3f(Point3f(bbox.min()[0], bbox.min()[1], bbox.min()[2]),
+                                 Point3f(bbox.max()[0], bbox.max()[1], bbox.max()[2])));
         }
     }
 
@@ -704,6 +740,12 @@ inline pstd::optional<PhaseFunctionSample> PhaseFunction::Sample_p(Vector3f wo,
 inline Float PhaseFunction::PDF(Vector3f wo, Vector3f wi) const {
     auto pdf = [&](auto ptr) { return ptr->PDF(wo, wi); };
     return Dispatch(pdf);
+}
+
+inline MediumProperties Medium::Sample(Point3f p,
+                                       const SampledWavelengths &lambda) const {
+    auto sample = [&](auto ptr) { return ptr->Sample(p, lambda); };
+    return Dispatch(sample);
 }
 
 template <typename F>

@@ -5,34 +5,33 @@
 #include <pbrt/pbrt.h>
 
 #include <pbrt/cameras.h>
-#include <pbrt/gpu/launch.h>
-#include <pbrt/gpu/pathintegrator.h>
 #include <pbrt/options.h>
 #include <pbrt/samplers.h>
 #include <pbrt/util/bluenoise.h>
 #include <pbrt/util/spectrum.h>
 #include <pbrt/util/vecmath.h>
+#include <pbrt/wavefront/integrator.h>
 
 namespace pbrt {
 
-// GPUPathIntegrator Camera Ray Methods
-void GPUPathIntegrator::GenerateCameraRays(int y0, int sampleIndex) {
+// WavefrontPathIntegrator Camera Ray Methods
+void WavefrontPathIntegrator::GenerateCameraRays(int y0, int sampleIndex) {
     // Define _generateRays_ lambda function
     auto generateRays = [=](auto sampler) {
-        using Sampler = std::remove_reference_t<decltype(*sampler)>;
-        if constexpr (!std::is_same_v<Sampler, MLTSampler> &&
-                      !std::is_same_v<Sampler, DebugMLTSampler>)
-            GenerateCameraRays<Sampler>(y0, sampleIndex);
+        using ConcreteSampler = std::remove_reference_t<decltype(*sampler)>;
+        if constexpr (!std::is_same_v<ConcreteSampler, MLTSampler> &&
+                      !std::is_same_v<ConcreteSampler, DebugMLTSampler>)
+            GenerateCameraRays<ConcreteSampler>(y0, sampleIndex);
     };
 
     sampler.DispatchCPU(generateRays);
 }
 
-template <typename Sampler>
-void GPUPathIntegrator::GenerateCameraRays(int y0, int sampleIndex) {
+template <typename ConcreteSampler>
+void WavefrontPathIntegrator::GenerateCameraRays(int y0, int sampleIndex) {
     RayQueue *rayQueue = CurrentRayQueue(0);
-    GPUParallelFor(
-        "Generate Camera rays", maxQueueSize, PBRT_GPU_LAMBDA(int pixelIndex) {
+    ParallelFor(
+        "Generate Camera rays", maxQueueSize, PBRT_CPU_GPU_LAMBDA(int pixelIndex) {
             // Enqueue camera ray and set pixel state for sample
             // Compute pixel coordinates for _pixelIndex_
             Bounds2i pixelBounds = film.PixelBounds();
@@ -46,7 +45,7 @@ void GPUPathIntegrator::GenerateCameraRays(int y0, int sampleIndex) {
                 return;
 
             // Initialize _Sampler_ for current pixel and sample
-            Sampler pixelSampler = *sampler.Cast<Sampler>();
+            ConcreteSampler pixelSampler = *sampler.Cast<ConcreteSampler>();
             pixelSampler.StartPixelSample(pPixel, sampleIndex, 0);
 
             // Sample wavelengths for ray path
@@ -55,7 +54,7 @@ void GPUPathIntegrator::GenerateCameraRays(int y0, int sampleIndex) {
                 lu = 0.5f;
             SampledWavelengths lambda = film.SampleWavelengths(lu);
 
-            // Compute _CameraSample_ and generate ray
+            // Generate _CameraSample_ and corresponding ray
             CameraSample cameraSample = GetCameraSample(pixelSampler, pPixel, filter);
             pstd::optional<CameraRay> cameraRay =
                 camera.GenerateRay(cameraSample, lambda);

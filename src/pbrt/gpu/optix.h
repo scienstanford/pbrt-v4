@@ -12,8 +12,8 @@
 #include <pbrt/base/medium.h>
 #include <pbrt/base/shape.h>
 #include <pbrt/base/texture.h>
-#include <pbrt/gpu/workitems.h>
-#include <pbrt/gpu/workqueue.h>
+#include <pbrt/wavefront/workitems.h>
+#include <pbrt/wavefront/workqueue.h>
 #include <pbrt/util/pstd.h>
 
 #include <optix.h>
@@ -50,7 +50,7 @@ struct QuadricRecord {
 struct RayIntersectParameters {
     OptixTraversableHandle traversable;
 
-    RayQueue *rayQueue;
+    const RayQueue *rayQueue;
 
     // closest hit
     RayQueue *nextRayQueue;
@@ -61,7 +61,7 @@ struct RayIntersectParameters {
 
     // shadow rays
     ShadowRayQueue *shadowRayQueue;
-    SOA<PixelSampleState> *pixelSampleState;
+    SOA<PixelSampleState> pixelSampleState;
 
     // Subsurface scattering...
     SubsurfaceScatterQueue *subsurfaceScatterQueue;

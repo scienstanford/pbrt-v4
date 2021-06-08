@@ -12,6 +12,7 @@
 #include <pbrt/util/color.h>
 #include <pbrt/util/colorspace.h>
 #include <pbrt/util/error.h>
+#include <pbrt/util/file.h>
 #include <pbrt/util/float.h>
 #include <pbrt/util/hash.h>
 #include <pbrt/util/log.h>
@@ -58,11 +59,11 @@ std::string ToString(TransportMode mode) {
 }
 
 // BxDF Method Definitions
-std::string IdealDiffuseBxDF::ToString() const {
-    return StringPrintf("[ IdealDiffuseBxDF R: %s ]", R);
-}
 std::string DiffuseBxDF::ToString() const {
-    return StringPrintf("[ DiffuseBxDF R: %s T: %s A: %f B: %f ]", R, T, A, B);
+    return StringPrintf("[ DiffuseBxDF R: %s ]", R);
+}
+std::string RoughDiffuseBxDF::ToString() const {
+    return StringPrintf("[ RoughDiffuseBxDF R: %s T: %s A: %f B: %f ]", R, T, A, B);
 }
 
 template <typename TopBxDF, typename BottomBxDF, bool twoSided>
@@ -698,7 +699,7 @@ static std::ostream &operator<<(std::ostream &os, Tensor::Type value) {
         os << "float64_t";
         break;
     default:
-        os << "unkown";
+        os << "unknown";
         break;
     }
     return os;
@@ -765,7 +766,7 @@ Tensor::Tensor(const std::string &filename) : m_filename(filename) {
 #define SAFE_READ(vars, size, count) \
     ASSERT(fread(vars, size, count, file) == (count), "Unable to read " #vars ".")
 
-    FILE *file = fopen(filename.c_str(), "rb");
+    FILE *file = FOpenRead(filename);
     if (file == NULL)
         ErrorExit("%s: unable to open file", filename);
 
@@ -1044,7 +1045,7 @@ SampledSpectrum MeasuredBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) co
     /* Spherical coordinates -> unit coordinate system */
     Vector2f u_wi(theta2u(theta_i), phi2u(phi_i));
     Vector2f u_wm(theta2u(theta_m), phi2u(brdf->isotropic ? (phi_m - phi_i) : phi_m));
-    u_wm.y = u_wm.y - std::floor(u_wm.y);
+    u_wm.y = u_wm.y - pstd::floor(u_wm.y);
 
     Float params[2] = {phi_i, theta_i};
     auto ui = brdf->vndf.Invert(u_wm, params);
@@ -1142,7 +1143,7 @@ Float MeasuredBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
 
     /* Spherical coordinates -> unit coordinate system */
     Vector2f u_wm(theta2u(theta_m), phi2u(brdf->isotropic ? (phi_m - phi_i) : phi_m));
-    u_wm.y = u_wm.y - std::floor(u_wm.y);
+    u_wm.y = u_wm.y - pstd::floor(u_wm.y);
 
     Float params[2] = {phi_i, theta_i};
     auto ui = brdf->vndf.Invert(u_wm, params);
@@ -1186,7 +1187,7 @@ SampledSpectrum BxDF::rho(pstd::span<const Point2f> u1, pstd::span<const Float> 
     DCHECK_EQ(u1.size(), u2.size());
     SampledSpectrum r(0.f);
     for (size_t i = 0; i < uc.size(); ++i) {
-        // Compute estimate of of $\rho_\roman{hh}$
+        // Compute estimate of $\rho_\roman{hh}$
         Vector3f wo = SampleUniformHemisphere(u1[i]);
         if (wo.z == 0)
             continue;
@@ -1203,7 +1204,7 @@ std::string BxDF::ToString() const {
     return DispatchCPU(toStr);
 }
 
-template class LayeredBxDF<DielectricInterfaceBxDF, IdealDiffuseBxDF, true>;
+template class LayeredBxDF<DielectricInterfaceBxDF, DiffuseBxDF, true>;
 template class LayeredBxDF<DielectricInterfaceBxDF, ConductorBxDF, true>;
 
 }  // namespace pbrt

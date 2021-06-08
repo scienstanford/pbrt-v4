@@ -100,6 +100,9 @@ PBRT_CPU_GPU inline bool IsGlossy(BxDFFlags f) {
 PBRT_CPU_GPU inline bool IsSpecular(BxDFFlags f) {
     return f & BxDFFlags::Specular;
 }
+PBRT_CPU_GPU inline bool IsNonSpecular(BxDFFlags f) {
+    return f & (BxDFFlags::Diffuse | BxDFFlags::Glossy);
+}
 
 std::string ToString(BxDFFlags flags);
 
@@ -148,8 +151,8 @@ struct BSDFSample {
     bool pdfIsProportional;
 };
 
-class IdealDiffuseBxDF;
 class DiffuseBxDF;
+class RoughDiffuseBxDF;
 class DielectricInterfaceBxDF;
 class ThinDielectricBxDF;
 class HairBxDF;
@@ -160,20 +163,20 @@ class CoatedDiffuseBxDF;
 class CoatedConductorBxDF;
 
 // BxDF Definition
-class BxDF : public TaggedPointer<IdealDiffuseBxDF, DiffuseBxDF, CoatedDiffuseBxDF,
+class BxDF : public TaggedPointer<DiffuseBxDF, RoughDiffuseBxDF, CoatedDiffuseBxDF,
                                   CoatedConductorBxDF, DielectricInterfaceBxDF,
                                   ThinDielectricBxDF, HairBxDF, MeasuredBxDF,
                                   ConductorBxDF, NormalizedFresnelBxDF> {
   public:
     // BxDF Interface
-    PBRT_CPU_GPU inline SampledSpectrum f(Vector3f wo, Vector3f wi,
-                                          TransportMode mode) const;
-
     PBRT_CPU_GPU inline BxDFFlags Flags() const;
 
     using TaggedPointer::TaggedPointer;
 
     std::string ToString() const;
+
+    PBRT_CPU_GPU inline SampledSpectrum f(Vector3f wo, Vector3f wi,
+                                          TransportMode mode) const;
 
     PBRT_CPU_GPU inline pstd::optional<BSDFSample> Sample_f(
         Vector3f wo, Float uc, Point2f u, TransportMode mode = TransportMode::Radiance,

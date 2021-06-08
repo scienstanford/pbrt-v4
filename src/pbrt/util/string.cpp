@@ -2,9 +2,17 @@
 // The pbrt source code is licensed under the Apache License, Version 2.0.
 // SPDX: Apache-2.0
 
+#ifdef PBRT_IS_WINDOWS
+#define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
+#endif  // PBRT_IS_WINDOWS
+
 #include <pbrt/util/string.h>
 
+#include <pbrt/util/check.h>
+
 #include <ctype.h>
+#include <codecvt>
+#include <locale>
 #include <string>
 
 namespace pbrt {
@@ -108,6 +116,54 @@ std::vector<double> SplitStringToDoubles(std::string_view str, char ch) {
         if (!Atof(strs[i], &doubles[i]))
             return {};
     return doubles;
+}
+
+#ifdef PBRT_IS_WINDOWS
+std::wstring WStringFromU16String(std::u16string str) {
+    std::wstring ws;
+    ws.reserve(str.size());
+    for (char16_t c : str)
+        ws.push_back(c);
+    return ws;
+}
+
+std::wstring WStringFromUTF8(std::string str) {
+    return WStringFromU16String(UTF16FromUTF8(str));
+}
+
+std::u16string U16StringFromWString(std::wstring str) {
+    std::u16string su16;
+    su16.reserve(str.size());
+    for (wchar_t c : str)
+        su16.push_back(c);
+    return su16;
+}
+
+std::string UTF8FromWString(std::wstring str) {
+    return UTF8FromUTF16(U16StringFromWString(str));
+}
+
+#endif  // PBRT_IS_WINDOWS
+
+// https://stackoverflow.com/a/52703954
+std::string UTF8FromUTF16(std::u16string str) {
+    std::wstring_convert<
+        std::codecvt_utf8_utf16<char16_t, 0x10ffff, std::codecvt_mode::little_endian>,
+        char16_t>
+        cnv;
+    std::string utf8 = cnv.to_bytes(str);
+    CHECK_GE(cnv.converted(), str.size());
+    return utf8;
+}
+
+std::u16string UTF16FromUTF8(std::string str) {
+    std::wstring_convert<
+        std::codecvt_utf8_utf16<char16_t, 0x10ffff, std::codecvt_mode::little_endian>,
+        char16_t>
+        cnv;
+    std::u16string utf16 = cnv.from_bytes(str);
+    CHECK_GE(cnv.converted(), str.size());
+    return utf16;
 }
 
 }  // namespace pbrt

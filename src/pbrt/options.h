@@ -16,6 +16,7 @@ namespace pbrt {
 
 // RenderingCoordinateSystem Definition
 enum class RenderingCoordinateSystem { Camera, CameraWorld, World };
+std::string ToString(const RenderingCoordinateSystem &);
 
 // BasicPBRTOptions Definition
 struct BasicPBRTOptions {
@@ -24,6 +25,7 @@ struct BasicPBRTOptions {
     bool disablePixelJitter = false, disableWavelengthJitter = true; // zhenyi: change to true 
     bool forceDiffuse = false;
     bool useGPU = false;
+    bool wavefront = false;
     RenderingCoordinateSystem renderingSpace = RenderingCoordinateSystem::CameraWorld;
 };
 
@@ -31,8 +33,10 @@ struct BasicPBRTOptions {
 struct PBRTOptions : BasicPBRTOptions {
     int nThreads = 0;
     LogLevel logLevel = LogLevel::Error;
+    std::string logFile;
     bool writePartialImages = false;
     bool recordPixelStatistics = false;
+    bool printStatistics = false;
     pstd::optional<int> pixelSamples;
     pstd::optional<int> gpuDevice;
     bool quickRender = false;

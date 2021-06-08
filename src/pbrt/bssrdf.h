@@ -258,14 +258,14 @@ class TabulatedBSSRDF {
                                            NormalizedFresnelBxDF *bxdf) const {
         *bxdf = NormalizedFresnelBxDF(eta);
         Vector3f wo = Vector3f(si.ns);
-        BSDF bsdf(wo, si.n, si.ns, si.dpdus, bxdf);
+        BSDF bsdf(si.ns, si.dpdus, bxdf);
         return BSSRDFSample{Sp(si.p()), PDF_Sp(si.p(), si.n), bsdf, wo};
     }
 
     std::string ToString() const;
 
   private:
-    friend class SOA<TabulatedBSSRDF>;
+    friend struct SOA<TabulatedBSSRDF>;
     // TabulatedBSSRDF Private Members
     Point3f po;
     Vector3f wo;

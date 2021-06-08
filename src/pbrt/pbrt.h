@@ -8,6 +8,15 @@
 #include <stdint.h>
 #include <cstddef>
 
+#ifdef PBRT_IS_WINDOWS
+#ifndef UNICODE
+#define UNICODE
+#endif
+#ifndef _UNICODE
+#define UNICODE
+#endif
+#endif  // PBRT_IS_WINDOWS
+
 // GPU Macro Definitions
 #if defined(__CUDA_ARCH__)
 #define PBRT_IS_GPU_CODE
@@ -31,9 +40,9 @@
 #endif
 
 #ifdef PBRT_IS_WINDOWS
-#define PBRT_GPU_LAMBDA(...) [ =, *this ] PBRT_GPU(__VA_ARGS__) mutable
+#define PBRT_CPU_GPU_LAMBDA(...) [ =, *this ] PBRT_CPU_GPU(__VA_ARGS__) mutable
 #else
-#define PBRT_GPU_LAMBDA(...) [=] PBRT_GPU(__VA_ARGS__)
+#define PBRT_CPU_GPU_LAMBDA(...) [=] PBRT_CPU_GPU(__VA_ARGS__)
 #endif
 
 #ifdef PBRT_BUILD_GPU_RENDERER
@@ -162,7 +171,7 @@ template <typename T>
 class Array2D;
 
 template <typename T>
-class SOA;
+struct SOA;
 class ScratchBuffer;
 
 // Define _Allocator_

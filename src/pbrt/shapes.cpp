@@ -4,6 +4,9 @@
 
 #include <pbrt/shapes.h>
 
+#ifdef PBRT_BUILD_GPU_RENDERER
+#include <pbrt/gpu/util.h>
+#endif  // PBRT_BUILD_GPU_RENDERER
 #include <pbrt/interaction.h>
 #include <pbrt/options.h>
 #include <pbrt/paramdict.h>
@@ -43,8 +46,15 @@ pstd::optional<ShapeSample> Sphere::Sample(Point2f u) const {
     Normal3f n = Normalize((*renderFromObject)(Normal3f(pObj.x, pObj.y, pObj.z)));
     if (reverseOrientation)
         n *= -1;
+    // Compute $(u, v)$ coordinates for sphere sample
+    Float theta = SafeACos(pObj.z / radius);
+    Float phi = std::atan2(pObj.y, pObj.x);
+    if (phi < 0)
+        phi += 2 * Pi;
+    Point2f uv(phi / phiMax, (theta - thetaZMin) / (thetaZMax - thetaZMin));
+
     Point3fi pi = (*renderFromObject)(Point3fi(pObj, pObjError));
-    return ShapeSample{Interaction(pi, n), 1 / Area()};
+    return ShapeSample{Interaction(pi, n, uv), 1 / Area()};
 }
 
 std::string Sphere::ToString() const {
@@ -966,13 +976,18 @@ BilinearPatchMesh *BilinearPatch::CreateMesh(const Transform *renderFromObject,
         ResolveFilename(parameters.GetOneString("emissionfilename", ""));
     PiecewiseConstant2D *imageDist = nullptr;
     if (!filename.empty()) {
-        ImageAndMetadata im = Image::Read(filename, alloc);
-        // Account for v inversion in DiffuseAreaLight lookup, which in turn is there to
-        // match ImageTexture...
-        im.image.FlipY();
-        Bounds2f domain = Bounds2f(Point2f(0, 0), Point2f(1, 1));
-        Array2D<Float> d = im.image.GetSamplingDistribution();
-        imageDist = alloc.new_object<PiecewiseConstant2D>(d, domain, alloc);
+        if (!uv.empty())
+            Error(loc, "\"emissionfilename\" is currently ignored for bilinear patches "
+                       "if \"uv\" coordinates have been provided--sorry!");
+        else {
+            ImageAndMetadata im = Image::Read(filename, alloc);
+            // Account for v inversion in DiffuseAreaLight lookup, which in turn is there
+            // to match ImageTexture...
+            im.image.FlipY();
+            Bounds2f domain = Bounds2f(Point2f(0, 0), Point2f(1, 1));
+            Array2D<Float> d = im.image.GetSamplingDistribution();
+            imageDist = alloc.new_object<PiecewiseConstant2D>(d, domain, alloc);
+        }
     }
 
     return alloc.new_object<BilinearPatchMesh>(
@@ -1167,38 +1182,13 @@ pstd::optional<ShapeSample> BilinearPatch::Sample(Point2f u) const {
     if (LengthSquared(dpdu) == 0 || LengthSquared(dpdv) == 0)
         return {};
 
-    // Compute $(s,t)$ texture coordinates at bilinear patch $(u,v)$
     Point2f st = uv;
-    Float duds = 1, dudt = 0, dvds = 0, dvdt = 1;
     if (mesh->uv != nullptr) {
         // Compute texture coordinates for bilinear patch intersection point
         Point2f uv00 = mesh->uv[v[0]], uv10 = mesh->uv[v[1]];
         Point2f uv01 = mesh->uv[v[2]], uv11 = mesh->uv[v[3]];
         st = Lerp(uv[0], Lerp(uv[1], uv00, uv01), Lerp(uv[1], uv10, uv11));
-        // Update bilinear patch $\dpdu$ and $\dpdv$ accounting for $(s,t)$
-        // Compute partial derivatives of $(u,v)$ with respect to $(s,t)$
-        Vector2f dstdu = Lerp(uv[1], uv10, uv11) - Lerp(uv[1], uv00, uv01);
-        Vector2f dstdv = Lerp(uv[0], uv01, uv11) - Lerp(uv[0], uv00, uv10);
-        duds = std::abs(dstdu[0]) < 1e-8f ? 0 : 1 / dstdu[0];
-        dvds = std::abs(dstdv[0]) < 1e-8f ? 0 : 1 / dstdv[0];
-        dudt = std::abs(dstdu[1]) < 1e-8f ? 0 : 1 / dstdu[1];
-        dvdt = std::abs(dstdv[1]) < 1e-8f ? 0 : 1 / dstdv[1];
-
-        // Compute partial derivatives of $\pt{}$ with respect to $(s,t)$
-        Vector3f dpds = dpdu * duds + dpdv * dvds;
-        Vector3f dpdt = dpdu * dudt + dpdv * dvdt;
-
-        // Set _dpdu_ and _dpdt_ to updated partial derivatives
-        if (Cross(dpds, dpdt) != Vector3f(0, 0, 0)) {
-            if (Dot(Cross(dpdu, dpdv), Cross(dpds, dpdt)) < 0)
-                dpdt = -dpdt;
-            DCHECK_GE(Dot(Normalize(Cross(dpdu, dpdv)), Normalize(Cross(dpds, dpdt))),
-                      -1e-3);
-            dpdu = dpds;
-            dpdv = dpdt;
-        }
     }
-
     // Compute surface normal for sampled bilinear patch $(u,v)$
     Normal3f n = Normal3f(Normalize(Cross(dpdu, dpdv)));
     if (mesh->reverseOrientation ^ mesh->transformSwapsHandedness)
@@ -1220,25 +1210,32 @@ Float BilinearPatch::PDF(const Interaction &intr) const {
     const Point3f &p00 = mesh->p[v[0]], &p10 = mesh->p[v[1]];
     const Point3f &p01 = mesh->p[v[2]], &p11 = mesh->p[v[3]];
 
+    // Compute parametric $(u,v)$ of point on bilinear patch
+    Point2f uv = intr.uv;
+    if (mesh->uv) {
+        Point2f uv00 = mesh->uv[v[0]], uv10 = mesh->uv[v[1]];
+        Point2f uv01 = mesh->uv[v[2]], uv11 = mesh->uv[v[3]];
+        uv = InvertBilinear(uv, {uv00, uv10, uv01, uv11});
+    }
+
     // Compute PDF for sampling the $(u,v)$ coordinates given by _intr.uv_
     Float pdf;
     if (mesh->imageDistribution)
-        pdf = mesh->imageDistribution->PDF(intr.uv);
+        pdf = mesh->imageDistribution->PDF(uv);
     else if (!IsRectangle(mesh)) {
         // Initialize _w_ array with differential area at bilinear patch corners
         pstd::array<Float, 4> w = {
             Length(Cross(p10 - p00, p01 - p00)), Length(Cross(p10 - p00, p11 - p10)),
             Length(Cross(p01 - p00, p11 - p01)), Length(Cross(p11 - p10, p11 - p01))};
 
-        pdf = BilinearPDF(intr.uv, w);
+        pdf = BilinearPDF(uv, w);
     } else
         pdf = 1;
 
     // Find $\dpdu$ and $\dpdv$ at bilinear patch $(u,v)$
-    CHECK(!intr.uv.HasNaN());
-    Point3f pu0 = Lerp(intr.uv[1], p00, p01), pu1 = Lerp(intr.uv[1], p10, p11);
+    Point3f pu0 = Lerp(uv[1], p00, p01), pu1 = Lerp(uv[1], p10, p11);
     Vector3f dpdu = pu1 - pu0;
-    Vector3f dpdv = Lerp(intr.uv[0], p01, p11) - Lerp(intr.uv[0], p00, p10);
+    Vector3f dpdv = Lerp(uv[0], p01, p11) - Lerp(uv[0], p00, p10);
 
     // Return final bilinear patch area sampling PDF
     return pdf / Length(Cross(dpdu, dpdv));
@@ -1301,7 +1298,16 @@ pstd::optional<ShapeSample> BilinearPatch::Sample(const ShapeSampleContext &ctx,
     Point2f uv(Dot(p - p00, eu) / DistanceSquared(p10, p00),
                Dot(p - p00, ev) / DistanceSquared(p01, p00));
 
-    return ShapeSample{Interaction(p, n, ctx.time, uv), pdf};
+    // Compute $(s,t)$ texture coordinates for sampled $(u,v)$
+    Point2f st = uv;
+    if (mesh->uv) {
+        // Compute texture coordinates for bilinear patch intersection point
+        Point2f uv00 = mesh->uv[v[0]], uv10 = mesh->uv[v[1]];
+        Point2f uv01 = mesh->uv[v[2]], uv11 = mesh->uv[v[3]];
+        st = Lerp(uv[0], Lerp(uv[1], uv00, uv01), Lerp(uv[1], uv10, uv11));
+    }
+
+    return ShapeSample{Interaction(p, n, ctx.time, st), pdf};
 }
 
 Float BilinearPatch::PDF(const ShapeSampleContext &ctx, Vector3f wi) const {

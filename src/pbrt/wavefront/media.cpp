@@ -2,10 +2,8 @@
 // The pbrt source code is licensed under the Apache License, Version 2.0.
 // SPDX: Apache-2.0
 
-#include <pbrt/gpu/pathintegrator.h>
+#include <pbrt/wavefront/integrator.h>
 
-#include <pbrt/gpu/accel.h>
-#include <pbrt/gpu/launch.h>
 #include <pbrt/media.h>
 
 namespace pbrt {
@@ -34,19 +32,32 @@ static inline void rescale(SampledSpectrum &T_hat, SampledSpectrum &lightPathPDF
     }
 }
 
-// GPUPathIntegrator Participating Media Methods
-void GPUPathIntegrator::SampleMediumInteraction(int depth) {
-    RayQueue *nextRayQueue = NextRayQueue(depth);
+// SampleMediumScatteringCallback Definition
+struct SampleMediumScatteringCallback {
+    int wavefrontDepth;
+    WavefrontPathIntegrator *integrator;
+    template <typename PhaseFunction>
+    void operator()() {
+        integrator->SampleMediumScattering<PhaseFunction>(wavefrontDepth);
+    }
+};
+
+// WavefrontPathIntegrator Participating Media Methods
+void WavefrontPathIntegrator::SampleMediumInteraction(int wavefrontDepth) {
+    if (!haveMedia)
+        return;
+
+    RayQueue *nextRayQueue = NextRayQueue(wavefrontDepth);
     ForAllQueued(
         "Sample medium interaction", mediumSampleQueue, maxQueueSize,
-        PBRT_GPU_LAMBDA(MediumSampleWorkItem w) {
+        PBRT_CPU_GPU_LAMBDA(MediumSampleWorkItem w) {
             Ray ray = w.ray;
             Float tMax = w.tMax;
 
             PBRT_DBG("Sampling medium interaction pixel index %d depth %d ray %f %f %f d "
                      "%f %f "
                      "%f tMax %f\n",
-                     w.pixelIndex, depth, ray.o.x, ray.o.y, ray.o.z, ray.d.x, ray.d.y,
+                     w.pixelIndex, w.depth, ray.o.x, ray.o.y, ray.o.z, ray.d.x, ray.d.y,
                      ray.d.z, tMax);
 
             SampledWavelengths lambda = w.lambda;
@@ -90,7 +101,7 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
                     // Add emission, if present.  Always do this and scale
                     // by sigma_a/sigma_maj rather than only doing it
                     // (without scaling) at absorption events.
-                    if (depth < maxDepth && intr.Le)
+                    if (w.depth < maxDepth && intr.Le)
                         L += T_hat * intr.Le * sigma_a /
                              (intr.sigma_maj[0] * uniPathPDF.Average());
 
@@ -108,7 +119,7 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
                         // Absorption--done.
                         PBRT_DBG("absorbed\n");
                         T_hat = SampledSpectrum(0.f);
-                        // Tell the medium to stop traveral.
+                        // Tell the medium to stop traversal.
                         return false;
                     } else if (mode == 1) {
                         // Scattering.
@@ -116,13 +127,18 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
                         T_hat *= T_maj * sigma_s;
                         uniPathPDF *= T_maj * sigma_s;
 
-                        // TODO: don't hard code a phase function.
-                        const HGPhaseFunction *phase =
-                            intr.phase.CastOrNullptr<HGPhaseFunction>();
                         // Enqueue medium scattering work.
-                        mediumScatterQueue->Push(MediumScatterWorkItem{
-                            intr.p(), lambda, T_hat, uniPathPDF, *phase, -ray.d,
-                            w.etaScale, ray.medium, w.pixelIndex});
+                        auto enqueue = [=](auto ptr) {
+                            using PhaseFunction = typename std::remove_const_t<
+                                std::remove_reference_t<decltype(*ptr)>>;
+                            mediumScatterQueue->Push(MediumScatterWorkItem<PhaseFunction>{
+                                intr.p(), w.depth, lambda, T_hat, uniPathPDF, ptr, -ray.d,
+                                ray.time, w.etaScale, ray.medium, w.pixelIndex});
+                        };
+                        DCHECK_RARE(1e-6f, !T_hat);
+                        if (T_hat)
+                            intr.phase.Dispatch(enqueue);
+
                         scattered = true;
 
                         return false;
@@ -163,7 +179,7 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
 
             // There's no more work to do if there was a scattering event in
             // the medium.
-            if (scattered || !T_hat || depth == maxDepth)
+            if (scattered || !T_hat || w.depth == maxDepth)
                 return;
 
             // Otherwise, enqueue bump and medium stuff...
@@ -172,22 +188,35 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
                 // no intersection
                 if (escapedRayQueue) {
                     PBRT_DBG("Adding ray to escapedRayQueue pixel index %d depth %d\n",
-                             w.pixelIndex, depth);
-                    escapedRayQueue->Push(EscapedRayWorkItem{
-                        ray.o, ray.d, lambda, w.pixelIndex, (int)w.isSpecularBounce,
-                        T_hat, uniPathPDF, lightPathPDF, w.prevIntrCtx});
+                             w.pixelIndex, w.depth);
+                    escapedRayQueue->Push(
+                        EscapedRayWorkItem{ray.o, ray.d, w.depth, lambda, w.pixelIndex,
+                                           T_hat, (int)w.isSpecularBounce, uniPathPDF,
+                                           lightPathPDF, w.prevIntrCtx});
                 }
+                return;
             }
 
             Material material = w.material;
+
+            const MixMaterial *mix = material.CastOrNullptr<MixMaterial>();
+            while (mix) {
+                SurfaceInteraction intr(w.pi, w.uv, w.wo, w.dpdus, w.dpdvs, w.dndus,
+                                        w.dndvs, ray.time, false /* flip normal */);
+                intr.faceIndex = w.faceIndex;
+                MaterialEvalContext ctx(intr);
+                material = mix->ChooseMaterial(BasicTextureEvaluator(), ctx);
+                mix = material.CastOrNullptr<MixMaterial>();
+            }
+
             if (!material) {
                 Interaction intr(w.pi, w.n);
                 intr.mediumInterface = &w.mediumInterface;
                 Ray newRay = intr.SpawnRay(ray.d);
-                nextRayQueue->PushIndirectRay(newRay, w.prevIntrCtx, T_hat, uniPathPDF,
-                                              lightPathPDF, lambda, w.etaScale,
-                                              w.isSpecularBounce, w.anyNonSpecularBounces,
-                                              w.pixelIndex);
+                nextRayQueue->PushIndirectRay(newRay, w.depth, w.prevIntrCtx, T_hat,
+                                              uniPathPDF, lightPathPDF, lambda,
+                                              w.etaScale, w.isSpecularBounce,
+                                              w.anyNonSpecularBounces, w.pixelIndex);
                 return;
             }
 
@@ -195,9 +224,9 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
                 PBRT_DBG(
                     "Ray hit an area light: adding to hitAreaLightQueue pixel index %d "
                     "depth %d\n",
-                    w.pixelIndex, depth);
+                    w.pixelIndex, w.depth);
                 hitAreaLightQueue->Push(HitAreaLightWorkItem{
-                    w.areaLight, Point3f(w.pi), w.n, w.uv, -ray.d, lambda, T_hat,
+                    w.areaLight, Point3f(w.pi), w.n, w.uv, -ray.d, lambda, w.depth, T_hat,
                     uniPathPDF, lightPathPDF, w.prevIntrCtx, w.isSpecularBounce,
                     w.pixelIndex});
             }
@@ -215,26 +244,53 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
 
             auto enqueue = [=](auto ptr) {
                 using Material = typename std::remove_reference_t<decltype(*ptr)>;
-                q->Push<MaterialEvalWorkItem<Material>>(MaterialEvalWorkItem<Material>{
-                    ptr, w.pi, w.n, w.ns, w.dpdus, w.dpdvs, w.dndus, w.dndvs, w.uv,
-                    lambda, w.anyNonSpecularBounces, -ray.d, w.pixelIndex, T_hat,
-                    uniPathPDF, w.etaScale, w.mediumInterface, ray.time});
+                q->Push<MaterialEvalWorkItem<Material>>(
+                    MaterialEvalWorkItem<Material>{ptr,
+                                                   w.pi,
+                                                   w.n,
+                                                   w.dpdu,
+                                                   w.dpdv,
+                                                   ray.time,
+                                                   w.depth,
+                                                   w.ns,
+                                                   w.dpdus,
+                                                   w.dpdvs,
+                                                   w.dndus,
+                                                   w.dndvs,
+                                                   w.uv,
+                                                   w.faceIndex,
+                                                   lambda,
+                                                   w.pixelIndex,
+                                                   w.anyNonSpecularBounces,
+                                                   -ray.d,
+                                                   T_hat,
+                                                   uniPathPDF,
+                                                   w.etaScale,
+                                                   w.mediumInterface});
             };
             material.Dispatch(enqueue);
         });
 
-    if (depth == maxDepth)
+    if (wavefrontDepth == maxDepth)
         return;
 
-    RayQueue *currentRayQueue = CurrentRayQueue(depth);
+    ForEachType(SampleMediumScatteringCallback{wavefrontDepth, this},
+                PhaseFunction::Types());
+}
 
-    using PhaseFunction = HGPhaseFunction;
-    std::string desc = std::string("Sample direct/indirect - Henyey Greenstein");
+template <typename ConcretePhaseFunction>
+void WavefrontPathIntegrator::SampleMediumScattering(int wavefrontDepth) {
+    RayQueue *currentRayQueue = CurrentRayQueue(wavefrontDepth);
+    RayQueue *nextRayQueue = NextRayQueue(wavefrontDepth);
+
+    std::string desc =
+        std::string("Sample direct/indirect - ") + ConcretePhaseFunction::Name();
     ForAllQueued(
-        desc.c_str(), mediumScatterQueue, maxQueueSize,
-        PBRT_GPU_LAMBDA(MediumScatterWorkItem w) {
+        desc.c_str(),
+        mediumScatterQueue->Get<MediumScatterWorkItem<ConcretePhaseFunction>>(),
+        maxQueueSize,
+        PBRT_CPU_GPU_LAMBDA(const MediumScatterWorkItem<ConcretePhaseFunction> w) {
             RaySamples raySamples = pixelSampleState.samples[w.pixelIndex];
-            Float time = 0;  // TODO: FIXME
             Vector3f wo = w.wo;
 
             // Sample direct lighting at medium scattering event.  First,
@@ -250,7 +306,7 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
                     ctx, raySamples.direct.u, w.lambda, LightSamplingMode::WithMIS);
                 if (ls && ls->L && ls->pdf > 0) {
                     Vector3f wi = ls->wi;
-                    SampledSpectrum T_hat = w.T_hat * w.phase.p(wo, wi);
+                    SampledSpectrum T_hat = w.T_hat * w.phase->p(wo, wi);
 
                     PBRT_DBG("Phase phase T_hat %f %f %f %f\n", T_hat[0], T_hat[1],
                              T_hat[2], T_hat[3]);
@@ -258,21 +314,22 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
                     // Compute PDFs for direct lighting MIS calculation.
                     Float lightPDF = ls->pdf * sampledLight->pdf;
                     Float phasePDF =
-                        IsDeltaLight(light.Type()) ? 0.f : w.phase.PDF(wo, wi);
+                        IsDeltaLight(light.Type()) ? 0.f : w.phase->PDF(wo, wi);
                     SampledSpectrum uniPathPDF = w.uniPathPDF * phasePDF;
                     SampledSpectrum lightPathPDF = w.uniPathPDF * lightPDF;
 
                     SampledSpectrum Ld = T_hat * ls->L;
-                    Ray ray(w.p, ls->pLight.p() - w.p, time, w.medium);
+                    Ray ray(w.p, ls->pLight.p() - w.p, w.time, w.medium);
 
                     // Enqueue shadow ray
-                    shadowRayQueue->Push(ray, 1 - ShadowEpsilon, w.lambda, Ld, uniPathPDF,
-                                         lightPathPDF, w.pixelIndex);
+                    shadowRayQueue->Push(ShadowRayWorkItem{ray, 1 - ShadowEpsilon,
+                                                           w.lambda, Ld, uniPathPDF,
+                                                           lightPathPDF, w.pixelIndex});
 
                     PBRT_DBG("Enqueued medium shadow ray depth %d "
                              "Ld %f %f %f %f uniPathPDF %f %f %f %f "
                              "lightPathPDF %f %f %f %f pixel index %d\n",
-                             depth, Ld[0], Ld[1], Ld[2], Ld[3], uniPathPDF[0],
+                             w.depth, Ld[0], Ld[1], Ld[2], Ld[3], uniPathPDF[0],
                              uniPathPDF[1], uniPathPDF[2], uniPathPDF[3], lightPathPDF[0],
                              lightPathPDF[1], lightPathPDF[2], lightPathPDF[3],
                              w.pixelIndex);
@@ -281,7 +338,7 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
 
             // Sample indirect lighting.
             pstd::optional<PhaseFunctionSample> phaseSample =
-                w.phase.Sample_p(wo, raySamples.indirect.u);
+                w.phase->Sample_p(wo, raySamples.indirect.u);
             if (!phaseSample || phaseSample->pdf == 0)
                 return;
 
@@ -294,7 +351,7 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
             // due to the way scattering events are scattered and because we're
             // sampling exactly from the phase function's distribution...
             SampledSpectrum rrBeta = T_hat * w.etaScale / uniPathPDF.Average();
-            if (rrBeta.MaxComponentValue() < 1 && depth > 1) {
+            if (rrBeta.MaxComponentValue() < 1 && w.depth >= 1) {
                 Float q = std::max<Float>(0, 1 - rrBeta.MaxComponentValue());
                 if (raySamples.indirect.rr < q) {
                     PBRT_DBG("RR terminated medium indirect with q %f pixel index %d\n",
@@ -305,16 +362,16 @@ void GPUPathIntegrator::SampleMediumInteraction(int depth) {
                 lightPathPDF *= 1 - q;
             }
 
-            Ray ray(w.p, phaseSample->wi, time, w.medium);
+            Ray ray(w.p, phaseSample->wi, w.time, w.medium);
             bool isSpecularBounce = false;
             bool anyNonSpecularBounces = true;
 
             // Spawn indirect ray.
-            nextRayQueue->PushIndirectRay(ray, ctx, T_hat, uniPathPDF, lightPathPDF,
-                                          w.lambda, w.etaScale, isSpecularBounce,
-                                          anyNonSpecularBounces, w.pixelIndex);
+            nextRayQueue->PushIndirectRay(
+                ray, w.depth + 1, ctx, T_hat, uniPathPDF, lightPathPDF, w.lambda,
+                w.etaScale, isSpecularBounce, anyNonSpecularBounces, w.pixelIndex);
             PBRT_DBG("Enqueuing indirect medium ray at depth %d pixel index %d\n",
-                     depth + 1, w.pixelIndex);
+                     w.depth + 1, w.pixelIndex);
         });
 }
 

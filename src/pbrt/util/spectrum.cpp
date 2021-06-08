@@ -8,6 +8,9 @@
 
 #include <pbrt/util/spectrum.h>
 
+#ifdef PBRT_BUILD_GPU_RENDERER
+#include <pbrt/gpu/util.h>
+#endif
 #include <pbrt/options.h>
 #include <pbrt/util/color.h>
 #include <pbrt/util/colorspace.h>
@@ -130,12 +133,22 @@ PiecewiseLinearSpectrum *PiecewiseLinearSpectrum::FromInterleaved(
     pstd::span<const Float> samples, bool normalize, Allocator alloc) {
     CHECK_EQ(0, samples.size() % 2);
     int n = samples.size() / 2;
-    std::vector<Float> lambda(n), v(n);
+    std::vector<Float> lambda, v;
+
+    // Extend samples to cover range of visible wavelengths if needed.
+    if (samples[0] > Lambda_min) {
+        lambda.push_back(Lambda_min - 1);
+        v.push_back(samples[1]);
+    }
     for (size_t i = 0; i < n; ++i) {
-        lambda[i] = samples[2 * i];
-        v[i] = samples[2 * i + 1];
+        lambda.push_back(samples[2 * i]);
+        v.push_back(samples[2 * i + 1]);
         if (i > 0)
-            CHECK_GT(lambda[i], lambda[i - 1]);
+            CHECK_GT(lambda.back(), lambda[lambda.size() - 2]);
+    }
+    if (lambda.back() < Lambda_max) {
+        lambda.push_back(Lambda_max + 1);
+        v.push_back(v.back());
     }
 
     PiecewiseLinearSpectrum *spec =

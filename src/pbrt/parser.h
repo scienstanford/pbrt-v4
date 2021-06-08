@@ -173,6 +173,8 @@ class Tokenizer {
 
   private:
     // Tokenizer Private Methods
+    void CheckUTF(const void *ptr, int len) const;
+
     int getChar() {
         if (pos == end)
             return EOF;
