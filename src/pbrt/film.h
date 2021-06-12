@@ -212,7 +212,7 @@ class FilmBase {
 
     PBRT_CPU_GPU
     SampledWavelengths SampleWavelengths(Float u) const {
-        return SampledWavelengths::SampleXYZ(u);
+        return SampledWavelengths::SampleUniform(u); // modified by zhenyi; it was SampleXYZ.
     }
 
     PBRT_CPU_GPU
