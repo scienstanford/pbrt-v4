@@ -851,22 +851,29 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
         if (writeRadiance)
         {
             ImageChannelDesc radianceDesc = image.GetChannelDesc(RadianceChannelNames);
-            image.SetChannels(pOffset, radianceDesc, {L[16], L[17], L[18], L[19], L[20],
+            if (NSpectrumSamples==31)
+            {
+                image.SetChannels(pOffset, radianceDesc, {L[0], L[1], L[2], L[3], L[4], L[5], 
+                                L[6], L[7], L[8], L[9], L[10], L[11], 
+                                L[12], L[13], L[14], L[15],L[16], L[17], L[18], L[19], L[20],
                                 L[21], L[22], L[23], L[24], L[25], L[26],
-                                L[27], L[28], L[29], L[30], 
-                                L[0], L[1], L[2], L[3], L[4], L[5], 
+                                L[27], L[28], L[29], L[30]});
+            }
+            if (NSpectrumSamples==16)
+            {
+                image.SetChannels(pOffset, radianceDesc, {L[0], L[1], L[2], L[3], L[4], L[5], 
                                 L[6], L[7], L[8], L[9], L[10], L[11], 
                                 L[12], L[13], L[14], L[15]});
+            }
+                                
         }
         if (writeBasis)
         {
             int thisIndex = pOffset.y + num_y * pOffset.x;
-            for (int wave = 0; wave <15; wave++)
+            for (int wave = 0; wave <NSpectrumSamples; wave++)
             {      
-                spectralData(thisIndex, wave) = L[wave+16];
-                spectralData(thisIndex, wave+15) = L[wave];   
+                spectralData(thisIndex, wave) = L[wave];   
             }
-            spectralData(thisIndex, 30) = L[15]; 
         }
         if (writePosition)
         {
