@@ -702,6 +702,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     //---------------------Provide options to select output type---------------------------------
     // create channel names
     // string RGBChannelNames[3]= {"R", "G", "B"};
+
     string RadianceChannelNames[31] = {"Radiance.C01", "Radiance.C02","Radiance.C03", "Radiance.C04", "Radiance.C05",
                                     "Radiance.C06", "Radiance.C07", "Radiance.C08", "Radiance.C09", "Radiance.C10",
                                     "Radiance.C11", "Radiance.C12", "Radiance.C13", "Radiance.C14", "Radiance.C15",
@@ -989,7 +990,7 @@ GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
     // zhenyi
     //---------------------------------------------------------------
     bool writeRadiance = parameters.GetOneBool("saveRadiance", true); 
-    bool writeBasis = parameters.GetOneBool("saveRadianceAsBasis", true); 
+    bool writeBasis = parameters.GetOneBool("saveRadianceAsBasis", false); 
     int nbasis = parameters.GetOneInt("numBasis", 3);
     bool writeAlbedo = parameters.GetOneBool("saveAlbedo", false);
     bool writePosition = parameters.GetOneBool("savePosition", false);
