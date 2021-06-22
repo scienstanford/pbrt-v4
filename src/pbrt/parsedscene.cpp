@@ -1347,7 +1347,9 @@ Primitive ParsedScene::CreateAggregate(
     this->instanceDefinitions.clear();
 
     // Instances
+    int InstancecCount = 0;
     for (const auto &inst : instances) {
+        InstancecCount++;
         auto iter = instanceDefinitions.find(inst.name);
         if (iter == instanceDefinitions.end())
             ErrorExit(&inst.loc, "%s: object instance not defined", inst.name);
@@ -1358,7 +1360,7 @@ Primitive ParsedScene::CreateAggregate(
 
         if (inst.renderFromInstance)
             primitives.push_back(
-                new TransformedPrimitive(iter->second, inst.renderFromInstance));
+                new TransformedPrimitive(iter->second, inst.renderFromInstance, (uint32_t)InstancecCount));
         else {
             primitives.push_back(
                 new AnimatedPrimitive(iter->second, *inst.renderFromInstanceAnim));

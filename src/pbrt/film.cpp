@@ -200,6 +200,7 @@ VisibleSurface::VisibleSurface(const SurfaceInteraction &si,
     dzdx = cameraFromRender(si.dpdx).z;
     dzdy = cameraFromRender(si.dpdy).z;
     materialId  = si.material.materialId; // zhenyi
+    instanceId  = si.instanceId; // zhenyi
 }
 
 std::string VisibleSurface::ToString() const {
@@ -626,6 +627,7 @@ void GBufferFilm::AddSample(const Point2i &pFilm, SampledSpectrum L,
     }
     // zhenyi: add material ID;
     p.materialId = visibleSurface->materialId;
+    p.instanceId = visibleSurface->instanceId;
 }
 
 GBufferFilm::GBufferFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
@@ -888,8 +890,8 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
         }
         if (writeInstance)
         {
-            // ImageChannelDesc instanceDesc = image.GetChannelDesc(InstanceChannelNames);
-            // image.SetChannels(pOffset, instanceDesc, {pixel.instanceId});
+            ImageChannelDesc instanceDesc = image.GetChannelDesc(InstanceChannelNames);
+            image.SetChannels(pOffset, instanceDesc, {pixel.instanceId});
         }
         if (writeDz)
         {
@@ -993,7 +995,7 @@ GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
     bool writeBasis = parameters.GetOneBool("saveRadianceAsBasis", false); 
     int nbasis = parameters.GetOneInt("numBasis", 3);
     bool writeAlbedo = parameters.GetOneBool("saveAlbedo", false);
-    bool writePosition = parameters.GetOneBool("savePosition", false);
+    bool writePosition = parameters.GetOneBool("saveDepth", false);
     bool writeDz = parameters.GetOneBool("saveDz", false);
     bool writeMaterial = parameters.GetOneBool("saveMaterial", false);
     bool writeInstance = parameters.GetOneBool("saveInstance", false);

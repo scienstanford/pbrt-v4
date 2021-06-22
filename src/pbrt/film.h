@@ -155,6 +155,7 @@ class VisibleSurface {
     Float dzdx = 0, dzdy = 0;
     SampledSpectrum albedo;
     int materialId; // zhenyi
+    int instanceId; // zhenyi
 };
 
 // FilmBaseParameters Definition
@@ -395,6 +396,7 @@ class GBufferFilm : public FilmBase {
         VarianceEstimator<Float> varianceEstimator[3];
         SampledSpectrum L; 
         float materialId; // zhenyi
+        float instanceId; // zhenyi
     };
 
     // GBufferFilm Private Members

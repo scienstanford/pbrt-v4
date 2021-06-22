@@ -281,7 +281,7 @@ class SurfaceInteraction : public Interaction {
     Vector3f dpdx, dpdy;
     Float dudx = 0, dvdx = 0, dudy = 0, dvdy = 0;
     
-    // zhenyi in order to do pixel-wise classification 
+    // Added by zhenyi in order to do pixel-wise classification 
     uint32_t materialId = 0;
     uint32_t instanceId = 0;
 };
