@@ -833,7 +833,7 @@ Float RealisticCamera::TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const 
             Float eta_t = (i > 0 && elementInterfaces[i - 1].eta != 0)
                               ? elementInterfaces[i - 1].eta
                               : 1;
-            if (!Refract(Normalize(-rLens.d), n, eta_t / eta_i, &w))
+            if (!Refract(Normalize(-rLens.d), n, eta_t / eta_i, nullptr, &w))
                 return 0;
             rLens.d = w;
         }
@@ -1027,7 +1027,7 @@ Float RealisticCamera::TraceLensesFromScene(const Ray &rCamera, Ray *rOut) const
                               ? 1
                               : elementInterfaces[i - 1].eta;
             Float eta_t = (elementInterfaces[i].eta != 0) ? elementInterfaces[i].eta : 1;
-            if (!Refract(Normalize(-rLens.d), n, eta_t / eta_i, &wt))
+            if (!Refract(Normalize(-rLens.d), n, eta_t / eta_i, nullptr, &wt))
                 return 0;
             rLens.d = wt;
         }
@@ -1161,7 +1161,7 @@ void RealisticCamera::DrawRayPathFromFilm(const Ray &r, bool arrow,
             Float eta_t = (i > 0 && elementInterfaces[i - 1].eta != 0)
                               ? elementInterfaces[i - 1].eta
                               : 1;
-            if (!Refract(Normalize(-ray.d), n, eta_t / eta_i, &wt))
+            if (!Refract(Normalize(-ray.d), n, eta_t / eta_i, nullptr, &wt))
                 goto done;
             ray.d = wt;
         }
@@ -1227,7 +1227,7 @@ void RealisticCamera::DrawRayPathFromScene(const Ray &r, bool arrow,
                               : elementInterfaces[i - 1].eta;
             Float eta_t =
                 (elementInterfaces[i].eta != 0.f) ? elementInterfaces[i].eta : 1.f;
-            if (!Refract(Normalize(-ray.d), n, eta_t / eta_i, &wt))
+            if (!Refract(Normalize(-ray.d), n, eta_t / eta_i, nullptr, &wt))
                 return;
             ray.d = wt;
         }
