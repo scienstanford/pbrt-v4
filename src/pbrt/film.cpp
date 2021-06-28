@@ -27,18 +27,17 @@
 #include <pbrt/util/spectrum.h>
 #include <pbrt/util/stats.h>
 #include <pbrt/util/transform.h>
-#include <iostream> 
+#include <iostream>
 #include <vector>
 #include <Eigen/Dense>
 
 
-using namespace std; 
+using namespace std;
 
 
 namespace pbrt {
 
-void Film::AddSplat(const Point2f &p, SampledSpectrum v,
-                    const SampledWavelengths &lambda) {
+void Film::AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths &lambda) {
     auto splat = [&](auto ptr) { return ptr->AddSplat(p, v, lambda); };
     return Dispatch(splat);
 }
@@ -492,12 +491,7 @@ RGBFilm::RGBFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
     outputRGBFromSensorRGB = colorSpace->RGBFromXYZ * sensor->XYZFromSensorRGB;
 }
 
-// SampledWavelengths RGBFilm::SampleWavelengths(Float u) const {
-//     return SampledWavelengths::SampleUniform(u); // modified by zhenyi; it was SampleXYZ.
-// }
-
-void RGBFilm::AddSplat(const Point2f &p, SampledSpectrum L,
-                       const SampledWavelengths &lambda) {
+void RGBFilm::AddSplat(Point2f p, SampledSpectrum L, const SampledWavelengths &lambda) {
     CHECK(!L.HasNaNs());
     // Convert sample radiance to _PixelSensor_ RGB
     RGB rgb = sensor->ToSensorRGB(L, lambda);
@@ -521,7 +515,7 @@ void RGBFilm::AddSplat(const Point2f &p, SampledSpectrum L,
         if (wt != 0) {
             Pixel &pixel = pixels[pi];
             for (int i = 0; i < 3; ++i)
-                pixel.splatRGB[i].Add(wt * rgb[i]);
+                pixel.rgbSplat[i].Add(wt * rgb[i]);
         }
     }
 }
@@ -587,7 +581,7 @@ RGBFilm *RGBFilm::Create(const ParameterDictionary &parameters, Float exposureTi
 }
 
 // GBufferFilm Method Definitions
-void GBufferFilm::AddSample(const Point2i &pFilm, SampledSpectrum L,
+void GBufferFilm::AddSample(Point2i pFilm, SampledSpectrum L,
                             const SampledWavelengths &lambda,
                             const VisibleSurface *visibleSurface, Float weight) {
     RGB rgb = sensor->ToSensorRGB(L, lambda);
@@ -599,7 +593,7 @@ void GBufferFilm::AddSample(const Point2i &pFilm, SampledSpectrum L,
     if (visibleSurface && *visibleSurface) {
         // Update variance estimates.
         for (int c = 0; c < 3; ++c)
-            p.varianceEstimator[c].Add(rgb[c]);
+            p.rgbVariance[c].Add(rgb[c]);
 
         p.pSum += weight * visibleSurface->p;
 
@@ -613,8 +607,7 @@ void GBufferFilm::AddSample(const Point2i &pFilm, SampledSpectrum L,
             visibleSurface->albedo * colorSpace->illuminant.Sample(lambda);
         RGB albedoRGB = albedo.ToRGB(lambda, *colorSpace);
         for (int c = 0; c < 3; ++c)
-            p.albedoSum[c] += weight * albedoRGB[c];
-
+            p.rgbAlbedoSum[c] += weight * albedoRGB[c];
     }
 
     for (int c = 0; c < 3; ++c)
@@ -631,7 +624,7 @@ void GBufferFilm::AddSample(const Point2i &pFilm, SampledSpectrum L,
 }
 
 GBufferFilm::GBufferFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
-                         Float maxComponentValue, bool writeFP16, 
+                         Float maxComponentValue, bool writeFP16,
                          bool writeRadiance, bool writeBasis, int nbasis,
                          bool writeAlbedo, bool writePosition,
                          bool writeDz, bool writeMaterial, bool writeInstance,
@@ -661,11 +654,7 @@ GBufferFilm::GBufferFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
     outputRGBFromSensorRGB = colorSpace->RGBFromXYZ * sensor->XYZFromSensorRGB;
 }
 
-// SampledWavelengths GBufferFilm::SampleWavelengths(Float u) const {
-//     return SampledWavelengths::SampleUniform(u); // modified by zhenyi; it was SampleXYZ.
-// }
-
-void GBufferFilm::AddSplat(const Point2f &p, SampledSpectrum v,
+void GBufferFilm::AddSplat(Point2f p, SampledSpectrum v,
                            const SampledWavelengths &lambda) {
     // NOTE: same code as RGBFilm::AddSplat()...
     CHECK(!v.HasNaNs());
@@ -683,7 +672,7 @@ void GBufferFilm::AddSplat(const Point2f &p, SampledSpectrum v,
         if (wt != 0) {
             Pixel &pixel = pixels[pi];
             for (int i = 0; i < 3; ++i)
-                pixel.splatRGB[i].Add(wt * rgb[i]);
+                pixel.rgbSplat[i].Add(wt * rgb[i]);
         }
     }
 }
@@ -722,7 +711,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     string DzChannelNames[2] = {"Dzx", "Dzy"};
     string VarianceChannelNames[3] = {"Variance.R", "Variance.G", "Variance.B"};
     string RelativeVarianceChannelNames[3] = {"RelativeVariance.R", "RelativeVariance.G", "RelativeVariance.B"};
-    // check channel flag; 
+    // check channel flag;
     if (writeRadiance)
     {
         for (int i = 0; i < 31; i++) {
@@ -787,7 +776,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     }
 
     Image image(format, Point2i(pixelBounds.Diagonal()), channelNames); // zhenyi
-    ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"}); 
+    ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
 
     // initialize a matrix for storing spectral data
     int num_x = pixelBounds.pMax[0];
@@ -799,7 +788,8 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     ParallelFor2D(pixelBounds, [&](Point2i p) {
         Pixel &pixel = pixels[p];
         RGB rgb(pixel.rgbSum[0], pixel.rgbSum[1], pixel.rgbSum[2]);
-        RGB albedoRgb(pixel.albedoSum[0], pixel.albedoSum[1], pixel.albedoSum[2]);
+        RGB albedoRgb(pixel.rgbAlbedoSum[0], pixel.rgbAlbedoSum[1],
+                      pixel.rgbAlbedoSum[2]);
 
         // Normalize pixel with weight sum
         Float weightSum = pixel.weightSum;
@@ -817,7 +807,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
 
         // Add splat value at pixel
         for (int c = 0; c < 3; ++c)
-            rgb[c] += splatScale * pixel.splatRGB[c] / filterIntegral;
+            rgb[c] += splatScale * pixel.rgbSplat[c] / filterIntegral;
 
         rgb = outputRGBFromSensorRGB * rgb;
 
@@ -856,26 +846,26 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
             ImageChannelDesc radianceDesc = image.GetChannelDesc(RadianceChannelNames);
             if (NSpectrumSamples==31)
             {
-                image.SetChannels(pOffset, radianceDesc, {L[0], L[1], L[2], L[3], L[4], L[5], 
-                                L[6], L[7], L[8], L[9], L[10], L[11], 
+                image.SetChannels(pOffset, radianceDesc, {L[0], L[1], L[2], L[3], L[4], L[5],
+                                L[6], L[7], L[8], L[9], L[10], L[11],
                                 L[12], L[13], L[14], L[15],L[16], L[17], L[18], L[19], L[20],
                                 L[21], L[22], L[23], L[24], L[25], L[26],
                                 L[27], L[28], L[29], L[30]});
             }
             if (NSpectrumSamples==16)
             {
-                image.SetChannels(pOffset, radianceDesc, {L[0], L[1], L[2], L[3], L[4], L[5], 
-                                L[6], L[7], L[8], L[9], L[10], L[11], 
+                image.SetChannels(pOffset, radianceDesc, {L[0], L[1], L[2], L[3], L[4], L[5],
+                                L[6], L[7], L[8], L[9], L[10], L[11],
                                 L[12], L[13], L[14], L[15]});
             }
-                                
+
         }
         if (writeBasis)
         {
             int thisIndex = pOffset.y + num_y * pOffset.x;
             for (int wave = 0; wave <NSpectrumSamples; wave++)
-            {      
-                spectralData(thisIndex, wave) = L[wave];   
+            {
+                spectralData(thisIndex, wave) = L[wave];
             }
         }
         if (writePosition)
@@ -913,16 +903,16 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
             ImageChannelDesc varianceDesc = image.GetChannelDesc(VarianceChannelNames);
             image.SetChannels(
                 pOffset, varianceDesc,
-                {pixel.varianceEstimator[0].Variance(), pixel.varianceEstimator[1].Variance(),
-                pixel.varianceEstimator[2].Variance()});
+                {pixel.rgbVariance[0].Variance(), pixel.rgbVariance[1].Variance(),
+                pixel.rgbVariance[2].Variance()});
         }
         if (writeRelativeVariance)
         {
             ImageChannelDesc relVarianceDesc = image.GetChannelDesc(RelativeVarianceChannelNames);
             image.SetChannels(pOffset, relVarianceDesc,
-                            {pixel.varianceEstimator[0].RelativeVariance(),
-                            pixel.varianceEstimator[1].RelativeVariance(),
-                            pixel.varianceEstimator[2].RelativeVariance()});
+                            {pixel.rgbVariance[0].RelativeVariance(),
+                            pixel.rgbVariance[1].RelativeVariance(),
+                            pixel.rgbVariance[2].RelativeVariance()});
         }
     });
     // if writeSpectralBasis is enabled, coefficients file needs to written out seperately
@@ -931,19 +921,19 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
         Eigen::MatrixXf basis = svd.matrixV();
         Eigen::MatrixXf new_basis(basis.rows(), nbasis);
 
-        for (int i = 0; i < nbasis; ++i) {    
+        for (int i = 0; i < nbasis; ++i) {
             new_basis.col(i) = basis.col(i);
         }
 
 
         Eigen::MatrixXf coef = spectralData * new_basis;
-        
+
         // write basis and coef out in a binary file
         int extPos = filename.find_last_of(".");
         string basisFilename = filename.substr(0,extPos) + "_basis.dat";
         FILE * basisData;
         basisData = fopen(basisFilename.c_str(), "wb");
-        
+
         ParallelFor2D(pixelBounds, [&](Point2i p) {
             Point2i pOffset(p.x - pixelBounds.pMin.x, p.y - pixelBounds.pMin.y);
             for (int col = 0; col < nbasis; ++col) {
@@ -953,7 +943,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
                 image.SetChannel(p, basisDesc.offset[col], coef(this_row, col));
             }
         });
-        
+
         //Write binary basis
         for (int col = 0; col < nbasis; col++)
         {
@@ -991,8 +981,8 @@ GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
     bool writeFP16 = parameters.GetOneBool("savefp16", true);
     // zhenyi
     //---------------------------------------------------------------
-    bool writeRadiance = parameters.GetOneBool("saveRadiance", true); 
-    bool writeBasis = parameters.GetOneBool("saveRadianceAsBasis", false); 
+    bool writeRadiance = parameters.GetOneBool("saveRadiance", true);
+    bool writeBasis = parameters.GetOneBool("saveRadianceAsBasis", false);
     int nbasis = parameters.GetOneInt("numBasis", 3);
     bool writeAlbedo = parameters.GetOneBool("saveAlbedo", false);
     bool writePosition = parameters.GetOneBool("saveDepth", false);
@@ -1016,7 +1006,7 @@ GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
 
     return alloc.new_object<GBufferFilm>(filmBaseParameters, colorSpace,
                                          maxComponentValue, writeFP16,
-                                         writeRadiance, writeBasis, nbasis, 
+                                         writeRadiance, writeBasis, nbasis,
                                          writeAlbedo, writePosition,
                                          writeDz, writeMaterial, writeInstance,
                                          writeNormal, writeNs, writeVariance,

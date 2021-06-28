@@ -72,7 +72,7 @@ class PixelSensor {
 
         // Initialize _XYZFromSensorRGB_ using linear least squares
         pstd::optional<SquareMatrix<3>> m =
-            LinearLeastSquares<3>(rgbCamera, xyzOutput, nSwatchReflectances);
+            LinearLeastSquares(rgbCamera, xyzOutput, nSwatchReflectances);
         if (!m)
             ErrorExit("Sensor XYZ from RGB matrix could not be solved.");
         XYZFromSensorRGB = *m;
@@ -148,7 +148,6 @@ class VisibleSurface {
     std::string ToString() const;
 
     // VisibleSurface Public Members
-    bool set = false;
     Point3f p;
     Normal3f n, ns;
     Float time = 0;
@@ -156,6 +155,7 @@ class VisibleSurface {
     SampledSpectrum albedo;
     int materialId; // zhenyi
     int instanceId; // zhenyi
+    bool set = false;
 };
 
 // FilmBaseParameters Definition
@@ -239,9 +239,8 @@ class RGBFilm : public FilmBase {
     bool UsesVisibleSurface() const { return false; }
 
     PBRT_CPU_GPU
-    void AddSample(const Point2i &pFilm, SampledSpectrum L,
-                   const SampledWavelengths &lambda, const VisibleSurface *,
-                   Float weight) {
+    void AddSample(Point2i pFilm, SampledSpectrum L, const SampledWavelengths &lambda,
+                   const VisibleSurface *, Float weight) {
         // Convert sample radiance to _PixelSensor_ RGB
         RGB rgb = sensor->ToSensorRGB(L, lambda);
 
@@ -275,7 +274,7 @@ class RGBFilm : public FilmBase {
 
         // Add splat value at pixel
         for (int c = 0; c < 3; ++c)
-            rgb[c] += splatScale * pixel.splatRGB[c] / filterIntegral;
+            rgb[c] += splatScale * pixel.rgbSplat[c] / filterIntegral;
 
         // Convert _rgb_ to output RGB color space
         rgb = outputRGBFromSensorRGB * rgb;
@@ -292,7 +291,7 @@ class RGBFilm : public FilmBase {
                            const FileLoc *loc, Allocator alloc);
 
     PBRT_CPU_GPU
-    void AddSplat(const Point2f &p, SampledSpectrum v, const SampledWavelengths &lambda);
+    void AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths &lambda);
 
     void WriteImage(ImageMetadata metadata, Float splatScale = 1);
     Image GetImage(ImageMetadata *metadata, Float splatScale = 1);
@@ -311,8 +310,7 @@ class RGBFilm : public FilmBase {
         Pixel() = default;
         double rgbSum[3] = {0., 0., 0.};
         double weightSum = 0.;
-        AtomicDouble splatRGB[3];
-        SampledSpectrum L;
+        AtomicDouble rgbSplat[3];
     };
 
     // RGBFilm Private Members
@@ -330,7 +328,7 @@ class GBufferFilm : public FilmBase {
     // GBufferFilm Public Methods
     GBufferFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
                 Float maxComponentValue = Infinity, bool writeFP16 = true,
-                bool writeRadiance = true, bool writeBasis = true, int nbasis = 3, 
+                bool writeRadiance = true, bool writeBasis = true, int nbasis = 3,
                 bool writeAlbedo = true, bool writePosition = true,
                 bool writeDz = true, bool writeMaterial = true, bool writeInstance = true,
                 bool writeNormal = true, bool writeNs = true, bool writeVariance = true,
@@ -342,15 +340,14 @@ class GBufferFilm : public FilmBase {
                                const FileLoc *loc, Allocator alloc);
 
     PBRT_CPU_GPU
-    void AddSample(const Point2i &pFilm, SampledSpectrum L,
-                   const SampledWavelengths &lambda, const VisibleSurface *visibleSurface,
-                   Float weight);
+    void AddSample(Point2i pFilm, SampledSpectrum L, const SampledWavelengths &lambda,
+                   const VisibleSurface *visibleSurface, Float weight);
 
     PBRT_CPU_GPU
-    void AddSplat(const Point2f &p, SampledSpectrum v, const SampledWavelengths &lambda);
+    void AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths &lambda);
 
     PBRT_CPU_GPU
-    RGB ToOutputRGB(const SampledSpectrum &L, const SampledWavelengths &lambda) const {
+    RGB ToOutputRGB(SampledSpectrum L, const SampledWavelengths &lambda) const {
         RGB cameraRGB = sensor->ToSensorRGB(L, lambda);
         return outputRGBFromSensorRGB * cameraRGB;
     }
@@ -370,7 +367,7 @@ class GBufferFilm : public FilmBase {
 
         // Add splat value at pixel
         for (int c = 0; c < 3; ++c)
-            rgb[c] += splatScale * pixel.splatRGB[c] / filterIntegral;
+            rgb[c] += splatScale * pixel.rgbSplat[c] / filterIntegral;
 
         rgb = outputRGBFromSensorRGB * rgb;
 
@@ -388,13 +385,13 @@ class GBufferFilm : public FilmBase {
         Pixel() = default;
         double rgbSum[3] = {0., 0., 0.};
         double weightSum = 0.;
-        AtomicDouble splatRGB[3];
+        AtomicDouble rgbSplat[3];
         Point3f pSum;
         Float dzdxSum = 0, dzdySum = 0;
         Normal3f nSum, nsSum;
-        double albedoSum[3] = {0., 0., 0.};
-        VarianceEstimator<Float> varianceEstimator[3];
-        SampledSpectrum L; 
+        double rgbAlbedoSum[3] = {0., 0., 0.};
+        VarianceEstimator<Float> rgbVariance[3];
+        SampledSpectrum L;
         float materialId; // zhenyi
         float instanceId; // zhenyi
     };
@@ -406,7 +403,7 @@ class GBufferFilm : public FilmBase {
     bool writeFP16;
     // zhenyi------
     bool writeRadiance;
-    bool writeBasis; 
+    bool writeBasis;
     int nbasis;
     bool writeAlbedo;
     bool writePosition;
@@ -416,7 +413,7 @@ class GBufferFilm : public FilmBase {
     bool writeNormal;
     bool writeNs;
     bool writeVariance;
-    bool writeRelativeVariance;    
+    bool writeRelativeVariance;
     // ------------------------
     Float filterIntegral;
     SquareMatrix<3> outputRGBFromSensorRGB;
@@ -471,14 +468,13 @@ inline RGB Film::GetPixelRGB(const Point2i &p, Float splatScale) const {
 }
 
 PBRT_CPU_GPU
-inline RGB Film::ToOutputRGB(const SampledSpectrum &L,
-                             const SampledWavelengths &lambda) const {
+inline RGB Film::ToOutputRGB(SampledSpectrum L, const SampledWavelengths &lambda) const {
     auto out = [&](auto ptr) { return ptr->ToOutputRGB(L, lambda); };
     return Dispatch(out);
 }
 
 PBRT_CPU_GPU
-inline void Film::AddSample(const Point2i &pFilm, SampledSpectrum L,
+inline void Film::AddSample(Point2i pFilm, SampledSpectrum L,
                             const SampledWavelengths &lambda,
                             const VisibleSurface *visibleSurface, Float weight) {
     auto add = [&](auto ptr) {
