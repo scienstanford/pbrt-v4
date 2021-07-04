@@ -255,10 +255,6 @@ class RGBFilm : public FilmBase {
             pixel.rgbSum[c] += weight * rgb[c];
         pixel.weightSum += weight;
 
-        // zhenyi: Add spectrum values into pixel
-        for (int i = 0; i < NSpectrumSamples; ++i) {
-            pixel.L[i] += weight * L[i];
-        }
     }
 
     PBRT_CPU_GPU
