@@ -219,6 +219,19 @@ RGB MIPMap::Texel(int level, Point2i st) const {
         return RGB(v, v, v);
     }
 }
+//-------------------------------------------------------------------
+// add spectrum mip --zhenyi
+template <>
+SampledSpectrum MIPMap::Texel(int level, Point2i st) const {
+    CHECK(level >= 0 && level < pyramid.size());
+    if (pyramid[level].NChannels() == 6) {
+        SampledSpectrum basiscoef;          
+        for (int c = 0; c < 6; ++c)
+            basiscoef[c] = pyramid[level].GetChannel(st, c, wrapMode);
+        return basiscoef;
+    }
+}
+//-------------------------------------------------------------------
 
 template <typename T>
 T MIPMap::Filter(Point2f st, Vector2f dst0, Vector2f dst1) const {
@@ -282,6 +295,7 @@ RGB MIPMap::Bilerp(int level, Point2f st) const {
     CHECK(level >= 0 && level < pyramid.size());
     if (pyramid[level].NChannels() == 3 || pyramid[level].NChannels() == 4) {
         RGB rgb;
+
         for (int c = 0; c < 3; ++c)
             rgb[c] = pyramid[level].BilerpChannel(st, c, wrapMode);
         return rgb;
@@ -291,6 +305,18 @@ RGB MIPMap::Bilerp(int level, Point2f st) const {
         return RGB(v, v, v);
     }
 }
+// --------------------For multispectral texture--------------------------------------
+template <>
+SampledSpectrum MIPMap::Bilerp(int level, Point2f st) const {
+    CHECK(level >= 0 && level < pyramid.size());
+    if (pyramid[level].NChannels() == 6) {
+        SampledSpectrum basiscoef;          
+        for (int c = 0; c < 6; ++c)
+            basiscoef[c] = pyramid[level].BilerpChannel(st, c, wrapMode);
+        return basiscoef;
+    }
+}
+// ----------------------------------------------------------------------------------
 
 template <typename T>
 T MIPMap::EWA(int level, Point2f st, Vector2f dst0, Vector2f dst1) const {
@@ -349,11 +375,19 @@ MIPMap *MIPMap::CreateFromFile(const std::string &filename,
     ImageAndMetadata imageAndMetadata = Image::Read(filename, alloc, encoding);
 
     Image &image = imageAndMetadata.image;
+    
     if (image.NChannels() != 1) {
         // Get the channels in a canonical order..
         ImageChannelDesc rgbaDesc = image.GetChannelDesc({"R", "G", "B", "A"});
         ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
-        if (rgbaDesc) {
+        // Get channelNames
+        std::vector<std::string> inFileChannelNames  = image.ChannelNames();
+        ImageChannelDesc coeffDsec = image.GetChannelDesc(inFileChannelNames);// zhenyi
+        // ImageChannelDesc coeffDsec = image.GetChannelDesc({"coef.1","coef.2","coef.3","coef.4","coef.5","coef.6"}); // zhenyi
+        if (coeffDsec){ 
+            image = image.SelectChannels(coeffDsec, alloc);
+        }
+        else if (rgbaDesc) {
             // Is alpha all ones?
             bool allOne = true;
             for (int y = 0; y < image.Resolution().y; ++y)
@@ -368,7 +402,7 @@ MIPMap *MIPMap::CreateFromFile(const std::string &filename,
             if (rgbDesc)
                 image = image.SelectChannels(rgbDesc, alloc);
             else
-                ErrorExit("%s: image doesn't have R, G, and B channels", filename);
+                ErrorExit("%s: image doesn't have R, G, and B channels or basis coeff channels", filename);
         }
     }
 
@@ -412,5 +446,5 @@ std::string MIPMap::ToString() const {
 // Explicit template instantiation..
 template Float MIPMap::Filter(Point2f st, Vector2f, Vector2f) const;
 template RGB MIPMap::Filter(Point2f st, Vector2f, Vector2f) const;
-
+template SampledSpectrum MIPMap::Filter(Point2f st, Vector2f, Vector2f) const;
 }  // namespace pbrt

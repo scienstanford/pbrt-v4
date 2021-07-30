@@ -22,6 +22,11 @@
 
 #include <Ptexture.h>
 
+#include <ext/json.hpp> // zhenyi
+#include <fstream> // zhenyi
+
+using json = nlohmann::json;
+
 namespace pbrt {
 
 std::string TextureEvalContext::ToString() const {
@@ -353,24 +358,41 @@ SampledSpectrum SpectrumImageTexture::Evaluate(TextureEvalContext ctx,
     Vector2f dstdx, dstdy;
     Point2f st = mapping.Map(ctx, &dstdx, &dstdy);
     st[1] = 1 - st[1];
-
-    // Lookup filtered RGB value in _MIPMap_
-    RGB rgb = scale * mipmap->Filter<RGB>(st, dstdx, dstdy);
-    rgb = ClampZero(invert ? (RGB(1, 1, 1) - rgb) : rgb);
-
+    // check whether multi-spectral texture is used
+    if (size(basis)!=0){
+        // get spectrum texture coef
+        SampledSpectrum rgb_spectrum = scale * mipmap->Filter<SampledSpectrum>(st, dstdx, dstdy);
+        SampledSpectrum s;
+        int nChannels = size(basis);
+        // last channel is offset
+        int offset = basis[nChannels-1][0];
+        for (int c = 0; c< nChannels-2; c++){
+            auto basisChannel = basis[c];
+            SampledSpectrum basisSpectrum;
+            for (int nWave = 0; nWave< NSpectrumSamples; nWave++){   
+                basisSpectrum[nWave] = basisChannel[nWave];
+            }
+            s = basisSpectrum * (rgb_spectrum[c]-offset) + s;
+        }              
+        return s;
+    }
+    else{
+        // Lookup filtered RGB value in _MIPMap_
+        RGB rgb = scale * mipmap->Filter<RGB>(st, dstdx, dstdy); 
+        rgb = ClampZero(invert ? (RGB(1, 1, 1) - rgb) : rgb);
     // Return _SampledSpectrum_ for RGB image texture value
-    if (const RGBColorSpace *cs = mipmap->GetRGBColorSpace(); cs) {
-        if (spectrumType == SpectrumType::Unbounded)
-            return RGBUnboundedSpectrum(*cs, rgb).Sample(lambda);
-        else if (spectrumType == SpectrumType::Albedo)
-            return RGBAlbedoSpectrum(*cs, Clamp(rgb, 0, 1)).Sample(lambda);
-        else
-            return RGBIlluminantSpectrum(*cs, rgb).Sample(lambda);
+        if (const RGBColorSpace *cs = mipmap->GetRGBColorSpace(); cs) {
+            if (spectrumType == SpectrumType::Unbounded)
+                return RGBUnboundedSpectrum(*cs, rgb).Sample(lambda);
+            else if (spectrumType == SpectrumType::Albedo)
+                return RGBAlbedoSpectrum(*cs, Clamp(rgb, 0, 1)).Sample(lambda);
+            else
+                return RGBIlluminantSpectrum(*cs, rgb).Sample(lambda);
     }
     // otherwise it better be a one-channel texture
     DCHECK(rgb[0] == rgb[1] && rgb[1] == rgb[2]);
     return SampledSpectrum(rgb[0]);
-
+    }
 #endif
 }
 
@@ -424,9 +446,19 @@ FloatImageTexture *FloatImageTexture::Create(const Transform &renderFromTexture,
     const char *defaultEncoding = HasExtension(filename, "png") ? "sRGB" : "linear";
     std::string encodingString = parameters.GetOneString("encoding", defaultEncoding);
     ColorEncoding encoding = ColorEncoding::Get(encodingString, alloc);
-
+    // read basis information from a json file --zhenyi
+    std::string basisFile = parameters.GetOneString("basisfilename", "");
+    std::vector<std::vector<float>> basis;
+    if (basisFile != "")
+    {
+        std::ifstream i(basisFile);
+        json j; 
+        i >> j;
+        for (auto& elem : j)
+            basis.push_back(elem["basis"]);
+    }
     return alloc.new_object<FloatImageTexture>(map, filename, filterOptions, *wrapMode,
-                                               scale, invert, encoding, alloc);
+                                               scale, invert, encoding, basis, alloc);
 }
 
 SpectrumImageTexture *SpectrumImageTexture::Create(
@@ -454,13 +486,28 @@ SpectrumImageTexture *SpectrumImageTexture::Create(
     Float scale = parameters.GetOneFloat("scale", 1.f);
     bool invert = parameters.GetOneBool("invert", false);
     std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
-
+    
     const char *defaultEncoding = HasExtension(filename, "png") ? "sRGB" : "linear";
     std::string encodingString = parameters.GetOneString("encoding", defaultEncoding);
     ColorEncoding encoding = ColorEncoding::Get(encodingString, alloc);
-
+    // read basis information from a json file --zhenyi
+    std::string basisFile = parameters.GetOneString("basisfilename", "");
+    std::vector<std::vector<float>> basis;
+    if (basisFile != "")
+    {
+        std::ifstream i(basisFile);
+        json j; 
+        i >> j;
+        for (auto& elem : j)
+            basis.push_back(elem["basis"]);
+        for (auto& elem : j) {
+            basis.push_back(elem["offset"]);
+            break;
+        }   
+            
+    }
     return alloc.new_object<SpectrumImageTexture>(map, filename, filterOptions, *wrapMode,
-                                                  scale, invert, encoding, spectrumType,
+                                                  scale, invert, encoding, spectrumType, basis,
                                                   alloc);
 }
 

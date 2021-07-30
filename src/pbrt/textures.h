@@ -529,8 +529,9 @@ class ImageTextureBase {
     // ImageTextureBase Public Methods
     ImageTextureBase(TextureMapping2D mapping, std::string filename,
                      MIPMapFilterOptions filterOptions, WrapMode wrapMode, Float scale,
-                     bool invert, ColorEncoding encoding, Allocator alloc)
-        : mapping(mapping), filename(filename), scale(scale), invert(invert) {
+                     bool invert, ColorEncoding encoding, std::vector<std::vector<float>> basis,
+                     Allocator alloc)
+        : mapping(mapping), filename(filename), scale(scale), invert(invert), basis(basis){
         // Get _MIPMap_ from texture cache if present
         TexInfo texInfo(filename, filterOptions, wrapMode, encoding);
         std::unique_lock<std::mutex> lock(textureCacheMutex);
@@ -561,6 +562,7 @@ class ImageTextureBase {
     std::string filename;
     Float scale;
     bool invert;
+    std::vector<std::vector<float>> basis;
     MIPMap *mipmap;
 
   private:
@@ -574,8 +576,8 @@ class FloatImageTexture : public ImageTextureBase {
   public:
     FloatImageTexture(TextureMapping2D m, const std::string &filename,
                       MIPMapFilterOptions filterOptions, WrapMode wm, Float scale,
-                      bool invert, ColorEncoding encoding, Allocator alloc)
-        : ImageTextureBase(m, filename, filterOptions, wm, scale, invert, encoding,
+                      bool invert, ColorEncoding encoding, std::vector<std::vector<float>> basis, Allocator alloc)
+        : ImageTextureBase(m, filename, filterOptions, wm, scale, invert, encoding, basis,
                            alloc) {}
     PBRT_CPU_GPU
     Float Evaluate(TextureEvalContext ctx) const {
@@ -607,9 +609,10 @@ class SpectrumImageTexture : public ImageTextureBase {
     SpectrumImageTexture(TextureMapping2D mapping, std::string filename,
                          MIPMapFilterOptions filterOptions, WrapMode wrapMode,
                          Float scale, bool invert, ColorEncoding encoding,
-                         SpectrumType spectrumType, Allocator alloc)
+                         SpectrumType spectrumType, std::vector<std::vector<float>> basis,
+                         Allocator alloc)
         : ImageTextureBase(mapping, filename, filterOptions, wrapMode, scale, invert,
-                           encoding, alloc),
+                           encoding, basis, alloc),
           spectrumType(spectrumType) {}
 
     PBRT_CPU_GPU
