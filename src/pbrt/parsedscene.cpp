@@ -129,7 +129,7 @@ ParsedScene::ParsedScene() {
     // Set scene defaults
     camera.name = "perspective";
     sampler.name = "zsobol";
-    filter.name = "gaussian";
+    filter.name = "box";
     integrator.name = "volpath";
 
     ParameterDictionary dict({}, RGBColorSpace::sRGB);
