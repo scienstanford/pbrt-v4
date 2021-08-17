@@ -182,9 +182,6 @@ class TrowbridgeReitzDistribution {
     static Float RoughnessToAlpha(Float roughness) { return std::sqrt(roughness); }
 
     PBRT_CPU_GPU
-    static Float RoughnessToAlpha(Float roughness) { return std::sqrt(roughness); }
-
-    PBRT_CPU_GPU
     void Regularize() {
         if (alpha_x < 0.3f)
             alpha_x = Clamp(2 * alpha_x, 0.1f, 0.3f);
