@@ -10,7 +10,7 @@
 #include <pbrt/cpu/primitive.h>
 #include <pbrt/lights.h>
 #include <pbrt/materials.h>
-#include <pbrt/parsedscene.h>
+#include <pbrt/scene.h>
 #include <pbrt/util/containers.h>
 #include <pbrt/util/pstd.h>
 #include <pbrt/util/soa.h>
@@ -24,19 +24,21 @@ namespace pbrt {
 
 class CPUAggregate : public WavefrontAggregate {
   public:
-    CPUAggregate(ParsedScene &scene, Allocator alloc, NamedTextures &textures,
-             const std::map<int, pstd::vector<Light> *> &shapeIndexToAreaLights,
-             const std::map<std::string, Medium> &media,
-             const std::map<std::string, pbrt::Material> &namedMaterials,
-             const std::vector<pbrt::Material> &materials);
+    CPUAggregate(ParsedScene &scene, NamedTextures &textures,
+                 const std::map<int, pstd::vector<Light> *> &shapeIndexToAreaLights,
+                 const std::map<std::string, Medium> &media,
+                 const std::map<std::string, pbrt::Material> &namedMaterials,
+                 const std::vector<pbrt::Material> &materials);
 
     Bounds3f Bounds() const { return aggregate.Bounds(); }
 
-    void IntersectClosest(
-        int maxRays, const RayQueue *rayQueue, EscapedRayQueue *escapedRayQueue,
-        HitAreaLightQueue *hitAreaLightQueue, MaterialEvalQueue *basicEvalMaterialQueue,
-        MaterialEvalQueue *universalEvalMaterialQueue,
-        MediumSampleQueue *mediumSampleQueue, RayQueue *nextRayQueue) const;
+    void IntersectClosest(int maxRays, const RayQueue *rayQueue,
+                          EscapedRayQueue *escapedRayQueue,
+                          HitAreaLightQueue *hitAreaLightQueue,
+                          MaterialEvalQueue *basicEvalMaterialQueue,
+                          MaterialEvalQueue *universalEvalMaterialQueue,
+                          MediumSampleQueue *mediumSampleQueue,
+                          RayQueue *nextRayQueue) const;
 
     void IntersectShadow(int maxRays, ShadowRayQueue *shadowRayQueue,
                          SOA<PixelSampleState> *pixelSampleState) const;
@@ -44,9 +46,10 @@ class CPUAggregate : public WavefrontAggregate {
     void IntersectShadowTr(int maxRays, ShadowRayQueue *shadowRayQueue,
                            SOA<PixelSampleState> *pixelSampleState) const;
 
-    void IntersectOneRandom(int maxRays, SubsurfaceScatterQueue *subsurfaceScatterQueue) const;
+    void IntersectOneRandom(int maxRays,
+                            SubsurfaceScatterQueue *subsurfaceScatterQueue) const;
 
-private:
+  private:
     Primitive aggregate;
 };
 

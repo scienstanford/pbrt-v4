@@ -7,7 +7,7 @@
 #include <pbrt/cpu/aggregates.h>
 #include <pbrt/lights.h>
 #include <pbrt/materials.h>
-#include <pbrt/parsedscene.h>
+#include <pbrt/scene.h>
 #include <pbrt/textures.h>
 #include <pbrt/util/error.h>
 #include <pbrt/util/file.h>
@@ -21,12 +21,12 @@
 namespace pbrt {
 
 CPUAggregate::CPUAggregate(
-    ParsedScene &scene, Allocator alloc, NamedTextures &textures,
+    ParsedScene &scene, NamedTextures &textures,
     const std::map<int, pstd::vector<Light> *> &shapeIndexToAreaLights,
     const std::map<std::string, Medium> &media,
     const std::map<std::string, pbrt::Material> &namedMaterials,
     const std::vector<pbrt::Material> &materials) {
-    aggregate = scene.CreateAggregate(alloc, textures, shapeIndexToAreaLights, media,
+    aggregate = scene.CreateAggregate(textures, shapeIndexToAreaLights, media,
                                       namedMaterials, materials);
 }
 
@@ -104,7 +104,7 @@ void CPUAggregate::IntersectOneRandom(
         }
 
         if (wrs.HasSample()) {
-            subsurfaceScatterQueue->reservoirPDF[index] = wrs.SamplePDF();
+            subsurfaceScatterQueue->reservoirPDF[index] = wrs.SampleProbability();
             subsurfaceScatterQueue->ssi[index] = wrs.GetSample();
         } else
             subsurfaceScatterQueue->reservoirPDF[index] = 0;

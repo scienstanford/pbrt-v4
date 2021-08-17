@@ -4,6 +4,7 @@
 
 #include <pbrt/shapes.h>
 
+#include <pbrt/textures.h>
 #ifdef PBRT_BUILD_GPU_RENDERER
 #include <pbrt/gpu/util.h>
 #endif  // PBRT_BUILD_GPU_RENDERER
@@ -27,6 +28,8 @@
 #if defined(PBRT_BUILD_GPU_RENDERER)
 #include <cuda.h>
 #endif
+
+#include <algorithm>
 
 namespace pbrt {
 
@@ -435,7 +438,7 @@ TriangleMesh *Triangle::CreateMesh(const Transform *renderFromObject,
 
     return alloc.new_object<TriangleMesh>(
         *renderFromObject, reverseOrientation, std::move(vi), std::move(P), std::move(S),
-        std::move(N), std::move(uvs), std::move(faceIndices));
+        std::move(N), std::move(uvs), std::move(faceIndices), alloc);
 }
 
 STAT_MEMORY_COUNTER("Memory/Curves", curveBytes);
@@ -607,7 +610,7 @@ bool Curve::RecursiveIntersect(const Ray &ray, Float tMax, pstd::span<const Poin
                                int depth, pstd::optional<ShapeIntersection> *si) const {
     Float rayLength = Length(ray.d);
     if (depth > 0) {
-        // Split curve segment into sub-segments and test for intersection
+        // Split curve segment into subsegments and test for intersection
         pstd::array<Point3f, 7> cpSplit = SubdivideCubicBezier(cp);
         Float u[3] = {u0, (u0 + u1) / 2, u1};
         for (int seg = 0; seg < 2; ++seg) {
@@ -840,7 +843,9 @@ pstd::vector<Shape> Curve::Create(const Transform *renderFromObject,
         return {};
     }
 
-    int sd = parameters.GetOneInt("splitdepth", 3);
+    // This is kind of a hack, but since we dice curves on the GPU we
+    // really don't want to have them split here.
+    int sd = Options->useGPU ? 0 : parameters.GetOneInt("splitdepth", 3);
 
     if (type == CurveType::Ribbon && n.empty()) {
         Error(loc, "Must provide normals \"N\" at curve endpoints with ribbon "
@@ -993,7 +998,7 @@ BilinearPatchMesh *BilinearPatch::CreateMesh(const Transform *renderFromObject,
 
     return alloc.new_object<BilinearPatchMesh>(
         *renderFromObject, reverseOrientation, std::move(vertexIndices), std::move(P),
-        std::move(N), std::move(uv), std::move(faceIndices), imageDist);
+        std::move(N), std::move(uv), std::move(faceIndices), imageDist, alloc);
 }
 
 pstd::vector<Shape> BilinearPatch::CreatePatches(const BilinearPatchMesh *mesh,
@@ -1373,13 +1378,14 @@ std::string BilinearPatch::ToString() const {
 STAT_COUNTER("Geometry/Spheres", nSpheres);
 STAT_COUNTER("Geometry/Cylinders", nCylinders);
 STAT_COUNTER("Geometry/Disks", nDisks);
+STAT_COUNTER("Geometry/Triangles added from displacement mapping", displacedTrisDelta);
 
-pstd::vector<Shape> Shape::Create(const std::string &name,
-                                  const Transform *renderFromObject,
-                                  const Transform *objectFromRender,
-                                  bool reverseOrientation,
-                                  const ParameterDictionary &parameters,
-                                  const FileLoc *loc, Allocator alloc) {
+pstd::vector<Shape> Shape::Create(
+    const std::string &name, const Transform *renderFromObject,
+    const Transform *objectFromRender, bool reverseOrientation,
+    const ParameterDictionary &parameters,
+    const std::map<std::string, FloatTexture> &floatTextures, const FileLoc *loc,
+    Allocator alloc) {
     pstd::vector<Shape> shapes(alloc);
     if (name == "sphere") {
         shapes = {Sphere::Create(renderFromObject, objectFromRender, reverseOrientation,
@@ -1412,17 +1418,57 @@ pstd::vector<Shape> Shape::Create(const std::string &name,
         std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
         TriQuadMesh plyMesh = TriQuadMesh::ReadPLY(filename);
 
+        Float edgeLength = parameters.GetOneFloat("displacement.edgelength", 1.f);
+        edgeLength *= Options->displacementEdgeScale;
+
+        std::string displacementTexName = parameters.GetTexture("displacement");
+        if (!displacementTexName.empty()) {
+            auto iter = floatTextures.find(displacementTexName);
+            if (iter == floatTextures.end())
+                ErrorExit(loc, "%s: no such texture defined.", displacementTexName);
+            FloatTexture displacement = iter->second;
+
+            LOG_VERBOSE("Starting to displace mesh \"%s\" with \"%s\"", filename,
+                        displacementTexName);
+
+            int origTriCount = plyMesh.triIndices.size() / 3;
+            plyMesh = plyMesh.Displace(
+                [&](Point3f v0, Point3f v1) {
+                    v0 = (*renderFromObject)(v0);
+                    v1 = (*renderFromObject)(v1);
+                    return Distance(v0, v1);
+                },
+                edgeLength,
+                [&](Point3f *p, const Normal3f *n, const Point2f *uv, int nVertices) {
+                    ParallelFor(0, nVertices, [=](int i) {
+                        TextureEvalContext ctx;
+                        ctx.p = p[i];
+                        ctx.uv = uv[i];
+                        Float d = UniversalTextureEvaluator()(displacement, ctx);
+                        p[i] += Vector3f(d * n[i]);
+                    });
+                },
+                loc);
+
+            LOG_VERBOSE("Finished displacing mesh \"%s\" with \"%s\" -> %d tris",
+                        filename, displacementTexName, plyMesh.triIndices.size() / 3);
+
+            displacedTrisDelta += plyMesh.triIndices.size() / 3 - origTriCount;
+        }
+
         if (!plyMesh.triIndices.empty()) {
             TriangleMesh *mesh = alloc.new_object<TriangleMesh>(
                 *renderFromObject, reverseOrientation, plyMesh.triIndices, plyMesh.p,
-                std::vector<Vector3f>(), plyMesh.n, plyMesh.uv, plyMesh.faceIndices);
+                std::vector<Vector3f>(), plyMesh.n, plyMesh.uv, plyMesh.faceIndices,
+                alloc);
             shapes = Triangle::CreateTriangles(mesh, alloc);
         }
 
         if (!plyMesh.quadIndices.empty()) {
             BilinearPatchMesh *mesh = alloc.new_object<BilinearPatchMesh>(
                 *renderFromObject, reverseOrientation, plyMesh.quadIndices, plyMesh.p,
-                plyMesh.n, plyMesh.uv, plyMesh.faceIndices, nullptr /* image dist */);
+                plyMesh.n, plyMesh.uv, plyMesh.faceIndices, nullptr /* image dist */,
+                alloc);
             pstd::vector<Shape> quadMesh = BilinearPatch::CreatePatches(mesh, alloc);
             shapes.insert(shapes.end(), quadMesh.begin(), quadMesh.end());
         }

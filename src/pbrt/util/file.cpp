@@ -6,7 +6,10 @@
 
 #include <pbrt/util/check.h>
 #include <pbrt/util/error.h>
+#include <pbrt/util/parallel.h>
 #include <pbrt/util/string.h>
+
+#include <libdeflate.h>
 
 #include <filesystem/path.h>
 #include <algorithm>
@@ -18,8 +21,11 @@
 #include <fstream>
 #ifndef PBRT_IS_WINDOWS
 #include <dirent.h>
+#include <fcntl.h>
 #include <sys/dir.h>
+#include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 #endif
 
 namespace pbrt {
@@ -98,16 +104,106 @@ std::vector<std::string> MatchingFilenames(std::string filenameBase) {
 }
 
 bool FileExists(std::string filename) {
+#ifdef PBRT_IS_WINDOWS
+    std::ifstream ifs(WStringFromUTF8(filename).c_str());
+#else
     std::ifstream ifs(filename);
+#endif
     return (bool)ifs;
 }
 
+bool RemoveFile(std::string filename) {
+#ifdef PBRT_IS_WINDOWS
+    return _wremove(WStringFromUTF8(filename).c_str()) == 0;
+#else
+    return remove(filename.c_str()) == 0;
+#endif
+}
+
 std::string ReadFileContents(std::string filename) {
-    std::ifstream ifs(filename, std::ios::binary);
+#ifdef PBRT_IS_WINDOWS
+    std::ifstream ifs(WStringFromUTF8(filename).c_str(), std::ios::binary);
     if (!ifs)
         ErrorExit("%s: %s", filename, ErrorString());
     return std::string((std::istreambuf_iterator<char>(ifs)),
                        (std::istreambuf_iterator<char>()));
+#else
+    int fd = open(filename.c_str(), O_RDONLY);
+    if (fd == -1)
+        ErrorExit("%s: %s", filename, ErrorString());
+
+    struct stat stat;
+    if (fstat(fd, &stat) != 0)
+        ErrorExit("%s: %s", filename, ErrorString());
+
+    std::string contents(stat.st_size, '\0');
+    if (read(fd, contents.data(), stat.st_size) == -1)
+        ErrorExit("%s: %s", filename, ErrorString());
+
+    close(fd);
+    return contents;
+#endif
+}
+
+std::string ReadDecompressedFileContents(std::string filename) {
+    std::string compressed = ReadFileContents(filename);
+
+    // Get the size of the uncompressed file: with gzip, it's stored in the
+    // last 4 bytes of the file.  (One nit is that only 4 bytes are used,
+    // so it's actually the uncompressed size mod 2^32.)
+    CHECK_GT(compressed.size(), 4);
+    size_t sizeOffset = compressed.size() - 4;
+
+    // It's stored in little-endian, so manually reconstruct the value to
+    // be sure that it ends up in the right order for the target system.
+    const unsigned char *s = (const unsigned char *)compressed.data() + sizeOffset;
+    size_t size = (uint32_t(s[0]) | (uint32_t(s[1]) << 8) | (uint32_t(s[2]) << 16) |
+                   (uint32_t(s[3]) << 24));
+
+    // A single libdeflate_decompressor * can't be used by multiple threads
+    // concurrently, so make sure to do per-thread allocations of them.
+    static ThreadLocal<libdeflate_decompressor *> decompressors([]() {
+        return libdeflate_alloc_decompressor();
+    });
+
+    libdeflate_decompressor *d = decompressors.Get();
+    std::string decompressed(size, '\0');
+    int retries = 0;
+    while (true) {
+        size_t actualOut;
+        libdeflate_result result =
+            libdeflate_gzip_decompress(d, compressed.data(), compressed.size(),
+                                       decompressed.data(), decompressed.size(),
+                                       &actualOut);
+        switch (result) {
+        case LIBDEFLATE_SUCCESS:
+            CHECK_EQ(actualOut, decompressed.size());
+            LOG_VERBOSE("Decompressed %s from %d to %d bytes", filename, compressed.size(),
+                        decompressed.size());
+            return decompressed;
+
+        case LIBDEFLATE_BAD_DATA:
+            ErrorExit("%s: invalid or corrupt compressed data", filename);
+
+        case LIBDEFLATE_INSUFFICIENT_SPACE:
+            // Assume that the decompressed contents are > 4GB and that
+            // thus the size reported in the file didn't tell the whole
+            // story.  Since the stored size is mod 2^32, try increasing
+            // the allocation by that much.
+            decompressed.resize(decompressed.size() + (1ull << 32));
+
+            // But if we keep going around in circles, then fail eventually
+            // since there is probably some other problem.
+            CHECK_LT(++retries, 10);
+            break;
+
+        default:
+        case LIBDEFLATE_SHORT_OUTPUT:
+            // This should never be returned by libdeflate, since we are
+            // passing a non-null actualOut pointer...
+            LOG_FATAL("Unexpected return value from libdeflate");
+        }
+    }
 }
 
 FILE *FOpenRead(std::string filename) {
@@ -183,7 +279,11 @@ std::vector<Float> ReadFloatFile(std::string filename) {
 }
 
 bool WriteFileContents(std::string filename, const std::string &contents) {
+#ifdef PBRT_IS_WINDOWS
+    std::ofstream out(WStringFromUTF8(filename).c_str(), std::ios::binary);
+#else
     std::ofstream out(filename, std::ios::binary);
+#endif
     out << contents;
     out.close();
     if (!out.good()) {

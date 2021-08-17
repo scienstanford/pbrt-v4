@@ -16,7 +16,7 @@ namespace pbrt {
 
 // Scattering Inline Functions
 PBRT_CPU_GPU
-inline Vector3f Reflect(const Vector3f &wo, const Vector3f &n) {
+inline Vector3f Reflect(Vector3f wo, Vector3f n) {
     return -wo + 2 * Dot(wo, n) * n;
 }
 
@@ -112,7 +112,7 @@ class TrowbridgeReitzDistribution {
     TrowbridgeReitzDistribution(Float alpha_x, Float alpha_y)
         : alpha_x(alpha_x), alpha_y(alpha_y) {}
 
-    PBRT_CPU_GPU inline Float D(const Vector3f &wm) const {
+    PBRT_CPU_GPU inline Float D(Vector3f wm) const {
         Float tan2Theta = Tan2Theta(wm);
         if (IsInf(tan2Theta))
             return 0;
@@ -127,10 +127,10 @@ class TrowbridgeReitzDistribution {
     bool EffectivelySmooth() const { return std::max(alpha_x, alpha_y) < 1e-3f; }
 
     PBRT_CPU_GPU
-    Float G1(const Vector3f &w) const { return 1 / (1 + Lambda(w)); }
+    Float G1(Vector3f w) const { return 1 / (1 + Lambda(w)); }
 
     PBRT_CPU_GPU
-    Float Lambda(const Vector3f &w) const {
+    Float Lambda(Vector3f w) const {
         Float tan2Theta = Tan2Theta(w);
         if (IsInf(tan2Theta))
             return 0;
@@ -139,37 +139,35 @@ class TrowbridgeReitzDistribution {
     }
 
     PBRT_CPU_GPU
-    Float G(const Vector3f &wo, const Vector3f &wi) const {
-        return 1 / (1 + Lambda(wo) + Lambda(wi));
-    }
+    Float G(Vector3f wo, Vector3f wi) const { return 1 / (1 + Lambda(wo) + Lambda(wi)); }
 
     PBRT_CPU_GPU
-    Float D(const Vector3f &w, const Vector3f &wm) const {
+    Float D(Vector3f w, Vector3f wm) const {
         return D(wm) * G1(w) * std::abs(Dot(w, wm) / CosTheta(w));
     }
 
     PBRT_CPU_GPU
     Vector3f Sample_wm(Vector3f w, Point2f u) const {
-        // Transform _w_ to hemispherical configuration for visible area sampling
+        // Transform _w_ to hemispherical configuration
         Vector3f wh = Normalize(Vector3f(alpha_x * w.x, alpha_y * w.y, w.z));
-        if (w.z < 0)
+        if (wh.z < 0)
             wh = -wh;
 
-        // Find orthonormal basis for visible area microfacet sampling
+        // Find orthonormal basis for visible normal sampling
         Vector3f T1 = (wh.z < 0.99999f) ? Normalize(Cross(Vector3f(0, 0, 1), wh))
                                         : Vector3f(1, 0, 0);
         Vector3f T2 = Cross(wh, T1);
 
-        // Sample parameterization of projected microfacet area
-        Float r = std::sqrt(u[0]);
-        Float phi = 2 * Pi * u[1];
-        Float t1 = r * std::cos(phi), t2 = r * std::sin(phi);
-        Float s = .5f * (1 + wh.z);
-        t2 = (1 - s) * std::sqrt(1 - Sqr(t1)) + s * t2;
+        // Generate uniformly distributed points on the unit disk
+        Point2f p = SampleUniformDiskPolar(u);
+
+        // Warp hemispherical projection for visible normal sampling
+        Float h = std::sqrt(1.f - Sqr(p.x));
+        p.y = Lerp(.5f * (1.f + wh.z), h, p.y);
 
         // Reproject to hemisphere and transform normal to ellipsoid configuration
-        Vector3f nh =
-            t1 * T1 + t2 * T2 + std::sqrt(std::max<Float>(0, 1 - Sqr(t1) - Sqr(t2))) * wh;
+        Float pz = std::sqrt(std::max<Float>(0, 1 - LengthSquared(Vector2f(p))));
+        Vector3f nh = p.x * T1 + p.y * T2 + pz * wh;
         CHECK_RARE(1e-5f, nh.z == 0);
         return Normalize(
             Vector3f(alpha_x * nh.x, alpha_y * nh.y, std::max<Float>(1e-6f, nh.z)));
@@ -178,9 +176,10 @@ class TrowbridgeReitzDistribution {
     std::string ToString() const;
 
     PBRT_CPU_GPU
-    Float PDF(Vector3f wo, Vector3f wm) const {
-        return D(wm) * G1(wo) * AbsDot(wo, wm) / AbsCosTheta(wo);
-    }
+    Float PDF(Vector3f w, Vector3f wm) const { return D(w, wm); }
+
+    PBRT_CPU_GPU
+    static Float RoughnessToAlpha(Float roughness) { return std::sqrt(roughness); }
 
     PBRT_CPU_GPU
     static Float RoughnessToAlpha(Float roughness) { return std::sqrt(roughness); }

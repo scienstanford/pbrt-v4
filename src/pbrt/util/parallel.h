@@ -11,14 +11,92 @@
 #include <pbrt/util/vecmath.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
+#include <future>
 #include <initializer_list>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
+#include <thread>
+#include <type_traits>
+#include <vector>
 
 namespace pbrt {
+
+// ThreadLocal Definition
+template <typename T, int maxThreads = 256>
+class ThreadLocal {
+  public:
+    ThreadLocal() : hashTable(maxThreads), create([]() { return T(); }) {}
+    ThreadLocal(std::function<T(void)> &&c) : hashTable(maxThreads), create(c) {}
+
+    T &Get() {
+        std::thread::id tid = std::this_thread::get_id();
+        uint32_t hash = std::hash<std::thread::id>()(tid);
+        hash %= hashTable.size();
+        int step = 1;
+
+        mutex.lock_shared();
+        while (true) {
+            if (hashTable[hash] && hashTable[hash]->tid == tid) {
+                // Found it
+                T &threadLocal = hashTable[hash]->value;
+                mutex.unlock_shared();
+                return threadLocal;
+            } else if (!hashTable[hash]) {
+                mutex.unlock_shared();
+                T newItem = create();
+                mutex.lock();
+
+                if (hashTable[hash]) {
+                    // someone else got there first--keep looking, but now
+                    // with a writer lock.
+                    while (true) {
+                        hash += step;
+                        ++step;
+                        if (hash >= hashTable.size())
+                            hash %= hashTable.size();
+
+                        if (!hashTable[hash])
+                            break;
+                    }
+                }
+
+                hashTable[hash] = Entry{tid, std::move(newItem)};
+                T &threadLocal = hashTable[hash]->value;
+                mutex.unlock();
+                return threadLocal;
+            }
+
+            hash += step;
+            ++step;
+            if (hash >= hashTable.size())
+                hash %= hashTable.size();
+        }
+    }
+
+    template <typename F>
+    void ForAll(F &&func) {
+        mutex.lock();
+        for (auto &entry : hashTable) {
+            if (entry)
+                func(entry->value);
+        }
+        mutex.unlock();
+    }
+
+  private:
+    struct Entry {
+        std::thread::id tid;
+        T value;
+    };
+    std::shared_mutex mutex;
+    std::vector<pstd::optional<Entry>> hashTable;
+    std::function<T(void)> create;
+};
 
 // AtomicFloat Definition
 class AtomicFloat {
@@ -176,10 +254,99 @@ inline void ParallelFor2D(const Bounds2i &extent, std::function<void(Point2i)> f
     });
 }
 
-void ForEachThread(std::function<void(void)> func);
+// ParallelJob Definition
+class ParallelJob {
+  public:
+    // ParallelJob Public Methods
+    virtual ~ParallelJob() { DCHECK(removed); }
 
-// ThreadIndex Declaration
-extern thread_local int ThreadIndex;
+    virtual bool HaveWork() const = 0;
+    virtual void RunStep(std::unique_lock<std::mutex> *lock) = 0;
+
+    bool Finished() const { return !HaveWork() && activeWorkers == 0; }
+
+    virtual std::string ToString() const = 0;
+
+    virtual void Cleanup() {}
+
+    void RemoveFromJobList();
+    std::unique_lock<std::mutex> AddToJobList();
+
+  protected:
+    std::string BaseToString() const {
+        return StringPrintf("activeWorkers: %d removed: %s", activeWorkers, removed);
+    }
+
+  private:
+    // ParallelJob Private Members
+    friend class ThreadPool;
+    int activeWorkers = 0;
+    ParallelJob *prev = nullptr, *next = nullptr;
+    bool removed = false;
+};
+
+bool DoParallelWork();
+
+// Future Definition
+template <typename T>
+class Future {
+  public:
+    Future() = default;
+    Future(std::future<T> &&f) : fut(std::move(f)) {}
+    Future &operator=(std::future<T> &&f) {
+        fut = std::move(f);
+        return *this;
+    }
+
+    T Get() {
+        Wait();
+        return fut.get();
+    }
+    void Wait() {
+        while (!IsReady() && DoParallelWork())
+            ;
+        fut.wait();
+    }
+    bool IsReady() const {
+        return fut.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+    }
+
+  private:
+    std::future<T> fut;
+};
+
+// AsyncJob Definition
+template <typename T>
+class AsyncJob : public ParallelJob {
+  public:
+    AsyncJob(std::function<T(void)> w) : work(std::move(w)) {}
+
+    bool HaveWork() const { return !started; }
+
+    void RunStep(std::unique_lock<std::mutex> *lock) {
+        // No need to stick around in the job list
+        RemoveFromJobList();
+        started = true;
+        lock->unlock();
+        DoWork();
+    }
+
+    void DoWork() { work(); }
+
+    void Cleanup() { delete this; }
+
+    std::string ToString() const {
+        return StringPrintf("[ AsyncJob started: %s ]", started);
+    }
+
+    Future<T> GetFuture() { return work.get_future(); }
+
+  private:
+    bool started = false;
+    std::packaged_task<T(void)> work;
+};
+
+void ForEachThread(std::function<void(void)> func);
 
 // ParallelFunction Declarations
 void ParallelInit(int nThreads = -1);
@@ -187,7 +354,22 @@ void ParallelCleanup();
 
 int AvailableCores();
 int RunningThreads();
-int MaxThreadIndex();
+
+// Asynchronous Task Launch Function Definitions
+template <typename F, typename... Args>
+inline auto RunAsync(F func, Args &&...args) {
+    auto fvoid = std::bind(func, std::forward<Args>(args)...);
+    using R = typename std::invoke_result_t<F, Args...>;
+
+    AsyncJob<R> *job = new AsyncJob<R>(std::move(fvoid));
+    std::unique_lock<std::mutex> lock;
+    if (RunningThreads() == 1)
+        job->DoWork();
+    else
+        lock = job->AddToJobList();
+
+    return job->GetFuture();
+}
 
 }  // namespace pbrt
 

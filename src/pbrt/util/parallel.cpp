@@ -10,6 +10,7 @@
 #include <pbrt/gpu/util.h>
 #endif  // PBRT_BUILD_GPU_RENDERER
 
+#include <algorithm>
 #include <iterator>
 #include <list>
 #include <thread>
@@ -40,32 +41,6 @@ bool Barrier::Block() {
     return --numToExit == 0;
 }
 
-// ParallelJob Definition
-class ParallelJob {
-  public:
-    // ParallelJob Public Methods
-    virtual ~ParallelJob() { DCHECK(removed); }
-
-    virtual bool HaveWork() const = 0;
-    virtual void RunStep(std::unique_lock<std::mutex> *lock) = 0;
-
-    bool Finished() const { return !HaveWork() && activeWorkers == 0; }
-
-    virtual std::string ToString() const = 0;
-
-  protected:
-    std::string BaseToString() const {
-        return StringPrintf("activeWorkers: %d removed: %s", activeWorkers, removed);
-    }
-
-  private:
-    // ParallelJob Private Members
-    friend class ThreadPool;
-    int activeWorkers = 0;
-    ParallelJob *prev = nullptr, *next = nullptr;
-    bool removed = false;
-};
-
 // ThreadPool Definition
 class ThreadPool {
   public:
@@ -80,6 +55,7 @@ class ThreadPool {
     void RemoveFromJobList(ParallelJob *job);
 
     void WorkOrWait(std::unique_lock<std::mutex> *lock);
+    bool WorkOrReturn();
 
     void ForEachThread(std::function<void(void)> func);
 
@@ -87,7 +63,7 @@ class ThreadPool {
 
   private:
     // ThreadPool Private Methods
-    void workerFunc(int tIndex);
+    void workerFunc(int index);
 
     // ThreadPool Private Members
     std::vector<std::thread> threads;
@@ -97,21 +73,16 @@ class ThreadPool {
     std::condition_variable jobListCondition;
 };
 
-thread_local int ThreadIndex;
-
 static std::unique_ptr<ThreadPool> threadPool;
-static bool maxThreadIndexCalled = false;
 
 // ThreadPool Method Definitions
 ThreadPool::ThreadPool(int nThreads) {
-    ThreadIndex = 0;
     for (int i = 0; i < nThreads - 1; ++i)
         threads.push_back(std::thread(&ThreadPool::workerFunc, this, i + 1));
 }
 
-void ThreadPool::workerFunc(int tIndex) {
-    LOG_VERBOSE("Started execution in worker thread %d", tIndex);
-    ThreadIndex = tIndex;
+void ThreadPool::workerFunc(int index) {
+    LOG_VERBOSE("Started execution in worker thread %d", index);
 
 #ifdef PBRT_BUILD_GPU_RENDERER
     GPUThreadInit();
@@ -121,7 +92,7 @@ void ThreadPool::workerFunc(int tIndex) {
     while (!shutdownThreads)
         WorkOrWait(&lock);
 
-    LOG_VERBOSE("Exiting worker thread %d", tIndex);
+    LOG_VERBOSE("Exiting worker thread %d", index);
 }
 
 std::unique_lock<std::mutex> ThreadPool::AddToJobList(ParallelJob *job) {
@@ -149,8 +120,10 @@ void ThreadPool::WorkOrWait(std::unique_lock<std::mutex> *lock) {
         DCHECK(!lock->owns_lock());
         lock->lock();
         job->activeWorkers--;
-        if (job->Finished())
+        if (job->Finished()) {
             jobListCondition.notify_all();
+            job->Cleanup();
+        }
 
     } else
         // Wait for new work to arrive or the job to finish
@@ -170,6 +143,29 @@ void ThreadPool::RemoveFromJobList(ParallelJob *job) {
         job->next->prev = job->prev;
 
     job->removed = true;
+}
+
+bool ThreadPool::WorkOrReturn() {
+    std::unique_lock<std::mutex> lock(mutex);
+
+    ParallelJob *job = jobList;
+    while (job && !job->HaveWork())
+        job = job->next;
+    if (!job)
+        return false;
+
+    // Execute work for _job_
+    job->activeWorkers++;
+    job->RunStep(&lock);
+    DCHECK(!lock.owns_lock());
+    lock.lock();
+    job->activeWorkers--;
+    if (job->Finished()) {
+        jobListCondition.notify_all();
+        job->Cleanup();
+    }
+
+    return true;
 }
 
 void ThreadPool::ForEachThread(std::function<void(void)> func) {
@@ -211,6 +207,23 @@ std::string ThreadPool::ToString() const {
     } else
         s += "(job list mutex locked) ";
     return s + "]";
+}
+
+std::unique_lock<std::mutex> ParallelJob::AddToJobList() {
+    CHECK(threadPool && threadPool->size());
+    return threadPool->AddToJobList(this);
+}
+
+void ParallelJob::RemoveFromJobList() {
+    CHECK(threadPool && threadPool->size());
+    // lock should be held when this is called...
+    threadPool->RemoveFromJobList(this);
+}
+
+bool DoParallelWork() {
+    CHECK(threadPool && threadPool->size());
+    // lock should be held when this is called...
+    return threadPool->WorkOrReturn();
 }
 
 // ParallelForLoop1D Definition
@@ -323,11 +336,6 @@ void ParallelFor(int64_t start, int64_t end, std::function<void(int64_t, int64_t
         threadPool->WorkOrWait(&lock);
 }
 
-int MaxThreadIndex() {
-    maxThreadIndexCalled = true;
-    return threadPool ? (1 + threadPool->size()) : 1;
-}
-
 void ParallelFor2D(const Bounds2i &extent, std::function<void(Bounds2i)> func) {
     CHECK(threadPool);
 
@@ -364,11 +372,6 @@ int RunningThreads() {
 }
 
 void ParallelInit(int nThreads) {
-    // This is risky: if the caller has allocated per-thread data
-    // structures before calling ParallelInit(), then we may end up having
-    // them accessed with a higher ThreadIndex than the caller expects.
-    CHECK(!maxThreadIndexCalled);
-
     CHECK(!threadPool);
     if (nThreads <= 0)
         nThreads = AvailableCores();
@@ -377,7 +380,6 @@ void ParallelInit(int nThreads) {
 
 void ParallelCleanup() {
     threadPool.reset();
-    maxThreadIndexCalled = false;
 }
 
 void ForEachThread(std::function<void(void)> func) {

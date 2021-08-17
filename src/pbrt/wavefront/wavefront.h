@@ -7,7 +7,7 @@
 
 #include <pbrt/pbrt.h>
 
-#include <pbrt/parsedscene.h>
+#include <pbrt/scene.h>
 
 namespace pbrt {
 
@@ -15,4 +15,4 @@ void RenderWavefront(ParsedScene &);
 
 }
 
-#endif // PBRT_WAVEFRONT_WAVEFRONT_H
+#endif  // PBRT_WAVEFRONT_WAVEFRONT_H

@@ -35,6 +35,8 @@
 using namespace std;
 
 
+#include <algorithm>
+
 namespace pbrt {
 
 void Film::AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths &lambda) {
@@ -183,29 +185,27 @@ std::string FilmBase::BaseToString() const {
 }
 
 // VisibleSurface Method Definitions
-VisibleSurface::VisibleSurface(const SurfaceInteraction &si,
-                               const CameraTransform &cameraTransform,
-                               const SampledSpectrum &albedo,
+VisibleSurface::VisibleSurface(const SurfaceInteraction &si, SampledSpectrum albedo,
                                const SampledWavelengths &lambda)
     : albedo(albedo) {
     set = true;
     // Initialize geometric _VisibleSurface_ members
-    Transform cameraFromRender = cameraTransform.CameraFromRender(si.time);
-    p = cameraFromRender(si.p());
-    Vector3f wo = cameraFromRender(si.wo);
-    n = FaceForward(cameraFromRender(si.n), wo);
-    ns = FaceForward(cameraFromRender(si.shading.n), wo);
+    p = si.p();
+    Vector3f wo = si.wo;
+    n = FaceForward(si.n, wo);
+    ns = FaceForward(si.shading.n, wo);
+    uv = si.uv;
     time = si.time;
-    dzdx = cameraFromRender(si.dpdx).z;
-    dzdy = cameraFromRender(si.dpdy).z;
+    dpdx = si.dpdx;
+    dpdy = si.dpdy;
     materialId  = si.material.materialId; // zhenyi
     instanceId  = si.instanceId; // zhenyi
 }
 
 std::string VisibleSurface::ToString() const {
-    return StringPrintf("[ VisibleSurface set: %s p: %s n: %s ns: %s dzdx: %f dzdy: %f "
+    return StringPrintf("[ VisibleSurface set: %s p: %s n: %s ns: %s dpdx: %f dpdy: %f "
                         "time: %f albedo: %s ]",
-                        set, p, n, ns, dzdx, dzdy, time, albedo);
+                        set, p, n, ns, dpdx, dpdy, time, albedo);
 }
 
 // PixelSensor Method Definitions
@@ -595,17 +595,38 @@ void GBufferFilm::AddSample(Point2i pFilm, SampledSpectrum L,
 
     Pixel &p = pixels[pFilm];
     if (visibleSurface && *visibleSurface) {
+        p.gBufferWeightSum += weight;
+
         // Update variance estimates.
         for (int c = 0; c < 3; ++c)
             p.rgbVariance[c].Add(rgb[c]);
 
-        p.pSum += weight * visibleSurface->p;
-
-        p.nSum += weight * visibleSurface->n;
-        p.nsSum += weight * visibleSurface->ns;
-
-        p.dzdxSum += weight * visibleSurface->dzdx;
-        p.dzdySum += weight * visibleSurface->dzdy;
+        if (applyInverse) {
+            p.pSum += weight * outputFromRender.ApplyInverse(visibleSurface->p,
+                                                             visibleSurface->time);
+            p.nSum += weight * outputFromRender.ApplyInverse(visibleSurface->n,
+                                                             visibleSurface->time);
+            p.nsSum += weight * outputFromRender.ApplyInverse(visibleSurface->ns,
+                                                              visibleSurface->time);
+            p.dzdxSum +=
+                weight *
+                outputFromRender.ApplyInverse(visibleSurface->dpdx, visibleSurface->time)
+                    .z;
+            p.dzdySum +=
+                weight *
+                outputFromRender.ApplyInverse(visibleSurface->dpdy, visibleSurface->time)
+                    .z;
+        } else {
+            p.pSum += weight * outputFromRender(visibleSurface->p, visibleSurface->time);
+            p.nSum += weight * outputFromRender(visibleSurface->n, visibleSurface->time);
+            p.nsSum +=
+                weight * outputFromRender(visibleSurface->ns, visibleSurface->time);
+            p.dzdxSum +=
+                weight * outputFromRender(visibleSurface->dpdx, visibleSurface->time).z;
+            p.dzdySum +=
+                weight * outputFromRender(visibleSurface->dpdy, visibleSurface->time).z;
+        }
+        p.uvSum += weight * visibleSurface->uv;
 
         SampledSpectrum albedo =
             visibleSurface->albedo * colorSpace->illuminant.Sample(lambda);
@@ -627,15 +648,17 @@ void GBufferFilm::AddSample(Point2i pFilm, SampledSpectrum L,
     p.instanceId = visibleSurface->instanceId;
 }
 
-GBufferFilm::GBufferFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
-                         Float maxComponentValue, bool writeFP16,
-                         bool writeRadiance, bool writeBasis, int nbasis,
+GBufferFilm::GBufferFilm(FilmBaseParameters p, const AnimatedTransform &outputFromRender,
+                         bool applyInverse, const RGBColorSpace *colorSpace,
+                         Float maxComponentValue, bool writeFP16, bool writeRadiance,
+                         bool writeBasis, int nbasis,
                          bool writeAlbedo, bool writePosition,
                          bool writeDz, bool writeMaterial, bool writeInstance,
                          bool writeNormal, bool writeNs, bool writeVariance,
-                         bool writeRelativeVariance,
-                         Allocator alloc)
+                         bool writeRelativeVariance,Allocator alloc)
     : FilmBase(p),
+      outputFromRender(outputFromRender),
+      applyInverse(applyInverse),
       pixels(pixelBounds, alloc),
       colorSpace(colorSpace),
       maxComponentValue(maxComponentValue),
@@ -691,6 +714,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     // Convert image to RGB and compute final pixel values
     LOG_VERBOSE("Converting image to RGB and computing final weighted pixel values");
     PixelFormat format = writeFP16 ? PixelFormat::Half : PixelFormat::Float;
+
     // Only RGB is exported by default; Others are optional;
     vector<string> channelNames = {"R", "G", "B"};
     // zhenyi
@@ -776,6 +800,35 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
             channelNames.push_back(RelativeVarianceChannelNames[i]);
         }
     }
+/*
+    Image image(format, Point2i(pixelBounds.Diagonal()),
+                {"R",
+                 "G",
+                 "B",
+                 "Albedo.R",
+                 "Albedo.G",
+                 "Albedo.B",
+                 "Px",
+                 "Py",
+                 "Pz",
+                 "dzdx",
+                 "dzdy",
+                 "Nx",
+                 "Ny",
+                 "Nz",
+                 "Nsx",
+                 "Nsy",
+                 "Nsz",
+                 "u",
+                 "v",
+                 "Variance.R",
+                 "Variance.G",
+                 "Variance.B",
+                 "RelativeVariance.R",
+                 "RelativeVariance.G",
+                 "RelativeVariance.B"});
+               }
+*/
 
     Image image(format, Point2i(pixelBounds.Diagonal()), channelNames); // zhenyi
     ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
@@ -786,6 +839,18 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     // float spectralData[num_x * num_y][NSpectrumSamples];
     Eigen::MatrixXf spectralData(num_x * num_y, NSpectrumSamples);
 
+    ImageChannelDesc pDesc = image.GetChannelDesc({"Px", "Py", "Pz"});
+    ImageChannelDesc dzDesc = image.GetChannelDesc({"dzdx", "dzdy"});
+    ImageChannelDesc nDesc = image.GetChannelDesc({"Nx", "Ny", "Nz"});
+    ImageChannelDesc nsDesc = image.GetChannelDesc({"Nsx", "Nsy", "Nsz"});
+    ImageChannelDesc uvDesc = image.GetChannelDesc({"u", "v"});
+    ImageChannelDesc albedoRgbDesc =
+        image.GetChannelDesc({"Albedo.R", "Albedo.G", "Albedo.B"});
+    ImageChannelDesc varianceDesc =
+        image.GetChannelDesc({"Variance.R", "Variance.G", "Variance.B"});
+    ImageChannelDesc relVarianceDesc = image.GetChannelDesc(
+        {"RelativeVariance.R", "RelativeVariance.G", "RelativeVariance.B"});
+
     std::atomic<int> nClamped{0};
     ParallelFor2D(pixelBounds, [&](Point2i p) {
         Pixel &pixel = pixels[p];
@@ -794,17 +859,21 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
                       pixel.rgbAlbedoSum[2]);
 
         // Normalize pixel with weight sum
-        Float weightSum = pixel.weightSum;
+        Float weightSum = pixel.weightSum, gBufferWeightSum = pixel.gBufferWeightSum;
         Point3f pt = pixel.pSum;
+        Point2f uv = pixel.uvSum;
         Float dzdx = pixel.dzdxSum, dzdy = pixel.dzdySum;
         SampledSpectrum L = pixel.L;
         if (weightSum != 0) {
             rgb /= weightSum;
             albedoRgb /= weightSum;
-            pt /= weightSum;
-            dzdx /= weightSum;
-            dzdy /= weightSum;
-            L /=weightSum;
+        }
+        if (gBufferWeightSum != 0) {
+            pt /= gBufferWeightSum;
+            uv /= gBufferWeightSum;
+            dzdx /= gBufferWeightSum;
+            dzdy /= gBufferWeightSum;
+            L /=gBufferWeightSum;
         }
 
         // Add splat value at pixel
@@ -970,13 +1039,15 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
 }
 
 std::string GBufferFilm::ToString() const {
-    return StringPrintf("[ GBufferFilm %s colorSpace: %s maxComponentValue: %f "
-                        "writeFP16: %s ]",
-                        BaseToString(), *colorSpace, maxComponentValue, writeFP16);
+    return StringPrintf("[ GBufferFilm %s outputFromRender: %s applyInverse: %s "
+                        "colorSpace: %s maxComponentValue: %f writeFP16: %s ]",
+                        BaseToString(), outputFromRender, applyInverse, *colorSpace,
+                        maxComponentValue, writeFP16);
 }
 
 GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
-                                 Float exposureTime, Filter filter,
+                                 Float exposureTime,
+                                 const CameraTransform &cameraTransform, Filter filter,
                                  const RGBColorSpace *colorSpace, const FileLoc *loc,
                                  Allocator alloc) {
     Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
@@ -1006,9 +1077,23 @@ GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
         ErrorExit(loc, "%s: EXR is the only format supported by the GBufferFilm.",
                   filmBaseParameters.filename);
 
-    return alloc.new_object<GBufferFilm>(filmBaseParameters, colorSpace,
-                                         maxComponentValue, writeFP16,
-                                         writeRadiance, writeBasis, nbasis,
+    std::string coordinateSystem = parameters.GetOneString("coordinatesystem", "camera");
+    AnimatedTransform outputFromRender;
+    bool applyInverse = false;
+    if (coordinateSystem == "camera") {
+        outputFromRender = cameraTransform.RenderFromCamera();
+        applyInverse = true;
+    } else if (coordinateSystem == "world")
+        outputFromRender = AnimatedTransform(cameraTransform.WorldFromRender());
+    else
+        ErrorExit(loc,
+                  "%s: unknown coordinate system for GBufferFilm. (Expecting \"camera\" "
+                  "or \"world\".)",
+                  coordinateSystem);
+
+    return alloc.new_object<GBufferFilm>(filmBaseParameters, outputFromRender,
+                                         applyInverse, colorSpace, maxComponentValue,
+                                         writeFP16, writeRadiance, writeBasis, nbasis,
                                          writeAlbedo, writePosition,
                                          writeDz, writeMaterial, writeInstance,
                                          writeNormal, writeNs, writeVariance,
@@ -1016,14 +1101,14 @@ GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
 }
 
 Film Film::Create(const std::string &name, const ParameterDictionary &parameters,
-                  Float exposureTime, Filter filter, const FileLoc *loc,
-                  Allocator alloc) {
+                  Float exposureTime, const CameraTransform &cameraTransform,
+                  Filter filter, const FileLoc *loc, Allocator alloc) {
     Film film;
     if (name == "rgb")
         film = RGBFilm::Create(parameters, exposureTime, filter, parameters.ColorSpace(),
                                loc, alloc);
     else if (name == "gbuffer")
-        film = GBufferFilm::Create(parameters, exposureTime, filter,
+        film = GBufferFilm::Create(parameters, exposureTime, cameraTransform, filter,
                                    parameters.ColorSpace(), loc, alloc);
     else
         ErrorExit(loc, "%s: film type unknown.", name);

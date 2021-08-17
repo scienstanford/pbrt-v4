@@ -313,6 +313,8 @@ using HasData = std::is_convertible<
 
 }  // namespace span_internal
 
+inline constexpr std::size_t dynamic_extent = -1;
+
 // span implementation partially based on absl::Span from Google's Abseil library.
 template <typename T>
 class span {
@@ -346,10 +348,18 @@ class span {
     span(std::initializer_list<value_type> v) : span(v.begin(), v.size()) {}
 
     // Explicit reference constructor for a mutable `span<T>` type. Can be
-    // replaced with Makespan() to infer the type parameter.
+    // replaced with MakeSpan() to infer the type parameter.
     template <typename V, typename X = EnableIfConvertibleFrom<V>,
               typename Y = EnableIfMutableView<V>>
     PBRT_CPU_GPU explicit span(V &v) noexcept : span(v.data(), v.size()) {}
+
+    // Hack: explicit constructors for std::vector to work around warnings
+    // about calling a host function (e.g. vector::size()) form a
+    // host+device function (the regular span constructor.)
+    template <typename V>
+    span(std::vector<V> &v) noexcept : span(v.data(), v.size()) {}
+    template <typename V>
+    span(const std::vector<V> &v) noexcept : span(v.data(), v.size()) {}
 
     // Implicit reference constructor for a read-only `span<const T>` type
     template <typename V, typename X = EnableIfConvertibleFrom<V>,
@@ -403,7 +413,7 @@ class span {
     }
 
     PBRT_CPU_GPU
-    span subspan(size_t pos, size_t count) {
+    span subspan(size_t pos, size_t count = dynamic_extent) {
         size_t np = count < (size() - pos) ? count : (size() - pos);
         return span(ptr + pos, np);
     }
@@ -421,6 +431,11 @@ PBRT_CPU_GPU inline constexpr span<T> MakeSpan(T *ptr, size_t size) noexcept {
 template <int &...ExplicitArgumentBarrier, typename T>
 PBRT_CPU_GPU inline span<T> MakeSpan(T *begin, T *end) noexcept {
     return span<T>(begin, end - begin);
+}
+
+template <int &...ExplicitArgumentBarrier, typename T>
+inline span<T> MakeSpan(std::vector<T> &v) noexcept {
+    return span<T>(v.data(), v.size());
 }
 
 template <int &...ExplicitArgumentBarrier, typename C>
@@ -442,6 +457,11 @@ PBRT_CPU_GPU inline constexpr span<const T> MakeConstSpan(T *ptr, size_t size) n
 template <int &...ExplicitArgumentBarrier, typename T>
 PBRT_CPU_GPU inline span<const T> MakeConstSpan(T *begin, T *end) noexcept {
     return span<const T>(begin, end - begin);
+}
+
+template <int &...ExplicitArgumentBarrier, typename T>
+inline span<const T> MakeConstSpan(const std::vector<T> &v) noexcept {
+    return span<const T>(v.data(), v.size());
 }
 
 template <int &...ExplicitArgumentBarrier, typename C>
@@ -506,7 +526,7 @@ memory_resource *new_delete_resource() noexcept;
 memory_resource *set_default_resource(memory_resource *r) noexcept;
 memory_resource *get_default_resource() noexcept;
 
-class monotonic_buffer_resource : public memory_resource {
+class alignas(64) monotonic_buffer_resource : public memory_resource {
   public:
     explicit monotonic_buffer_resource(memory_resource *upstream)
         : upstreamResource(upstream) {}
@@ -967,8 +987,10 @@ class vector {
     }
 
     void swap(vector &other) {
-        // TODO
-        LOG_FATAL("TODO");
+        CHECK(alloc == other.alloc);  // TODO: handle this
+        std::swap(ptr, other.ptr);
+        std::swap(nAlloc, other.nAlloc);
+        std::swap(nStored, other.nStored);
     }
 
   private:

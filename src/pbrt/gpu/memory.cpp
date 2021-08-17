@@ -28,34 +28,14 @@ void *CUDATrackedMemoryResource::do_allocate(size_t size, size_t alignment) {
     if (size == 0)
         return nullptr;
 
-    std::lock_guard<std::mutex> lock(mutex);
-
-    // GPU cache line alignment to avoid false sharing...
-    alignment = std::max<size_t>(128, alignment);
-
-    if (bypassSlab(size))
-        return cudaAllocate(size, alignment);
-
-    if ((slabOffset % alignment) != 0)
-        slabOffset += alignment - (slabOffset % alignment);
-
-    if (slabOffset + size > slabSize) {
-        currentSlab = (uint8_t *)cudaAllocate(slabSize, 128);
-        slabOffset = 0;
-    }
-
-    uint8_t *ptr = currentSlab + slabOffset;
-    slabOffset += size;
-    return ptr;
-}
-
-void *CUDATrackedMemoryResource::cudaAllocate(size_t size, size_t alignment) {
     void *ptr;
     CUDA_CHECK(cudaMallocManaged(&ptr, size));
     DCHECK_EQ(0, intptr_t(ptr) % alignment);
 
+    std::lock_guard<std::mutex> lock(mutex);
     allocations[ptr] = size;
     bytesAllocated += size;
+
     return ptr;
 }
 
@@ -63,16 +43,13 @@ void CUDATrackedMemoryResource::do_deallocate(void *p, size_t size, size_t align
     if (!p)
         return;
 
-    if (bypassSlab(size)) {
-        CUDA_CHECK(cudaFree(p));
+    CUDA_CHECK(cudaFree(p));
 
-        std::lock_guard<std::mutex> lock(mutex);
-        auto iter = allocations.find(p);
-        DCHECK(iter != allocations.end());
-        allocations.erase(iter);
-        bytesAllocated -= size;
-    }
-    // Note: no deallocation is done if it is in a slab...
+    std::lock_guard<std::mutex> lock(mutex);
+    auto iter = allocations.find(p);
+    DCHECK(iter != allocations.end());
+    allocations.erase(iter);
+    bytesAllocated -= size;
 }
 
 void CUDATrackedMemoryResource::PrefetchToGPU() const {
@@ -92,7 +69,6 @@ void CUDATrackedMemoryResource::PrefetchToGPU() const {
     LOG_VERBOSE("Done prefetching: %d bytes total", bytes);
 }
 
-static CUDATrackedMemoryResource cudaTrackedMemoryResource;
-Allocator gpuMemoryAllocator(&cudaTrackedMemoryResource);
+CUDATrackedMemoryResource CUDATrackedMemoryResource::singleton;
 
-} // namespace pbrt
+}  // namespace pbrt

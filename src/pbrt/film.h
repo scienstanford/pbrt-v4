@@ -135,8 +135,8 @@ class VisibleSurface {
   public:
     // VisibleSurface Public Methods
     PBRT_CPU_GPU
-    VisibleSurface(const SurfaceInteraction &si, const CameraTransform &cameraTransform,
-                   const SampledSpectrum &albedo, const SampledWavelengths &lambda);
+    VisibleSurface(const SurfaceInteraction &si, SampledSpectrum albedo,
+                   const SampledWavelengths &lambda);
 
     PBRT_CPU_GPU
     operator bool() const { return set; }
@@ -148,8 +148,9 @@ class VisibleSurface {
     // VisibleSurface Public Members
     Point3f p;
     Normal3f n, ns;
+    Point2f uv;
     Float time = 0;
-    Float dzdx = 0, dzdy = 0;
+    Vector3f dpdx, dpdy;
     SampledSpectrum albedo;
     int materialId; // zhenyi
     int instanceId; // zhenyi
@@ -258,7 +259,7 @@ class RGBFilm : public FilmBase {
     }
 
     PBRT_CPU_GPU
-    RGB GetPixelRGB(const Point2i &p, Float splatScale = 1) const {
+    RGB GetPixelRGB(Point2i p, Float splatScale = 1) const {
         const Pixel &pixel = pixels[p];
         RGB rgb(pixel.rgbSum[0], pixel.rgbSum[1], pixel.rgbSum[2]);
         // Normalize _rgb_ with weight sum
@@ -320,7 +321,8 @@ class RGBFilm : public FilmBase {
 class GBufferFilm : public FilmBase {
   public:
     // GBufferFilm Public Methods
-    GBufferFilm(FilmBaseParameters p, const RGBColorSpace *colorSpace,
+    GBufferFilm(FilmBaseParameters p, const AnimatedTransform &outputFromRender,
+                bool applyInverse, const RGBColorSpace *colorSpace,
                 Float maxComponentValue = Infinity, bool writeFP16 = true,
                 bool writeRadiance = true, bool writeBasis = true, int nbasis = 3,
                 bool writeAlbedo = true, bool writePosition = true,
@@ -330,8 +332,9 @@ class GBufferFilm : public FilmBase {
                 Allocator alloc = {});
 
     static GBufferFilm *Create(const ParameterDictionary &parameters, Float exposureTime,
-                               Filter filter, const RGBColorSpace *colorSpace,
-                               const FileLoc *loc, Allocator alloc);
+                               const CameraTransform &cameraTransform, Filter filter,
+                               const RGBColorSpace *colorSpace, const FileLoc *loc,
+                               Allocator alloc);
 
     PBRT_CPU_GPU
     void AddSample(Point2i pFilm, SampledSpectrum L, const SampledWavelengths &lambda,
@@ -350,7 +353,7 @@ class GBufferFilm : public FilmBase {
     bool UsesVisibleSurface() const { return true; }
 
     PBRT_CPU_GPU
-    RGB GetPixelRGB(const Point2i &p, Float splatScale = 1) const {
+    RGB GetPixelRGB(Point2i p, Float splatScale = 1) const {
         const Pixel &pixel = pixels[p];
         RGB rgb(pixel.rgbSum[0], pixel.rgbSum[1], pixel.rgbSum[2]);
 
@@ -378,11 +381,12 @@ class GBufferFilm : public FilmBase {
     struct Pixel {
         Pixel() = default;
         double rgbSum[3] = {0., 0., 0.};
-        double weightSum = 0.;
+        double weightSum = 0., gBufferWeightSum = 0.;
         AtomicDouble rgbSplat[3];
         Point3f pSum;
         Float dzdxSum = 0, dzdySum = 0;
         Normal3f nSum, nsSum;
+        Point2f uvSum;
         double rgbAlbedoSum[3] = {0., 0., 0.};
         VarianceEstimator<Float> rgbVariance[3];
         SampledSpectrum L;
@@ -391,6 +395,8 @@ class GBufferFilm : public FilmBase {
     };
 
     // GBufferFilm Private Members
+    AnimatedTransform outputFromRender;
+    bool applyInverse;
     Array2D<Pixel> pixels;
     const RGBColorSpace *colorSpace;
     Float maxComponentValue;
@@ -456,7 +462,7 @@ inline bool Film::UsesVisibleSurface() const {
 }
 
 PBRT_CPU_GPU
-inline RGB Film::GetPixelRGB(const Point2i &p, Float splatScale) const {
+inline RGB Film::GetPixelRGB(Point2i p, Float splatScale) const {
     auto get = [&](auto ptr) { return ptr->GetPixelRGB(p, splatScale); };
     return Dispatch(get);
 }

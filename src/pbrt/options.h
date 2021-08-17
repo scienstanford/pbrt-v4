@@ -34,6 +34,7 @@ struct PBRTOptions : BasicPBRTOptions {
     int nThreads = 0;
     LogLevel logLevel = LogLevel::Error;
     std::string logFile;
+    bool logUtilization = false;
     bool writePartialImages = false;
     bool recordPixelStatistics = false;
     bool printStatistics = false;
@@ -48,6 +49,7 @@ struct PBRTOptions : BasicPBRTOptions {
     pstd::optional<Bounds2f> cropWindow;
     pstd::optional<Bounds2i> pixelBounds;
     pstd::optional<Point2i> pixelMaterial;
+    Float displacementEdgeScale = 1;
 
     std::string ToString() const;
 };

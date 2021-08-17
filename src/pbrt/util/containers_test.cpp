@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <pbrt/util/containers.h>
+#include <pbrt/util/math.h>
 #include <pbrt/util/pstd.h>
 #include <pbrt/util/rng.h>
 
@@ -17,8 +18,8 @@ TEST(Array2D, Basics) {
     const int nx = 5, ny = 9;
     Array2D<Float> a(nx, ny);
 
-    EXPECT_EQ(nx, a.xSize());
-    EXPECT_EQ(ny, a.ySize());
+    EXPECT_EQ(nx, a.XSize());
+    EXPECT_EQ(ny, a.YSize());
     EXPECT_EQ(nx * ny, a.size());
 
     for (int y = 0; y < ny; ++y)
@@ -34,8 +35,8 @@ TEST(Array2D, Bounds) {
     Bounds2i b(Point2i(-4, 3), Point2i(10, 7));
     Array2D<Point2f> a(b);
 
-    EXPECT_EQ(b.pMax.x - b.pMin.x, a.xSize());
-    EXPECT_EQ(b.pMax.y - b.pMin.y, a.ySize());
+    EXPECT_EQ(b.pMax.x - b.pMin.x, a.XSize());
+    EXPECT_EQ(b.pMax.y - b.pMin.y, a.YSize());
 
     for (Point2i p : b)
         a[p] = Point2f(p.y, p.x);
@@ -132,21 +133,29 @@ TEST(TypePack, HasType) {
 TEST(TypePack, TakeRemove) {
     using Pack = TypePack<signed int, float, double>;
 
-    static_assert(std::is_same_v<TypePack<signed int>, typename TakeFirstN<1, Pack>::type>);
-    static_assert(std::is_same_v<TypePack<float>, typename TakeFirstN<1, typename RemoveFirstN<1, Pack>::type>::type>);
-    static_assert(std::is_same_v<TypePack<double>, typename TakeFirstN<1, typename RemoveFirstN<2, Pack>::type>::type>);
+    static_assert(
+        std::is_same_v<TypePack<signed int>, typename TakeFirstN<1, Pack>::type>);
+    static_assert(std::is_same_v<
+                  TypePack<float>,
+                  typename TakeFirstN<1, typename RemoveFirstN<1, Pack>::type>::type>);
+    static_assert(std::is_same_v<
+                  TypePack<double>,
+                  typename TakeFirstN<1, typename RemoveFirstN<2, Pack>::type>::type>);
 }
 
-template <typename T> struct Set { };
+template <typename T>
+struct Set {};
 
 TEST(TypePack, Map) {
     using SetPack = typename MapType<Set, TypePack<signed int, float, double>>::type;
 
-    static_assert(std::is_same_v<TypePack<Set<signed int>>,
-                  typename TakeFirstN<1, SetPack>::type>);
-    static_assert(std::is_same_v<TypePack<Set<float>>,
+    static_assert(
+        std::is_same_v<TypePack<Set<signed int>>, typename TakeFirstN<1, SetPack>::type>);
+    static_assert(std::is_same_v<
+                  TypePack<Set<float>>,
                   typename TakeFirstN<1, typename RemoveFirstN<1, SetPack>::type>::type>);
-    static_assert(std::is_same_v<TypePack<Set<double>>,
+    static_assert(std::is_same_v<
+                  TypePack<Set<double>>,
                   typename TakeFirstN<1, typename RemoveFirstN<2, SetPack>::type>::type>);
 }
 
@@ -154,7 +163,52 @@ TEST(TypePack, Filter) {
     using Pack = TypePack<signed int, float, double>;
     using FilteredPack = typename FilterTypes<std::is_floating_point, Pack>::type;
 
-    static_assert(std::is_same_v<TypePack<float>, typename TakeFirstN<1, FilteredPack>::type>);
-    static_assert(std::is_same_v<TypePack<double>,
-                  typename TakeFirstN<1, typename RemoveFirstN<1, FilteredPack>::type>::type>);
+    static_assert(
+        std::is_same_v<TypePack<float>, typename TakeFirstN<1, FilteredPack>::type>);
+    static_assert(
+        std::is_same_v<
+            TypePack<double>,
+            typename TakeFirstN<1, typename RemoveFirstN<1, FilteredPack>::type>::type>);
+}
+
+TEST(InternCache, BasicString) {
+    InternCache<std::string> cache;
+
+    const std::string *one = cache.Lookup(std::string("one"));
+    EXPECT_EQ(1, cache.size());
+    EXPECT_EQ("one", *one);
+
+    const std::string *two = cache.Lookup(std::string("two"));
+    EXPECT_NE(one, two);
+    EXPECT_EQ("two", *two);
+
+    const std::string *anotherOne = cache.Lookup(std::string("one"));
+    EXPECT_EQ(2, cache.size());
+    EXPECT_EQ("one", *anotherOne);
+    EXPECT_EQ(one, anotherOne);
+}
+
+TEST(InternCache, BadHash) {
+    struct BadIntHash {
+        size_t operator()(int i) { return i % 7; }
+    };
+
+    InternCache<int, BadIntHash> cache;
+
+    int n = 10000;
+    std::vector<const int *> firstPass(n);
+    for (int i = 0; i < n; ++i) {
+        int ii = PermutationElement(i, n, 0xfeed00f5);
+        const int *p = cache.Lookup(ii);
+        EXPECT_EQ(*p, ii);
+        firstPass[ii] = p;
+        EXPECT_EQ(i+1, cache.size());
+    }
+    for (int i = 0; i < n; ++i) {
+        int ii = PermutationElement(i, n, 0xfeed00f5);
+        const int *p = cache.Lookup(ii);
+        EXPECT_EQ(*p, ii);
+        EXPECT_EQ(p, firstPass[ii]);
+        EXPECT_EQ(n, cache.size());
+    }
 }

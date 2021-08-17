@@ -16,6 +16,7 @@
 #include <pbrt/util/sampling.h>
 #include <pbrt/util/vecmath.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 
@@ -43,7 +44,7 @@ class UniformLightSampler {
     }
 
     PBRT_CPU_GPU
-    Float PDF(Light light) const {
+    Float PMF(Light light) const {
         if (lights.empty())
             return 0;
         return 1.f / lights.size();
@@ -55,7 +56,7 @@ class UniformLightSampler {
     }
 
     PBRT_CPU_GPU
-    Float PDF(const LightSampleContext &ctx, Light light) const { return PDF(light); }
+    Float PMF(const LightSampleContext &ctx, Light light) const { return PMF(light); }
 
     std::string ToString() const { return "UniformLightSampler"; }
 
@@ -80,10 +81,10 @@ class PowerLightSampler {
     }
 
     PBRT_CPU_GPU
-    Float PDF(Light light) const {
+    Float PMF(Light light) const {
         if (!aliasTable.size())
             return 0;
-        return aliasTable.PDF(lightToIndex[light]);
+        return aliasTable.PMF(lightToIndex[light]);
     }
 
     PBRT_CPU_GPU
@@ -92,7 +93,7 @@ class PowerLightSampler {
     }
 
     PBRT_CPU_GPU
-    Float PDF(const LightSampleContext &ctx, Light light) const { return PDF(light); }
+    Float PMF(const LightSampleContext &ctx, Light light) const { return PMF(light); }
 
     std::string ToString() const;
 
@@ -275,10 +276,10 @@ class BVHLightSampler {
 
         if (u < pInfinite) {
             // Sample infinite lights with uniform probability
-            u = std::min<Float>(u * pInfinite, OneMinusEpsilon);
+            u /= pInfinite;
             int index =
                 std::min<int>(u * infiniteLights.size(), infiniteLights.size() - 1);
-            Float pdf = pInfinite * 1.f / infiniteLights.size();
+            Float pdf = pInfinite / infiniteLights.size();
             return SampledLight{infiniteLights[index], pdf};
 
         } else {
@@ -312,7 +313,7 @@ class BVHLightSampler {
                     nodeIndex = (child == 0) ? (nodeIndex + 1) : node.childOrLightIndex;
 
                 } else {
-                    // Confirm light has non-zero importance before returning light sample
+                    // Confirm light has nonzero importance before returning light sample
                     if (nodeIndex > 0)
                         DCHECK_GT(node.lightBounds.Importance(p, n, allLightBounds), 0);
                     if (nodeIndex > 0 ||
@@ -325,7 +326,7 @@ class BVHLightSampler {
     }
 
     PBRT_CPU_GPU
-    Float PDF(const LightSampleContext &ctx, Light light) const {
+    Float PMF(const LightSampleContext &ctx, Light light) const {
         // Handle infinite _light_ PDF computation
         if (!lightToBitTrail.HasKey(light))
             return 1.f / (infiniteLights.size() + (nodes.empty() ? 0 : 1));
@@ -334,7 +335,11 @@ class BVHLightSampler {
         uint32_t bitTrail = lightToBitTrail[light];
         Point3f p = ctx.p();
         Normal3f n = ctx.ns;
-        Float pdf = 1;
+        // Compute infinite light sampling probability _pInfinite_
+        Float pInfinite = Float(infiniteLights.size()) /
+                          Float(infiniteLights.size() + (nodes.empty() ? 0 : 1));
+
+        Float pdf = 1 - pInfinite;
         int nodeIndex = 0;
 
         // Compute light's PDF by walking down tree nodes to the light
@@ -342,7 +347,7 @@ class BVHLightSampler {
             const LightBVHNode *node = &nodes[nodeIndex];
             if (node->isLeaf) {
                 DCHECK_EQ(light, lights[node->childOrLightIndex]);
-                break;
+                return pdf;
             }
             // Compute child importances and update PDF for current node
             const LightBVHNode *child0 = &nodes[nodeIndex + 1];
@@ -356,13 +361,6 @@ class BVHLightSampler {
             nodeIndex = (bitTrail & 1) ? node->childOrLightIndex : (nodeIndex + 1);
             bitTrail >>= 1;
         }
-
-        // Return final PDF accounting for infinite light sampling probability
-        // Compute infinite light sampling probability _pInfinite_
-        Float pInfinite = Float(infiniteLights.size()) /
-                          Float(infiniteLights.size() + (nodes.empty() ? 0 : 1));
-
-        return pdf * (1 - pInfinite);
     }
 
     PBRT_CPU_GPU
@@ -374,7 +372,7 @@ class BVHLightSampler {
     }
 
     PBRT_CPU_GPU
-    Float PDF(Light light) const {
+    Float PMF(Light light) const {
         if (lights.empty())
             return 0;
         return 1.f / lights.size();
@@ -420,7 +418,7 @@ class ExhaustiveLightSampler {
     pstd::optional<SampledLight> Sample(const LightSampleContext &ctx, Float u) const;
 
     PBRT_CPU_GPU
-    Float PDF(const LightSampleContext &ctx, Light light) const;
+    Float PMF(const LightSampleContext &ctx, Light light) const;
 
     PBRT_CPU_GPU
     pstd::optional<SampledLight> Sample(Float u) const {
@@ -432,7 +430,7 @@ class ExhaustiveLightSampler {
     }
 
     PBRT_CPU_GPU
-    Float PDF(Light light) const {
+    Float PMF(Light light) const {
         if (lights.empty())
             return 0;
         return 1.f / lights.size();
@@ -452,8 +450,8 @@ inline pstd::optional<SampledLight> LightSampler::Sample(const LightSampleContex
     return Dispatch(s);
 }
 
-inline Float LightSampler::PDF(const LightSampleContext &ctx, Light light) const {
-    auto pdf = [&](auto ptr) { return ptr->PDF(ctx, light); };
+inline Float LightSampler::PMF(const LightSampleContext &ctx, Light light) const {
+    auto pdf = [&](auto ptr) { return ptr->PMF(ctx, light); };
     return Dispatch(pdf);
 }
 
@@ -462,8 +460,8 @@ inline pstd::optional<SampledLight> LightSampler::Sample(Float u) const {
     return Dispatch(sample);
 }
 
-inline Float LightSampler::PDF(Light light) const {
-    auto pdf = [&](auto ptr) { return ptr->PDF(light); };
+inline Float LightSampler::PMF(Light light) const {
+    auto pdf = [&](auto ptr) { return ptr->PMF(light); };
     return Dispatch(pdf);
 }
 

@@ -8,6 +8,7 @@
 #include <pbrt/pbrt.h>
 
 #include <pbrt/cpu/primitive.h>
+#include <pbrt/util/parallel.h>
 
 #include <atomic>
 #include <memory>
@@ -42,9 +43,9 @@ class BVHAggregate {
 
   private:
     // BVHAggregate Private Methods
-    BVHBuildNode *buildRecursive(std::vector<Allocator> &threadAllocators,
-                                 std::vector<BVHPrimitive> &primitiveInfo, int start,
-                                 int end, std::atomic<int> *totalNodes,
+    BVHBuildNode *buildRecursive(ThreadLocal<Allocator> &threadAllocators,
+                                 pstd::span<BVHPrimitive> bvhPrimitives,
+                                 std::atomic<int> *totalNodes,
                                  std::atomic<int> *orderedPrimsOffset,
                                  std::vector<Primitive> &orderedPrims);
     BVHBuildNode *buildHLBVH(Allocator alloc,
@@ -59,7 +60,7 @@ class BVHAggregate {
     BVHBuildNode *buildUpperSAH(Allocator alloc,
                                 std::vector<BVHBuildNode *> &treeletRoots, int start,
                                 int end, std::atomic<int> *totalNodes) const;
-    int flattenBVHTree(BVHBuildNode *node, int *offset);
+    int flattenBVH(BVHBuildNode *node, int *offset);
 
     // BVHAggregate Private Members
     int maxPrimsInNode;
@@ -88,9 +89,10 @@ class KdTreeAggregate {
   private:
     // KdTreeAggregate Private Methods
     void buildTree(int nodeNum, const Bounds3f &bounds,
-                   const std::vector<Bounds3f> &primBounds, int *primNums, int nprims,
-                   int depth, const std::unique_ptr<BoundEdge[]> edges[3], int *prims0,
-                   int *prims1, int badRefines);
+                   const std::vector<Bounds3f> &primBounds,
+                   pstd::span<const int> primNums, int depth,
+                   std::vector<BoundEdge> edges[3], pstd::span<int> prims0,
+                   pstd::span<int> prims1, int badRefines);
 
     // KdTreeAggregate Private Members
     int isectCost, traversalCost, maxPrims;

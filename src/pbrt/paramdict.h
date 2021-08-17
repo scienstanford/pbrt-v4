@@ -8,7 +8,6 @@
 #include <pbrt/pbrt.h>
 
 #include <pbrt/base/texture.h>
-#include <pbrt/parser.h>
 #include <pbrt/util/containers.h>
 #include <pbrt/util/error.h>
 #include <pbrt/util/memory.h>
@@ -23,6 +22,34 @@
 #include <vector>
 
 namespace pbrt {
+
+// ParsedParameter Definition
+class ParsedParameter {
+  public:
+    // ParsedParameter Public Methods
+    ParsedParameter(FileLoc loc) : loc(loc) {}
+
+    void AddFloat(Float v);
+    void AddInt(int i);
+    void AddString(std::string_view str);
+    void AddBool(bool v);
+
+    std::string ToString() const;
+
+    // ParsedParameter Public Members
+    std::string type, name;
+    FileLoc loc;
+    pstd::vector<Float> floats;
+    pstd::vector<int> ints;
+    pstd::vector<std::string> strings;
+    pstd::vector<uint8_t> bools;
+    mutable bool lookedUp = false;
+    mutable const RGBColorSpace *colorSpace = nullptr;
+    bool mayBeUnused = false;
+};
+
+// ParsedParameterVector Definition
+using ParsedParameterVector = InlinedVector<ParsedParameter *, 8>;
 
 // ParameterType Definition
 enum class ParameterType {
@@ -116,11 +143,11 @@ class ParameterDictionary {
     int GetOneInt(const std::string &name, int def) const;
     bool GetOneBool(const std::string &name, bool def) const;
 
-    Point2f GetOnePoint2f(const std::string &name, const Point2f &def) const;
-    Vector2f GetOneVector2f(const std::string &name, const Vector2f &def) const;
-    Point3f GetOnePoint3f(const std::string &name, const Point3f &def) const;
-    Vector3f GetOneVector3f(const std::string &name, const Vector3f &def) const;
-    Normal3f GetOneNormal3f(const std::string &name, const Normal3f &def) const;
+    Point2f GetOnePoint2f(const std::string &name, Point2f def) const;
+    Vector2f GetOneVector2f(const std::string &name, Vector2f def) const;
+    Point3f GetOnePoint3f(const std::string &name, Point3f def) const;
+    Vector3f GetOneVector3f(const std::string &name, Vector3f def) const;
+    Normal3f GetOneNormal3f(const std::string &name, Normal3f def) const;
     std::string GetOneString(const std::string &name, const std::string &def) const;
 
     Spectrum GetOneSpectrum(const std::string &name, Spectrum def,
@@ -185,11 +212,11 @@ class TextureParameterDictionary {
     Float GetOneFloat(const std::string &name, Float def) const;
     int GetOneInt(const std::string &name, int def) const;
     bool GetOneBool(const std::string &name, bool def) const;
-    Point2f GetOnePoint2f(const std::string &name, const Point2f &def) const;
-    Vector2f GetOneVector2f(const std::string &name, const Vector2f &def) const;
-    Point3f GetOnePoint3f(const std::string &name, const Point3f &def) const;
-    Vector3f GetOneVector3f(const std::string &name, const Vector3f &def) const;
-    Normal3f GetOneNormal3f(const std::string &name, const Normal3f &def) const;
+    Point2f GetOnePoint2f(const std::string &name, Point2f def) const;
+    Vector2f GetOneVector2f(const std::string &name, Vector2f def) const;
+    Point3f GetOnePoint3f(const std::string &name, Point3f def) const;
+    Vector3f GetOneVector3f(const std::string &name, Vector3f def) const;
+    Normal3f GetOneNormal3f(const std::string &name, Normal3f def) const;
     Spectrum GetOneSpectrum(const std::string &name, Spectrum def,
                             SpectrumType spectrumType, Allocator alloc) const;
     std::string GetOneString(const std::string &name, const std::string &def) const;

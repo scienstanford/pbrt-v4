@@ -50,7 +50,7 @@ class Film : public TaggedPointer<RGBFilm, GBufferFilm> {
 
     Image GetImage(ImageMetadata *metadata, Float splatScale = 1);
     PBRT_CPU_GPU
-    RGB GetPixelRGB(const Point2i &p, Float splatScale = 1) const;
+    RGB GetPixelRGB(Point2i p, Float splatScale = 1) const;
 
     PBRT_CPU_GPU inline Filter GetFilter() const;
     PBRT_CPU_GPU inline const PixelSensor *GetPixelSensor() const;
@@ -59,8 +59,8 @@ class Film : public TaggedPointer<RGBFilm, GBufferFilm> {
     using TaggedPointer::TaggedPointer;
 
     static Film Create(const std::string &name, const ParameterDictionary &parameters,
-                       Float exposureTime, Filter filter, const FileLoc *loc,
-                       Allocator alloc);
+                       Float exposureTime, const CameraTransform &cameraTransform,
+                       Filter filter, const FileLoc *loc, Allocator alloc);
 
     std::string ToString() const;
 };

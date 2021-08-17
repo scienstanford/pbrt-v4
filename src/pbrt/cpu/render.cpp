@@ -12,19 +12,21 @@
 #include <pbrt/lights.h>
 #include <pbrt/materials.h>
 #include <pbrt/media.h>
-#include <pbrt/parsedscene.h>
 #include <pbrt/samplers.h>
+#include <pbrt/scene.h>
 #include <pbrt/shapes.h>
 #include <pbrt/textures.h>
 #include <pbrt/util/colorspace.h>
+#include <pbrt/util/parallel.h>
 
 namespace pbrt {
 
 void RenderCPU(ParsedScene &parsedScene) {
     Allocator alloc;
+    ThreadLocal<Allocator> threadAllocators([]() { return Allocator(); });
 
     // Create media first (so have them for the camera...)
-    std::map<std::string, Medium> media = parsedScene.CreateMedia(alloc);
+    std::map<std::string, Medium> media = parsedScene.CreateMedia();
 
     bool haveScatteringMedia = false;
     auto findMedium = [&media, &haveScatteringMedia](const std::string &s,
@@ -55,7 +57,8 @@ void RenderCPU(ParsedScene &parsedScene) {
                   "The specified camera shutter times imply that the shutter "
                   "does not open.  A black image will result.");
     Film film = Film::Create(parsedScene.film.name, parsedScene.film.parameters,
-                             exposureTime, filter, &parsedScene.film.loc, alloc);
+                             exposureTime, parsedScene.camera.cameraTransform, filter,
+                             &parsedScene.film.loc, alloc);
 
     // Camera
     Medium cameraMedium = findMedium(parsedScene.camera.medium, &parsedScene.camera.loc);
@@ -71,22 +74,22 @@ void RenderCPU(ParsedScene &parsedScene) {
 
     // Textures
     LOG_VERBOSE("Starting textures");
-    NamedTextures textures = parsedScene.CreateTextures(alloc, false);
+    NamedTextures textures = parsedScene.CreateTextures();
     LOG_VERBOSE("Finished textures");
 
     // Lights
     std::map<int, pstd::vector<Light> *> shapeIndexToAreaLights;
     std::vector<Light> lights =
-        parsedScene.CreateLights(alloc, media, textures, &shapeIndexToAreaLights);
+        parsedScene.CreateLights(textures, &shapeIndexToAreaLights);
 
     LOG_VERBOSE("Starting materials");
     std::map<std::string, pbrt::Material> namedMaterials;
     std::vector<pbrt::Material> materials;
-    parsedScene.CreateMaterials(textures, alloc, &namedMaterials, &materials);
+    parsedScene.CreateMaterials(textures, threadAllocators, &namedMaterials, &materials);
     LOG_VERBOSE("Finished materials");
 
-    Primitive accel = parsedScene.CreateAggregate(alloc, textures, shapeIndexToAreaLights,
-                                                  media, namedMaterials, materials);
+    Primitive accel = parsedScene.CreateAggregate(textures, shapeIndexToAreaLights, media,
+                                                  namedMaterials, materials);
 
     // Integrator
     const RGBColorSpace *integratorColorSpace = parsedScene.film.parameters.ColorSpace();
@@ -153,27 +156,43 @@ void RenderCPU(ParsedScene &parsedScene) {
         if (!cr)
             ErrorExit("Unable to generate camera ray for specified pixel.");
 
-        pstd::optional<ShapeIntersection> isect = accel.Intersect(cr->ray, Infinity);
-        if (!isect)
-            ErrorExit("No geometry visible at specified pixel.");
-
-        const SurfaceInteraction &intr = isect->intr;
-        if (!intr.material)
-            ErrorExit("No material at intersection point.");
-
-        Transform worldFromRender = camera.GetCameraTransform().WorldFromRender();
-        Printf("World-space p: %s\n", worldFromRender(intr.p()));
-        Printf("World-space n: %s\n", worldFromRender(intr.n));
-        Printf("World-space ns: %s\n", worldFromRender(intr.shading.n));
-
-        for (const auto &mtl : namedMaterials)
-            if (mtl.second == intr.material) {
-                Printf("Named material: %s\n", mtl.first);
-                return;
+        int depth = 1;
+        Ray ray = cr->ray;
+        while (true) {
+            pstd::optional<ShapeIntersection> isect = accel.Intersect(ray, Infinity);
+            if (!isect) {
+                if (depth == 1)
+                    ErrorExit("No geometry visible at specified pixel.");
+                else
+                    break;
             }
 
-        // If we didn't find a named material, dump out the whole thing.
-        Printf("%s\n\n", intr.material.ToString());
+            const SurfaceInteraction &intr = isect->intr;
+            if (!intr.material)
+                Warning("Ignoring \"interface\" material at intersection.");
+            else {
+                Transform worldFromRender = camera.GetCameraTransform().WorldFromRender();
+                Printf("Intersection depth %d\n", depth);
+                Printf("World-space p: %s\n", worldFromRender(intr.p()));
+                Printf("World-space n: %s\n", worldFromRender(intr.n));
+                Printf("World-space ns: %s\n", worldFromRender(intr.shading.n));
+                Printf("Distance from camera: %f\n", Distance(intr.p(), cr->ray.o));
+
+                bool isNamed = false;
+                for (const auto &mtl : namedMaterials)
+                    if (mtl.second == intr.material) {
+                        Printf("Named material: %s\n\n", mtl.first);
+                        isNamed = true;
+                        break;
+                    }
+                if (!isNamed)
+                    // If we didn't find a named material, dump out the whole thing.
+                    Printf("%s\n\n", intr.material.ToString());
+
+                ++depth;
+                ray = intr.SpawnRay(ray.d);
+            }
+        }
 
         return;
     }
@@ -185,7 +204,6 @@ void RenderCPU(ParsedScene &parsedScene) {
 
     PtexTextureBase::ReportStats();
     ImageTextureBase::ClearCache();
-    FreeBufferCaches();
 }
 
 }  // namespace pbrt

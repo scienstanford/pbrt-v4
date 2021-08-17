@@ -7,9 +7,9 @@
 
 #include <pbrt/pbrt.h>
 
+#include <pbrt/gpu/memory.h>
 #include <pbrt/gpu/optix.h>
-#include <pbrt/materials.h>
-#include <pbrt/parsedscene.h>
+#include <pbrt/scene.h>
 #include <pbrt/util/containers.h>
 #include <pbrt/util/pstd.h>
 #include <pbrt/util/soa.h>
@@ -19,6 +19,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -28,19 +29,22 @@ namespace pbrt {
 
 class OptiXAggregate : public WavefrontAggregate {
   public:
-    OptiXAggregate(const ParsedScene &scene, Allocator alloc, NamedTextures &textures,
-             const std::map<int, pstd::vector<Light> *> &shapeIndexToAreaLights,
-             const std::map<std::string, Medium> &media,
-             const std::map<std::string, pbrt::Material> &namedMaterials,
-             const std::vector<pbrt::Material> &materials);
+    OptiXAggregate(const ParsedScene &scene, CUDATrackedMemoryResource *memoryResource,
+                   NamedTextures &textures,
+                   const std::map<int, pstd::vector<Light> *> &shapeIndexToAreaLights,
+                   const std::map<std::string, Medium> &media,
+                   const std::map<std::string, pbrt::Material> &namedMaterials,
+                   const std::vector<pbrt::Material> &materials);
 
     Bounds3f Bounds() const { return bounds; }
 
-    void IntersectClosest(
-        int maxRays, const RayQueue *rayQueue, EscapedRayQueue *escapedRayQueue,
-        HitAreaLightQueue *hitAreaLightQueue, MaterialEvalQueue *basicEvalMaterialQueue,
-        MaterialEvalQueue *universalEvalMaterialQueue,
-        MediumSampleQueue *mediumSampleQueue, RayQueue *nextRayQueue) const;
+    void IntersectClosest(int maxRays, const RayQueue *rayQueue,
+                          EscapedRayQueue *escapedRayQueue,
+                          HitAreaLightQueue *hitAreaLightQueue,
+                          MaterialEvalQueue *basicEvalMaterialQueue,
+                          MaterialEvalQueue *universalEvalMaterialQueue,
+                          MediumSampleQueue *mediumSampleQueue,
+                          RayQueue *nextRayQueue) const;
 
     void IntersectShadow(int maxRays, ShadowRayQueue *shadowRayQueue,
                          SOA<PixelSampleState> *pixelSampleState) const;
@@ -48,44 +52,87 @@ class OptiXAggregate : public WavefrontAggregate {
     void IntersectShadowTr(int maxRays, ShadowRayQueue *shadowRayQueue,
                            SOA<PixelSampleState> *pixelSampleState) const;
 
-    void IntersectOneRandom(int maxRays, SubsurfaceScatterQueue *subsurfaceScatterQueue) const;
+    void IntersectOneRandom(int maxRays,
+                            SubsurfaceScatterQueue *subsurfaceScatterQueue) const;
+
+    // WAR: The enclosing parent function ("PreparePLYMeshes") for an
+    // extended __device__ lambda cannot have private or protected access
+    // within its class, so it's public...
+    static std::map<int, TriQuadMesh> PreparePLYMeshes(
+        const std::vector<ShapeSceneEntity> &shapes,
+        const std::map<std::string, FloatTexture> &floatTextures);
 
   private:
     struct HitgroupRecord;
 
-    OptixTraversableHandle createGASForTriangles(
-        const std::vector<ShapeSceneEntity> &shapes, const OptixProgramGroup &intersectPG,
-        const OptixProgramGroup &shadowPG, const OptixProgramGroup &randomHitPG,
+    struct BVH {
+        BVH() = default;
+        BVH(size_t size);
+
+        OptixTraversableHandle traversableHandle = {};
+        std::vector<HitgroupRecord> intersectHGRecords;
+        std::vector<HitgroupRecord> shadowHGRecords;
+        std::vector<HitgroupRecord> randomHitHGRecords;
+        Bounds3f bounds;
+    };
+
+    static BVH buildBVHForTriangles(
+        const std::vector<ShapeSceneEntity> &shapes,
+        const std::map<int, TriQuadMesh> &plyMeshes, OptixDeviceContext optixContext,
+        const OptixProgramGroup &intersectPG, const OptixProgramGroup &shadowPG,
+        const OptixProgramGroup &randomHitPG,
         const std::map<std::string, FloatTexture> &floatTextures,
         const std::map<std::string, Material> &namedMaterials,
         const std::vector<Material> &materials,
         const std::map<std::string, Medium> &media,
         const std::map<int, pstd::vector<Light> *> &shapeIndexToAreaLights,
-        Bounds3f *gasBounds);
+        ThreadLocal<Allocator> &threadAllocators,
+        ThreadLocal<cudaStream_t> &threadCUDAStreams);
 
-    OptixTraversableHandle createGASForBLPs(
-        const std::vector<ShapeSceneEntity> &shapes, const OptixProgramGroup &intersectPG,
-        const OptixProgramGroup &shadowPG, const OptixProgramGroup &randomHitPG,
+    static BilinearPatchMesh *diceCurveToBLP(const ShapeSceneEntity &shape, int nDiceU,
+                                             int nDiceV, Allocator alloc);
+
+    static BVH buildBVHForBLPs(
+        const std::vector<ShapeSceneEntity> &shapes, OptixDeviceContext optixContext,
+        const OptixProgramGroup &intersectPG, const OptixProgramGroup &shadowPG,
+        const OptixProgramGroup &randomHitPG,
         const std::map<std::string, FloatTexture> &floatTextures,
         const std::map<std::string, Material> &namedMaterials,
         const std::vector<Material> &materials,
         const std::map<std::string, Medium> &media,
         const std::map<int, pstd::vector<Light> *> &shapeIndexToAreaLights,
-        Bounds3f *gasBounds);
+        ThreadLocal<Allocator> &threadAllocators,
+        ThreadLocal<cudaStream_t> &threadCUDAStreams);
 
-    OptixTraversableHandle createGASForQuadrics(
-        const std::vector<ShapeSceneEntity> &shapes, const OptixProgramGroup &intersectPG,
-        const OptixProgramGroup &shadowPG, const OptixProgramGroup &randomHitPG,
+    static BVH buildBVHForQuadrics(
+        const std::vector<ShapeSceneEntity> &shapes, OptixDeviceContext optixContext,
+        const OptixProgramGroup &intersectPG, const OptixProgramGroup &shadowPG,
+        const OptixProgramGroup &randomHitPG,
         const std::map<std::string, FloatTexture> &floatTextures,
         const std::map<std::string, Material> &namedMaterials,
         const std::vector<Material> &materials,
         const std::map<std::string, Medium> &media,
         const std::map<int, pstd::vector<Light> *> &shapeIndexToAreaLights,
-        Bounds3f *gasBounds);
+        ThreadLocal<Allocator> &threadAllocators,
+        ThreadLocal<cudaStream_t> &threadCUDAStreams);
 
-    OptixTraversableHandle buildBVH(const std::vector<OptixBuildInput> &buildInputs);
+    int addHGRecords(const BVH &bvh);
 
-    Allocator alloc;
+    static OptixModule createOptiXModule(OptixDeviceContext optixContext,
+                                         const char *ptx);
+    static OptixPipelineCompileOptions getPipelineCompileOptions();
+
+    OptixProgramGroup createRaygenPG(const char *entrypoint) const;
+    OptixProgramGroup createMissPG(const char *entrypoint) const;
+    OptixProgramGroup createIntersectionPG(const char *closest, const char *any,
+                                           const char *intersect) const;
+
+    static OptixTraversableHandle buildOptixBVH(
+        OptixDeviceContext optixContext, const std::vector<OptixBuildInput> &buildInputs,
+        ThreadLocal<cudaStream_t> &threadCUDAStreams);
+
+    CUDATrackedMemoryResource *memoryResource;
+    std::mutex boundsMutex;
     Bounds3f bounds;
     CUstream cudaStream;
     OptixDeviceContext optixContext;
@@ -111,6 +158,6 @@ class OptiXAggregate : public WavefrontAggregate {
     OptixTraversableHandle rootTraversable = {};
 };
 
-} // namespace pbrt
+}  // namespace pbrt
 
-#endif // PBRT_GPU_AGGREGATE_H
+#endif  // PBRT_GPU_AGGREGATE_H

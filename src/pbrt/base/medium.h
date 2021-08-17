@@ -58,7 +58,6 @@ class NanoVDBMediumProvider;
 using NanoVDBMedium = CuboidMedium<NanoVDBMediumProvider>;
 
 struct MediumProperties;
-struct MediumSample;
 
 // MediumDensity Definition
 struct MediumDensity {
@@ -68,6 +67,28 @@ struct MediumDensity {
     MediumDensity(SampledSpectrum sigma_a, SampledSpectrum sigma_s)
         : sigma_a(sigma_a), sigma_s(sigma_s) {}
     SampledSpectrum sigma_a, sigma_s;
+};
+
+// RayMajorantSegment Definition
+struct RayMajorantSegment {
+    Float tMin, tMax;
+    SampledSpectrum sigma_maj;
+    std::string ToString() const;
+};
+
+// RayMajorantIterator Definition
+class HomogeneousMajorantIterator;
+class DDAMajorantIterator;
+
+class RayMajorantIterator
+    : public TaggedPointer<HomogeneousMajorantIterator, DDAMajorantIterator> {
+  public:
+    using TaggedPointer::TaggedPointer;
+
+    PBRT_CPU_GPU
+    pstd::optional<RayMajorantSegment> Next();
+
+    std::string ToString() const;
 };
 
 // Medium Definition
@@ -83,15 +104,16 @@ class Medium : public TaggedPointer<HomogeneousMedium, UniformGridMedium, CloudM
 
     std::string ToString() const;
 
+    PBRT_CPU_GPU
     bool IsEmissive() const;
 
     PBRT_CPU_GPU
-    MediumProperties Sample(Point3f p, const SampledWavelengths &lambda) const;
+    MediumProperties SamplePoint(Point3f p, const SampledWavelengths &lambda) const;
 
-    template <typename F>
-    PBRT_CPU_GPU SampledSpectrum SampleT_maj(Ray ray, Float tMax, Float u, RNG &rng,
-                                             const SampledWavelengths &lambda,
-                                             F callback) const;
+    // Medium Public Methods
+    PBRT_CPU_GPU
+    RayMajorantIterator SampleRay(Ray ray, Float tMax, const SampledWavelengths &lambda,
+                                  ScratchBuffer &buf) const;
 };
 
 // MediumInterface Definition

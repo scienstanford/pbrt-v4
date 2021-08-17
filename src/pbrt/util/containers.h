@@ -14,8 +14,10 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <iterator>
 #include <memory>
+#include <shared_mutex>
 #include <string>
 #include <tuple>
 #include <type_traits>
@@ -213,7 +215,7 @@ class Array2D {
     Array2D(int nx, int ny, T def, allocator_type allocator = {})
         : Array2D({{0, 0}, {nx, ny}}, def, allocator) {}
     Array2D(const Array2D &a, allocator_type allocator = {})
-        : Array2D(a.begin(), a.end(), a.xSize(), a.ySize(), allocator) {}
+        : Array2D(a.begin(), a.end(), a.XSize(), a.YSize(), allocator) {}
 
     ~Array2D() {
         int n = extent.Area();
@@ -282,9 +284,9 @@ class Array2D {
     PBRT_CPU_GPU
     int size() const { return extent.Area(); }
     PBRT_CPU_GPU
-    int xSize() const { return extent.pMax.x - extent.pMin.x; }
+    int XSize() const { return extent.pMax.x - extent.pMin.x; }
     PBRT_CPU_GPU
-    int ySize() const { return extent.pMax.y - extent.pMin.y; }
+    int YSize() const { return extent.pMax.y - extent.pMin.y; }
 
     PBRT_CPU_GPU
     iterator begin() { return values; }
@@ -804,15 +806,15 @@ class SampledGrid {
     }
 
     size_t BytesAllocated() const { return values.size() * sizeof(T); }
-    int xSize() const { return nx; }
-    int ySize() const { return ny; }
+    int XSize() const { return nx; }
+    int YSize() const { return ny; }
     int zSize() const { return nz; }
 
     const_iterator begin() const { return values.begin(); }
     const_iterator end() const { return values.end(); }
 
     template <typename F>
-    PBRT_CPU_GPU auto Lookup(const Point3f &p, F convert) const {
+    PBRT_CPU_GPU auto Lookup(Point3f p, F convert) const {
         // Compute voxel coordinates and offsets for _p_
         Point3f pSamples(p.x * nx - .5f, p.y * ny - .5f, p.z * nz - .5f);
         Point3i pi = (Point3i)Floor(pSamples);
@@ -831,8 +833,21 @@ class SampledGrid {
     }
 
     PBRT_CPU_GPU
-    T Lookup(const Point3f &p) const {
-        return Lookup(p, [] PBRT_CPU_GPU(T value) { return value; });
+    T Lookup(Point3f p) const {
+        // Compute voxel coordinates and offsets for _p_
+        Point3f pSamples(p.x * nx - .5f, p.y * ny - .5f, p.z * nz - .5f);
+        Point3i pi = (Point3i)Floor(pSamples);
+        Vector3f d = pSamples - (Point3f)pi;
+
+        // Return trilinearly interpolated voxel values
+        auto d00 = Lerp(d.x, Lookup(pi), Lookup(pi + Vector3i(1, 0, 0)));
+        auto d10 =
+            Lerp(d.x, Lookup(pi + Vector3i(0, 1, 0)), Lookup(pi + Vector3i(1, 1, 0)));
+        auto d01 =
+            Lerp(d.x, Lookup(pi + Vector3i(0, 0, 1)), Lookup(pi + Vector3i(1, 0, 1)));
+        auto d11 =
+            Lerp(d.x, Lookup(pi + Vector3i(0, 1, 1)), Lookup(pi + Vector3i(1, 1, 1)));
+        return Lerp(d.z, Lerp(d.y, d00, d10), Lerp(d.y, d01, d11));
     }
 
     template <typename F>
@@ -845,7 +860,10 @@ class SampledGrid {
 
     PBRT_CPU_GPU
     T Lookup(const Point3i &p) const {
-        return Lookup(p, [] PBRT_CPU_GPU(T value) { return value; });
+        Bounds3i sampleBounds(Point3i(0, 0, 0), Point3i(nx, ny, nz));
+        if (!InsideExclusive(p, sampleBounds))
+            return T{};
+        return values[(p.z * ny + p.y) * nx + p.x];
     }
 
     template <typename F>
@@ -880,6 +898,103 @@ class SampledGrid {
     // SampledGrid Private Members
     pstd::vector<T> values;
     int nx, ny, nz;
+};
+
+// InternCache Definition
+template <typename T, typename Hash = std::hash<T>>
+class InternCache {
+  public:
+    // InternCache Public Methods
+    InternCache(Allocator alloc = {})
+        : hashTable(256, alloc),
+          bufferResource(alloc.resource()),
+          itemAlloc(&bufferResource) {}
+
+    const T *Lookup(const T &item) {
+        size_t offset = Hash()(item) % hashTable.size();
+        int step = 1;
+
+        mutex.lock_shared();
+        while (true) {
+            if (!hashTable[offset]) {
+                // not in the hash table
+                mutex.unlock_shared();
+                mutex.lock();
+
+                // Look for it again, starting from scratch: another thread
+                // may have inserted it before we got the write lock and/or
+                // may have expanded the hash table.
+                size_t offset = Hash()(item) % hashTable.size();
+                int step = 1;
+                while (true) {
+                    if (!hashTable[offset])
+                        // fine--it's definitely not there
+                        break;
+                    else if (*hashTable[offset] == item) {
+                        // Another thread inserted it
+                        const T *ret = hashTable[offset];
+                        mutex.unlock();
+                        return ret;
+                    } else {
+                        // collision
+                        offset += step;
+                        ++step;
+                        offset %= hashTable.size();
+                    }
+                }
+
+                // Grow the hash table if needed
+                if (4 * nEntries > hashTable.size()) {
+                    pstd::vector<const T *> newHash(2 * hashTable.size(),
+                                                    hashTable.get_allocator());
+                    for (const T *ptr : hashTable)
+                        if (ptr)
+                            Insert(ptr, &newHash);
+
+                    hashTable.swap(newHash);
+                }
+
+                ++nEntries;
+                T *newPtr = itemAlloc.new_object<T>(item);
+                Insert(newPtr, &hashTable);
+                mutex.unlock();
+                return newPtr;
+            } else if (*hashTable[offset] == item) {
+                // found it
+                const T *ret = hashTable[offset];
+                mutex.unlock_shared();
+                return ret;
+            } else {
+                // collision
+                offset += step;
+                ++step;
+                offset %= hashTable.size();
+            }
+        }
+    }
+
+    size_t size() const { return nEntries; }
+    size_t capacity() const { return hashTable.size(); }
+
+  private:
+    // InternCache Private Methods
+    void Insert(const T *ptr, pstd::vector<const T *> *table) {
+        size_t offset = Hash()(*ptr) % table->size();
+        int step = 1;
+        while ((*table)[offset]) {
+            offset += step;
+            ++step;
+            offset %= table->size();
+        }
+        (*table)[offset] = ptr;
+    }
+
+    // InternCache Private Members
+    pstd::pmr::monotonic_buffer_resource bufferResource;
+    Allocator itemAlloc;
+    size_t nEntries = 0;
+    pstd::vector<const T *> hashTable;
+    std::shared_mutex mutex;
 };
 
 }  // namespace pbrt

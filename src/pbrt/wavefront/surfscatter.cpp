@@ -73,7 +73,7 @@ void WavefrontPathIntegrator::EvaluateMaterialAndBSDF(MaterialEvalQueue *evalQue
     // Get BSDF for items in _evalQueue_ and sample illumination
     // Construct _name_ for material/texture evaluator kernel
     std::string name = StringPrintf(
-        "%s + BxDF Eval (%s tex)", ConcreteMaterial::Name(),
+        "%s + BxDF eval (%s tex)", ConcreteMaterial::Name(),
         std::is_same_v<TextureEvaluator, BasicTextureEvaluator> ? "Basic" : "Universal");
 
     RayQueue *nextRayQueue = NextRayQueue(wavefrontDepth);
@@ -146,6 +146,7 @@ void WavefrontPathIntegrator::EvaluateMaterialAndBSDF(MaterialEvalQueue *evalQue
                 isect.pi = w.pi;
                 isect.n = w.n;
                 isect.shading.n = ns;
+                isect.uv = w.uv;
                 isect.wo = w.wo;
                 isect.time = w.time;
                 isect.dpdx = dpdx;
@@ -171,7 +172,7 @@ void WavefrontPathIntegrator::EvaluateMaterialAndBSDF(MaterialEvalQueue *evalQue
                 SampledSpectrum albedo = bsdf.rho(isect.wo, ucRho, uRho);
 
                 pixelSampleState.visibleSurface[w.pixelIndex] =
-                    VisibleSurface(isect, camera.GetCameraTransform(), albedo, lambda);
+                    VisibleSurface(isect, albedo, lambda);
             }
 
             // Sample BSDF and enqueue indirect ray at intersection point
@@ -275,8 +276,8 @@ void WavefrontPathIntegrator::EvaluateMaterialAndBSDF(MaterialEvalQueue *evalQue
                 Light light = sampledLight->light;
 
                 // Sample light source and evaluate BSDF for direct lighting
-                pstd::optional<LightLiSample> ls = light.SampleLi(
-                    ctx, raySamples.direct.u, lambda, LightSamplingMode::WithMIS);
+                pstd::optional<LightLiSample> ls =
+                    light.SampleLi(ctx, raySamples.direct.u, lambda, true);
                 if (!ls || !ls->L || ls->pdf == 0)
                     return;
                 Vector3f wi = ls->wi;
@@ -296,7 +297,7 @@ void WavefrontPathIntegrator::EvaluateMaterialAndBSDF(MaterialEvalQueue *evalQue
                     w.pixelIndex, w.depth, T_hat[0], T_hat[1], T_hat[2], T_hat[3], f[0],
                     f[1], f[2], f[3], ls->L[0], ls->L[1], ls->L[2], ls->L[3], ls->pdf);
 
-                Float lightPDF = ls->pdf * sampledLight->pdf;
+                Float lightPDF = ls->pdf * sampledLight->p;
                 // This causes uniPathPDF to be zero for the shadow ray, so that
                 // part of MIS just becomes a no-op.
                 Float bsdfPDF =

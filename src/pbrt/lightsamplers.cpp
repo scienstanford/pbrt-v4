@@ -24,8 +24,8 @@
 namespace pbrt {
 
 std::string SampledLight::ToString() const {
-    return StringPrintf("[ SampledLight light: %s pdf: %f ]",
-                        light ? light.ToString().c_str() : "(nullptr)", pdf);
+    return StringPrintf("[ SampledLight light: %s p: %f ]",
+                        light ? light.ToString().c_str() : "(nullptr)", p);
 }
 
 std::string CompactLightBounds::ToString() const {
@@ -74,8 +74,8 @@ std::string LightSampler::ToString() const {
 
 // PowerLightSampler Method Definitions
 PowerLightSampler::PowerLightSampler(pstd::span<const Light> lights, Allocator alloc)
-    : lightToIndex(alloc),
-      lights(lights.begin(), lights.end(), alloc),
+    : lights(lights.begin(), lights.end(), alloc),
+      lightToIndex(alloc),
       aliasTable(alloc) {
     if (lights.empty())
         return;
@@ -84,7 +84,7 @@ PowerLightSampler::PowerLightSampler(pstd::span<const Light> lights, Allocator a
         lightToIndex.Insert(lights[i], i);
 
     // Compute lights' power and initialize alias table
-    std::vector<Float> lightPower;
+    pstd::vector<Float> lightPower;
     SampledWavelengths lambda = SampledWavelengths::SampleXYZ(0.5f);
     for (const auto &light : lights) {
         SampledSpectrum phi = SafeDiv(light.Phi(lambda), lambda.PDF());
@@ -114,7 +114,7 @@ BVHLightSampler::BVHLightSampler(pstd::span<const Light> lights, Allocator alloc
     // Initialize _infiniteLights_ array and light BVH
     std::vector<std::pair<int, LightBounds>> bvhLights;
     for (size_t i = 0; i < lights.size(); ++i) {
-        // Partition $i$th light into _infiniteLights_ or _bvhLights_
+        // Store $i$th light in either _infiniteLights_ or _bvhLights_
         Light light = lights[i];
         pstd::optional<LightBounds> lightBounds = light.Bounds();
         if (!lightBounds)
@@ -269,7 +269,7 @@ pstd::optional<SampledLight> ExhaustiveLightSampler::Sample(const LightSampleCon
 
     // Note: shared with BVH light sampler...
     if (u < pInfinite) {
-        u = std::min<Float>(u * pInfinite, OneMinusEpsilon);
+        u /= pInfinite;
         int index = std::min<int>(u * infiniteLights.size(), infiniteLights.size() - 1);
         Float pdf = pInfinite * 1.f / infiniteLights.size();
         return SampledLight{infiniteLights[index], pdf};
@@ -285,12 +285,12 @@ pstd::optional<SampledLight> ExhaustiveLightSampler::Sample(const LightSampleCon
         if (!wrs.HasSample())
             return {};
 
-        Float pdf = (1.f - pInfinite) * wrs.SamplePDF();
+        Float pdf = (1.f - pInfinite) * wrs.SampleProbability();
         return SampledLight{wrs.GetSample(), pdf};
     }
 }
 
-Float ExhaustiveLightSampler::PDF(const LightSampleContext &ctx, Light light) const {
+Float ExhaustiveLightSampler::PMF(const LightSampleContext &ctx, Light light) const {
     if (!lightToBoundedIndex.HasKey(light))
         return 1.f / (infiniteLights.size() + (!lightBounds.empty() ? 1 : 0));
 

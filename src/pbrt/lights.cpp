@@ -25,6 +25,8 @@
 #include <pbrt/util/spectrum.h>
 #include <pbrt/util/stats.h>
 
+#include <algorithm>
+
 namespace pbrt {
 
 STAT_COUNTER("Scene/Lights", numLights);
@@ -310,7 +312,7 @@ ProjectionLight::ProjectionLight(Transform renderFromLight,
 
 pstd::optional<LightLiSample> ProjectionLight::SampleLi(LightSampleContext ctx, Point2f u,
                                                         SampledWavelengths lambda,
-                                                        LightSamplingMode mode) const {
+                                                        bool allowIncompletePDF) const {
     // Return sample for incident radiance from _ProjectionLight_
     Point3f p = renderFromLight(Point3f(0, 0, 0));
     Vector3f wi = Normalize(p - ctx.p());
@@ -322,7 +324,7 @@ pstd::optional<LightLiSample> ProjectionLight::SampleLi(LightSampleContext ctx, 
 }
 
 Float ProjectionLight::PDF_Li(LightSampleContext, Vector3f,
-                              LightSamplingMode mode) const {
+                              bool allowIncompletePDF) const {
     return 0.f;
 }
 
@@ -337,7 +339,7 @@ SampledSpectrum ProjectionLight::I(Vector3f w, const SampledWavelengths &lambda)
         return SampledSpectrum(0.f);
 
     // Project point onto projection plane and compute RGB
-    Point3f ps = screenFromLight(Point3f(w.x, w.y, w.z));
+    Point3f ps = screenFromLight(Point3f(w));
     if (!Inside(Point2f(ps.x, ps.y), screenBounds))
         return SampledSpectrum(0.f);
     Point2f uv = Point2f(screenBounds.Offset(Point2f(ps.x, ps.y)));
@@ -448,6 +450,16 @@ ProjectionLight *ProjectionLight::Create(const Transform &renderFromLight, Mediu
         ErrorExit(loc, "Must provide \"filename\" to \"projection\" light source");
 
     ImageAndMetadata imageAndMetadata = Image::Read(texname, alloc);
+    if (imageAndMetadata.image.HasAnyInfinitePixels())
+        ErrorExit(
+            loc, "%s: image has infinite pixel values and so is not suitable as a light.",
+            texname);
+    if (imageAndMetadata.image.HasAnyNaNPixels())
+        ErrorExit(
+            loc,
+            "%s: image has not-a-number pixel values and so is not suitable as a light.",
+            texname);
+
     const RGBColorSpace *colorSpace = imageAndMetadata.metadata.GetColorSpace();
 
     ImageChannelDesc channelDesc = imageAndMetadata.image.GetChannelDesc({"R", "G", "B"});
@@ -519,7 +531,7 @@ GoniometricLight::GoniometricLight(const Transform &renderFromLight,
 pstd::optional<LightLiSample> GoniometricLight::SampleLi(LightSampleContext ctx,
                                                          Point2f u,
                                                          SampledWavelengths lambda,
-                                                         LightSamplingMode mode) const {
+                                                         bool allowIncompletePDF) const {
     Point3f p = renderFromLight(Point3f(0, 0, 0));
     Vector3f wi = Normalize(p - ctx.p());
     SampledSpectrum L =
@@ -528,7 +540,7 @@ pstd::optional<LightLiSample> GoniometricLight::SampleLi(LightSampleContext ctx,
 }
 
 Float GoniometricLight::PDF_Li(LightSampleContext, Vector3f,
-                               LightSamplingMode mode) const {
+                               bool allowIncompletePDF) const {
     return 0.f;
 }
 
@@ -597,6 +609,17 @@ GoniometricLight *GoniometricLight::Create(const Transform &renderFromLight,
         Warning(loc, "No \"filename\" parameter provided for goniometric light.");
     else {
         ImageAndMetadata imageAndMetadata = Image::Read(texname, alloc);
+
+        if (imageAndMetadata.image.HasAnyInfinitePixels())
+            ErrorExit(
+                loc,
+                "%s: image has infinite pixel values and so is not suitable as a light.",
+                texname);
+        if (imageAndMetadata.image.HasAnyNaNPixels())
+            ErrorExit(loc,
+                      "%s: image has not-a-number pixel values and so is not suitable as "
+                      "a light.",
+                      texname);
 
         if (imageAndMetadata.image.Resolution().x !=
             imageAndMetadata.image.Resolution().y)
@@ -700,7 +723,7 @@ DiffuseAreaLight::DiffuseAreaLight(const Transform &renderFromLight,
     // Warn if light has transformation with non-uniform scale, though not
     // for Triangles or bilinear patches, since this doesn't matter for them.
     if (renderFromLight.HasScale() && !shape.Is<Triangle>() && !shape.Is<BilinearPatch>())
-        Warning("Scaling detected in world to light transformation! "
+        Warning("Scaling detected in rendering to light space transformation! "
                 "The system has numerous assumptions, implicit and explicit, "
                 "that this transform will have no scale factors in it. "
                 "Proceed at your own risk; your image may have errors.");
@@ -709,7 +732,7 @@ DiffuseAreaLight::DiffuseAreaLight(const Transform &renderFromLight,
 pstd::optional<LightLiSample> DiffuseAreaLight::SampleLi(LightSampleContext ctx,
                                                          Point2f u,
                                                          SampledWavelengths lambda,
-                                                         LightSamplingMode mode) const {
+                                                         bool allowIncompletePDF) const {
     // Sample point on shape for _DiffuseAreaLight_
     ShapeSampleContext shapeCtx(ctx.pi, ctx.n, ctx.ns, 0 /* time */);
     pstd::optional<ShapeSample> ss = shape.Sample(shapeCtx, u);
@@ -731,7 +754,7 @@ pstd::optional<LightLiSample> DiffuseAreaLight::SampleLi(LightSampleContext ctx,
 }
 
 Float DiffuseAreaLight::PDF_Li(LightSampleContext ctx, Vector3f wi,
-                               LightSamplingMode) const {
+                               bool allowIncompletePDF) const {
     ShapeSampleContext shapeCtx(ctx.pi, ctx.n, ctx.ns, 0 /* time */);
     return shape.PDF(shapeCtx, wi);
 }
@@ -853,6 +876,17 @@ DiffuseAreaLight *DiffuseAreaLight::Create(const Transform &renderFromLight,
             ErrorExit(loc, "Both \"L\" and \"filename\" specified for DiffuseAreaLight.");
         ImageAndMetadata im = Image::Read(filename, alloc);
 
+        if (im.image.HasAnyInfinitePixels())
+            ErrorExit(
+                loc,
+                "%s: image has infinite pixel values and so is not suitable as a light.",
+                filename);
+        if (im.image.HasAnyNaNPixels())
+            ErrorExit(loc,
+                      "%s: image has not-a-number pixel values and so is not suitable as "
+                      "a light.",
+                      filename);
+
         ImageChannelDesc channelDesc = im.image.GetChannelDesc({"R", "G", "B"});
         if (!channelDesc)
             ErrorExit(loc,
@@ -917,8 +951,8 @@ SampledSpectrum UniformInfiniteLight::Le(const Ray &ray,
 
 pstd::optional<LightLiSample> UniformInfiniteLight::SampleLi(
     LightSampleContext ctx, Point2f u, SampledWavelengths lambda,
-    LightSamplingMode mode) const {
-    if (mode == LightSamplingMode::WithMIS)
+    bool allowIncompletePDF) const {
+    if (allowIncompletePDF)
         return {};
     // Return uniform spherical sample for uniform infinite light
     Vector3f wi = SampleUniformSphere(u);
@@ -928,8 +962,8 @@ pstd::optional<LightLiSample> UniformInfiniteLight::SampleLi(
 }
 
 Float UniformInfiniteLight::PDF_Li(LightSampleContext ctx, Vector3f w,
-                                   LightSamplingMode mode) const {
-    if (mode == LightSamplingMode::WithMIS)
+                                   bool allowIncompletePDF) const {
+    if (allowIncompletePDF)
         return 0;
     return UniformSpherePDF();
 }
@@ -1003,11 +1037,11 @@ ImageInfiniteLight::ImageInfiniteLight(Transform renderFromLight, Image im,
 }
 
 Float ImageInfiniteLight::PDF_Li(LightSampleContext ctx, Vector3f w,
-                                 LightSamplingMode mode) const {
+                                 bool allowIncompletePDF) const {
     Vector3f wLight = renderFromLight.ApplyInverse(w);
     Point2f uv = EqualAreaSphereToSquare(wLight);
     Float pdf = 0;
-    if (mode == LightSamplingMode::WithMIS)
+    if (allowIncompletePDF)
         pdf = compensatedDistribution.PDF(uv);
     else
         pdf = distribution.PDF(uv);
@@ -1038,8 +1072,10 @@ pstd::optional<LightLeSample> ImageInfiniteLight::SampleLe(Point2f u1, Point2f u
                                                            Float time) const {
     // Sample infinite light image and compute ray direction _w_
     Float mapPDF;
-    Point2f uv = distribution.Sample(u1, &mapPDF);
-    Vector3f wLight = EqualAreaSquareToSphere(uv);
+    pstd::optional<Point2f> uv = distribution.Sample(u1, &mapPDF);
+    if (!uv)
+        return {};
+    Vector3f wLight = EqualAreaSquareToSphere(*uv);
     Vector3f w = -renderFromLight(wLight);
 
     // Compute infinite light sample ray
@@ -1052,7 +1088,7 @@ pstd::optional<LightLeSample> ImageInfiniteLight::SampleLe(Point2f u1, Point2f u
     Float pdfDir = mapPDF / (4 * Pi);
     Float pdfPos = 1 / (Pi * Sqr(sceneRadius));
 
-    return LightLeSample(Le(uv, lambda), ray, pdfPos, pdfDir);
+    return LightLeSample(ImageLe(*uv, lambda), ray, pdfPos, pdfDir);
 }
 
 void ImageInfiniteLight::PDF_Le(const Ray &ray, Float *pdfPos, Float *pdfDir) const {
@@ -1132,7 +1168,7 @@ PortalImageInfiniteLight::PortalImageInfiniteLight(
     });
 
     // Initialize sampling distribution for portal image infinite light
-    auto duv_dw = [&](const Point2f &p) {
+    auto duv_dw = [&](Point2f p) {
         Float duv_dw;
         (void)RenderFromImage(p, &duv_dw);
         return duv_dw;
@@ -1186,32 +1222,32 @@ SampledSpectrum PortalImageInfiniteLight::ImageLookup(
 
 pstd::optional<LightLiSample> PortalImageInfiniteLight::SampleLi(
     LightSampleContext ctx, Point2f u, SampledWavelengths lambda,
-    LightSamplingMode mode) const {
-    // Sample $(u,v)$ in potentially-visible region of light image
+    bool allowIncompletePDF) const {
+    // Sample $(u,v)$ in potentially visible region of light image
     pstd::optional<Bounds2f> b = ImageBounds(ctx.p());
     if (!b)
         return {};
     Float mapPDF;
-    Point2f uv = distribution.Sample(u, *b, &mapPDF);
-    if (mapPDF == 0)
+    pstd::optional<Point2f> uv = distribution.Sample(u, *b, &mapPDF);
+    if (!uv)
         return {};
 
     // Convert portal image sample point to direction and compute PDF
     Float duv_dw;
-    Vector3f wi = RenderFromImage(uv, &duv_dw);
+    Vector3f wi = RenderFromImage(*uv, &duv_dw);
     if (duv_dw == 0)
         return {};
     Float pdf = mapPDF / duv_dw;
     CHECK(!IsInf(pdf));
 
     // Compute radiance for portal light sample and return _LightLiSample_
-    SampledSpectrum L = ImageLookup(uv, lambda);
+    SampledSpectrum L = ImageLookup(*uv, lambda);
     Point3f pl = ctx.p() + 2 * sceneRadius * wi;
     return LightLiSample(L, wi, pdf, Interaction(pl, &mediumInterface));
 }
 
 Float PortalImageInfiniteLight::PDF_Li(LightSampleContext ctx, Vector3f w,
-                                       LightSamplingMode mode) const {
+                                       bool allowIncompletePDF) const {
     // Find image $(u,v)$ coordinates corresponding to direction _w_
     Float duv_dw;
     pstd::optional<Point2f> uv = ImageFromRender(w, &duv_dw);
@@ -1230,15 +1266,15 @@ pstd::optional<LightLeSample> PortalImageInfiniteLight::SampleLe(
     Point2f u1, Point2f u2, SampledWavelengths &lambda, Float time) const {
     Float mapPDF;
     Bounds2f b(Point2f(0, 0), Point2f(1, 1));
-    Point2f uv = distribution.Sample(u1, b, &mapPDF);
-    if (mapPDF == 0)
+    pstd::optional<Point2f> uv = distribution.Sample(u1, b, &mapPDF);
+    if (!uv)
         return {};
 
     // Convert infinite light sample point to direction
     // Note: ignore WorldToLight since we already folded it in when we
     // resampled...
     Float duv_dw;
-    Vector3f w = -RenderFromImage(uv, &duv_dw);
+    Vector3f w = -RenderFromImage(*uv, &duv_dw);
     if (duv_dw == 0)
         return {};
 
@@ -1266,7 +1302,7 @@ pstd::optional<LightLeSample> PortalImageInfiniteLight::SampleLe(
     Float pdfPos = 1 / (Pi * Sqr(sceneRadius));
 #endif
 
-    SampledSpectrum L = ImageLookup(uv, lambda);
+    SampledSpectrum L = ImageLookup(*uv, lambda);
 
     return LightLeSample(L, ray, pdfPos, pdfDir);
 }
@@ -1314,7 +1350,7 @@ SpotLight::SpotLight(const Transform &renderFromLight,
     CHECK_LE(falloffStart, totalWidth);
 }
 
-Float SpotLight::PDF_Li(LightSampleContext, Vector3f, LightSamplingMode mode) const {
+Float SpotLight::PDF_Li(LightSampleContext, Vector3f, bool allowIncompletePDF) const {
     return 0.f;
 }
 
@@ -1401,7 +1437,7 @@ SpotLight *SpotLight::Create(const Transform &renderFromLight, Medium medium,
 
     Float coneangle = parameters.GetOneFloat("coneangle", 30.);
     Float conedelta = parameters.GetOneFloat("conedeltaangle", 5.);
-    // Compute spotlight world to light transformation
+    // Compute spotlight rendering to light transformation
     Point3f from = parameters.GetOnePoint3f("from", Point3f(0, 0, 0));
     Point3f to = parameters.GetOnePoint3f("to", Point3f(0, 0, 1));
 
@@ -1494,7 +1530,7 @@ Light Light::Create(const std::string &name, const ParameterDictionary &paramete
         std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
         Float E_v = parameters.GetOneFloat("illuminance", -1);
 
-        if (L.empty() && filename.empty()) {
+        if (L.empty() && filename.empty() && portal.empty()) {
             // Scale the light spectrum to be equivalent to 1 nit
             scale /= SpectrumToPhotometric(&colorSpace->illuminant);
             if (E_v > 0) {
@@ -1508,14 +1544,10 @@ Light Light::Create(const std::string &name, const ParameterDictionary &paramete
             // Default: color space's std illuminant
             light = alloc.new_object<UniformInfiniteLight>(
                 renderFromLight, &colorSpace->illuminant, scale, alloc);
-        } else if (!L.empty()) {
+        } else if (!L.empty() && portal.empty()) {
             if (!filename.empty())
                 ErrorExit(loc, "Can't specify both emission \"L\" and "
                                "\"filename\" with ImageInfiniteLight");
-
-            if (!portal.empty())
-                ErrorExit(loc, "Portals are not supported for infinite lights "
-                               "without \"filename\".");
 
             // Scale the light spectrum to be equivalent to 1 nit
             scale /= SpectrumToPhotometric(L[0]);
@@ -1531,7 +1563,45 @@ Light Light::Create(const std::string &name, const ParameterDictionary &paramete
             light = alloc.new_object<UniformInfiniteLight>(renderFromLight, L[0], scale,
                                                            alloc);
         } else {
-            ImageAndMetadata imageAndMetadata = Image::Read(filename, alloc);
+            // Either an image was provided or it's "L" with a portal.
+            ImageAndMetadata imageAndMetadata;
+            if (filename.empty()) {
+                // Create a uniform image with the L spectrum converted to
+                // RGB so it can be stored in an Image. This usually should
+                // be ok, but it is the best we can do under the circumstances.
+                // (More generally, for uniform L, it's just as well to create
+                // an emissive bilinear patch at the portal location, though
+                // that doesn't allow things like putting an emissive sphere out
+                // there for the sun, so here we go...
+                if (!L[0].Is<RGBIlluminantSpectrum>())
+                    Warning(loc, "Converting non-RGB \"L\" parameter to RGB so that a "
+                                 "portal light can be used.");
+                XYZ xyz = SpectrumToXYZ(L[0]);
+                RGB rgb = RGBColorSpace::sRGB->ToRGB(xyz);
+
+                int res = 1;  // happily, this all just works.
+                imageAndMetadata.image =
+                    Image(PixelFormat::Float, {res, res}, {"R", "G", "B"});
+                imageAndMetadata.metadata.colorSpace = RGBColorSpace::sRGB;
+                for (int y = 0; y < res; ++y)
+                    for (int x = 0; x < res; ++x)
+                        for (int c = 0; c < 3; ++c)
+                            imageAndMetadata.image.SetChannel({x, y}, c, rgb[c]);
+            } else {
+                imageAndMetadata = Image::Read(filename, alloc);
+
+                if (imageAndMetadata.image.HasAnyInfinitePixels())
+                    ErrorExit(loc,
+                              "%s: image has infinite pixel values and so is not "
+                              "suitable as a light.",
+                              filename);
+                if (imageAndMetadata.image.HasAnyNaNPixels())
+                    ErrorExit(loc,
+                              "%s: image has not-a-number pixel values and so is not "
+                              "suitable as a light.",
+                              filename);
+            }
+
             const RGBColorSpace *colorSpace = imageAndMetadata.metadata.GetColorSpace();
 
             ImageChannelDesc channelDesc =

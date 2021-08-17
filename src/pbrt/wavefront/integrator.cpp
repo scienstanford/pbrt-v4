@@ -74,10 +74,26 @@ static void updateMaterialNeeds(
     else
         (*haveUniversalEvalMaterial)[m.Tag()] = true;
 }
-WavefrontPathIntegrator::WavefrontPathIntegrator(Allocator alloc, ParsedScene &scene) {
-    // Allocate all of the data structures that represent the scene...
-    std::map<std::string, Medium> media = scene.CreateMedia(alloc);
 
+WavefrontPathIntegrator::WavefrontPathIntegrator(
+    pstd::pmr::memory_resource *memoryResource, ParsedScene &scene)
+    : memoryResource(memoryResource) {
+    ThreadLocal<Allocator> threadAllocators([memoryResource]() {
+        pstd::pmr::monotonic_buffer_resource *resource =
+            new pstd::pmr::monotonic_buffer_resource(1024 * 1024, memoryResource);
+        return Allocator(resource);
+    });
+
+    Allocator alloc = threadAllocators.Get();
+
+    // Allocate all of the data structures that represent the scene...
+    std::map<std::string, Medium> media = scene.CreateMedia();
+
+    // "haveMedia" is a bit of a misnomer in that determines both whether
+    // queues are allocated for the medium sampling kernels and they are
+    // launched as well as whether the ray marching shadow ray kernel is
+    // launched... Thus, it will be true if there actually are no media,
+    // but some "interface" materials are present in the scene.
     haveMedia = false;
     // Check the shapes...
     for (const auto &shape : scene.shapes)
@@ -85,6 +101,12 @@ WavefrontPathIntegrator::WavefrontPathIntegrator(Allocator alloc, ParsedScene &s
             haveMedia = true;
     for (const auto &shape : scene.animatedShapes)
         if (!shape.insideMedium.empty() || !shape.outsideMedium.empty())
+            haveMedia = true;
+    for (const auto &mtl : scene.materials)
+        if (mtl.name == "interface")
+            haveMedia = true;
+    for (const auto &namedMtl : scene.namedMaterials)
+        if (namedMtl.second.name == "interface")
             haveMedia = true;
 
     auto findMedium = [&](const std::string &s, const FileLoc *loc) -> Medium {
@@ -108,8 +130,8 @@ WavefrontPathIntegrator::WavefrontPathIntegrator(Allocator alloc, ParsedScene &s
                   "The specified camera shutter times imply that the shutter "
                   "does not open.  A black image will result.");
 
-    film = Film::Create(scene.film.name, scene.film.parameters, exposureTime, filter,
-                        &scene.film.loc, alloc);
+    film = Film::Create(scene.film.name, scene.film.parameters, exposureTime,
+                        scene.camera.cameraTransform, filter, &scene.film.loc, alloc);
     initializeVisibleSurface = film.UsesVisibleSurface();
 
     sampler = Sampler::Create(scene.sampler.name, scene.sampler.parameters,
@@ -122,102 +144,28 @@ WavefrontPathIntegrator::WavefrontPathIntegrator(Allocator alloc, ParsedScene &s
 
     // Textures
     LOG_VERBOSE("Starting to create textures");
-    NamedTextures textures = scene.CreateTextures(alloc, Options->useGPU);
+    NamedTextures textures = scene.CreateTextures();
     LOG_VERBOSE("Done creating textures");
 
+    LOG_VERBOSE("Starting to create lights");
     pstd::vector<Light> allLights;
+    std::map<int, pstd::vector<Light> *> shapeIndexToAreaLights;
 
     infiniteLights = alloc.new_object<pstd::vector<Light>>(alloc);
-    for (const auto &light : scene.lights) {
-        Medium outsideMedium = findMedium(light.medium, &light.loc);
-        if (light.renderFromObject.IsAnimated())
-            Warning(&light.loc,
-                    "Animated lights aren't supported. Using the start transform.");
 
-        Light l = Light::Create(
-            light.name, light.parameters, light.renderFromObject.startTransform,
-            scene.camera.cameraTransform, outsideMedium, &light.loc, alloc);
-
+    for (Light l : scene.CreateLights(textures, &shapeIndexToAreaLights)) {
         if (l.Is<UniformInfiniteLight>() || l.Is<ImageInfiniteLight>() ||
             l.Is<PortalImageInfiniteLight>())
             infiniteLights->push_back(l);
 
         allLights.push_back(l);
     }
-
-    // Area lights...
-    std::map<int, pstd::vector<Light> *> shapeIndexToAreaLights;
-    for (size_t i = 0; i < scene.shapes.size(); ++i) {
-        const auto &shape = scene.shapes[i];
-        if (shape.lightIndex == -1)
-            continue;
-
-        auto isInterface = [&]() {
-            std::string materialName;
-            if (shape.materialIndex != -1)
-                materialName = scene.materials[shape.materialIndex].name;
-            else {
-                for (auto iter = scene.namedMaterials.begin();
-                     iter != scene.namedMaterials.end(); ++iter)
-                    if (iter->first == shape.materialName) {
-                        materialName = iter->second.parameters.GetOneString("type", "");
-                        break;
-                    }
-            }
-            return (materialName == "interface" || materialName == "none" ||
-                    materialName.empty());
-        };
-        if (isInterface())
-            continue;
-
-        CHECK_LT(shape.lightIndex, scene.areaLights.size());
-        const auto &areaLightEntity = scene.areaLights[shape.lightIndex];
-        AnimatedTransform renderFromLight(*shape.renderFromObject);
-
-        pstd::vector<Shape> shapes =
-            Shape::Create(shape.name, shape.renderFromObject, shape.objectFromRender,
-                          shape.reverseOrientation, shape.parameters, &shape.loc, alloc);
-
-        if (shapes.empty())
-            continue;
-
-        Medium outsideMedium = findMedium(shape.outsideMedium, &shape.loc);
-
-        FloatTexture alphaTex;
-        std::string alphaTexName = shape.parameters.GetTexture("alpha");
-        if (!alphaTexName.empty()) {
-            if (textures.floatTextures.find(alphaTexName) !=
-                textures.floatTextures.end()) {
-                alphaTex = textures.floatTextures[alphaTexName];
-                if (!BasicTextureEvaluator().CanEvaluate({alphaTex}, {}))
-                    // A warning will be issued elsewhere...
-                    alphaTex = nullptr;
-            } else
-                ErrorExit(&shape.loc,
-                          "%s: couldn't find float texture for \"alpha\" parameter.",
-                          alphaTexName);
-        } else if (Float alpha = shape.parameters.GetOneFloat("alpha", 1.f); alpha < 1.f)
-            alphaTex = alloc.new_object<FloatConstantTexture>(alpha);
-
-        pstd::vector<Light> *lightsForShape =
-            alloc.new_object<pstd::vector<Light>>(alloc);
-        for (Shape sh : shapes) {
-            if (renderFromLight.IsAnimated())
-                ErrorExit(&shape.loc, "Animated lights are not supported.");
-            DiffuseAreaLight *area = DiffuseAreaLight::Create(
-                renderFromLight.startTransform, outsideMedium, areaLightEntity.parameters,
-                areaLightEntity.parameters.ColorSpace(), &areaLightEntity.loc, alloc, sh,
-                alphaTex);
-            allLights.push_back(area);
-            lightsForShape->push_back(area);
-        }
-        shapeIndexToAreaLights[i] = lightsForShape;
-    }
+    LOG_VERBOSE("Done creating lights");
 
     LOG_VERBOSE("Starting to create materials");
     std::map<std::string, pbrt::Material> namedMaterials;
     std::vector<pbrt::Material> materials;
-    scene.CreateMaterials(textures, alloc, &namedMaterials, &materials);
+    scene.CreateMaterials(textures, threadAllocators, &namedMaterials, &materials);
 
     haveBasicEvalMaterial.fill(false);
     haveUniversalEvalMaterial.fill(false);
@@ -232,14 +180,17 @@ WavefrontPathIntegrator::WavefrontPathIntegrator(Allocator alloc, ParsedScene &s
 
     if (Options->useGPU) {
 #ifdef PBRT_BUILD_GPU_RENDERER
-        aggregate = new OptiXAggregate(scene, alloc, textures, shapeIndexToAreaLights,
-                                       media, namedMaterials, materials);
+        CUDATrackedMemoryResource *mr =
+            dynamic_cast<CUDATrackedMemoryResource *>(memoryResource);
+        CHECK(mr);
+        aggregate = new OptiXAggregate(scene, mr, textures, shapeIndexToAreaLights, media,
+                                       namedMaterials, materials);
 #else
         LOG_FATAL("Options->useGPU was set without PBRT_BUILD_GPU_RENDERER enabled");
 #endif
     } else
-        aggregate = new CPUAggregate(scene, alloc, textures, shapeIndexToAreaLights,
-                                     media, namedMaterials, materials);
+        aggregate = new CPUAggregate(scene, textures, shapeIndexToAreaLights, media,
+                                     namedMaterials, materials);
 
     // Preprocess the light sources
     for (Light light : allLights)
@@ -284,7 +235,7 @@ WavefrontPathIntegrator::WavefrontPathIntegrator(Allocator alloc, ParsedScene &s
 
 #ifdef PBRT_BUILD_GPU_RENDERER
     CUDATrackedMemoryResource *mr =
-        dynamic_cast<CUDATrackedMemoryResource *>(gpuMemoryAllocator.resource());
+        dynamic_cast<CUDATrackedMemoryResource *>(memoryResource);
     CHECK(mr);
     size_t startSize = mr->BytesAllocated();
 #endif  // PBRT_BUILD_GPU_RENDERER
@@ -379,7 +330,7 @@ Float WavefrontPathIntegrator::Render() {
             // ensures that there isn't a big performance hitch for the first batch
             // of rays as that stuff is copied over on demand.
             CUDATrackedMemoryResource *mr =
-                dynamic_cast<CUDATrackedMemoryResource *>(gpuMemoryAllocator.resource());
+                dynamic_cast<CUDATrackedMemoryResource *>(memoryResource);
             CHECK(mr);
             mr->PrefetchToGPU();
         } else {
@@ -490,11 +441,15 @@ Float WavefrontPathIntegrator::Render() {
                               Options->quiet, Options->useGPU);
     for (int sampleIndex = firstSampleIndex; sampleIndex < lastSampleIndex;
          ++sampleIndex) {
+        // Attempt to work around issue #145.
+#if !(defined(PBRT_IS_WINDOWS) && defined(PBRT_BUILD_GPU_RENDERER) && \
+      __CUDACC_VER_MAJOR__ == 11 && __CUDACC_VER_MINIOR__ == 1)
         CheckCallbackScope _([&]() {
             return StringPrintf("Wavefront rendering failed at sample %d. Debug with "
                                 "\"--debugstart %d\"\n",
                                 sampleIndex, sampleIndex);
         });
+#endif
 
         // Render image for sample _sampleIndex_
         LOG_VERBOSE("Starting to submit work for sample %d", sampleIndex);
@@ -643,16 +598,15 @@ void WavefrontPathIntegrator::HandleEscapedRays() {
                     } else {
                         // Compute MIS-weighted radiance contribution from infinite light
                         LightSampleContext ctx = w.prevIntrCtx;
-                        Float lightChoicePDF = lightSampler.PDF(ctx, light);
-                        SampledSpectrum lightPathPDF =
-                            w.lightPathPDF * lightChoicePDF *
-                            light.PDF_Li(ctx, w.rayd, LightSamplingMode::WithMIS);
+                        Float lightChoicePDF = lightSampler.PMF(ctx, light);
+                        SampledSpectrum lightPathPDF = w.lightPathPDF * lightChoicePDF *
+                                                       light.PDF_Li(ctx, w.rayd, true);
                         L += w.T_hat * Le / (w.uniPathPDF + lightPathPDF).Average();
                     }
                 }
             }
 
-            // Update pixel radiance if ray's radiance is non-zero
+            // Update pixel radiance if ray's radiance is nonzero
             if (L) {
                 PBRT_DBG("Added L %f %f %f %f for escaped ray pixel index %d\n", L[0],
                          L[1], L[2], L[3], w.pixelIndex);
@@ -682,9 +636,8 @@ void WavefrontPathIntegrator::HandleEmissiveIntersection() {
                 // Compute MIS-weighted radiance contribution from area light
                 Vector3f wi = -w.wo;
                 LightSampleContext ctx = w.prevIntrCtx;
-                Float lightChoicePDF = lightSampler.PDF(ctx, w.areaLight);
-                Float lightPDF = lightChoicePDF *
-                                 w.areaLight.PDF_Li(ctx, wi, LightSamplingMode::WithMIS);
+                Float lightChoicePDF = lightSampler.PMF(ctx, w.areaLight);
+                Float lightPDF = lightChoicePDF * w.areaLight.PDF_Li(ctx, wi, true);
 
                 SampledSpectrum uniPathPDF = w.uniPathPDF;
                 SampledSpectrum lightPathPDF = w.lightPathPDF * lightPDF;

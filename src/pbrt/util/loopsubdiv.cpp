@@ -12,6 +12,7 @@
 #include <pbrt/util/transform.h>
 #include <pbrt/util/vecmath.h>
 
+#include <algorithm>
 #include <map>
 #include <set>
 
@@ -377,9 +378,9 @@ TriangleMesh *LoopSubdivide(const Transform *renderFromObject, bool reverseOrien
                 ++vp;
             }
         }
-        return alloc.new_object<TriangleMesh>(*renderFromObject, reverseOrientation,
-                                              verts, pLimit, std::vector<Vector3f>(), Ns,
-                                              std::vector<Point2f>(), std::vector<int>());
+        return alloc.new_object<TriangleMesh>(
+            *renderFromObject, reverseOrientation, verts, pLimit, std::vector<Vector3f>(),
+            Ns, std::vector<Point2f>(), std::vector<int>(), alloc);
     }
 }
 
