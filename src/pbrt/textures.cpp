@@ -458,6 +458,11 @@ FloatImageTexture *FloatImageTexture::Create(const Transform &renderFromTexture,
         i >> j;
         for (auto& elem : j)
             basis.push_back(elem["basis"]);
+        for (auto& elem : j) {
+            basis.push_back(elem["offset"]);
+            break;
+        }
+
     }
     return alloc.new_object<FloatImageTexture>(map, filename, filterOptions, *wrapMode,
                                                scale, invert, encoding, basis, alloc);
