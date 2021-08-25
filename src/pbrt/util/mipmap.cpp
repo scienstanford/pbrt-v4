@@ -309,12 +309,13 @@ RGB MIPMap::Bilerp(int level, Point2f st) const {
 template <>
 SampledSpectrum MIPMap::Bilerp(int level, Point2f st) const {
     CHECK(level >= 0 && level < pyramid.size());
-    if (pyramid[level].NChannels() == 6) {
-        SampledSpectrum basiscoef;          
-        for (int c = 0; c < 6; ++c)
-            basiscoef[c] = pyramid[level].BilerpChannel(st, c, wrapMode);
-        return basiscoef;
-    }
+ 
+    SampledSpectrum basiscoef;
+    int Nchannels = pyramid[level].NChannels();
+    for (int c = 0; c < Nchannels ; ++c)
+        basiscoef[c] = pyramid[level].BilerpChannel(st, c, wrapMode);
+    return basiscoef;
+    
 }
 // ----------------------------------------------------------------------------------
 
