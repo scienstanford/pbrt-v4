@@ -684,7 +684,7 @@ class GPUSpectrumImageTexture {
             tex_spectrum[0] = pixel_spectrum.x;
             tex_spectrum[1] = pixel_spectrum.y;
             tex_spectrum[2] = pixel_spectrum.z;
-            printf("tex_spectrum: %f %f %f\n",tex_spectrum[0], tex_spectrum[1], tex_spectrum[2]);
+            // printf("tex_spectrum: %f %f %f\n",tex_spectrum[0], tex_spectrum[1], tex_spectrum[2]);
             for (int c = 0; c < nChannels; c++) {
                 SampledSpectrum basisSpectrum;
                 for (int nWave = 0; nWave < NSpectrumSamples; nWave++) {
@@ -694,13 +694,13 @@ class GPUSpectrumImageTexture {
                 // get spectrum texture coef
                 s = basisSpectrum * (tex_spectrum[c] - offset) + s;
                 
-                printf("tex_spectrum: %f %f %f channel %d\n basis_spectrum: %f %f %f %f"
-                       "%f %f "
-                       "%f\n result_spectrum: %f %f %f %f %f %f %f\n",
-                       tex_spectrum[0], tex_spectrum[1], tex_spectrum[2], c,
-                       basisSpectrum[1], basisSpectrum[3], basisSpectrum[5],
-                       basisSpectrum[7], basisSpectrum[9], basisSpectrum[11],
-                       basisSpectrum[13], s[1], s[3], s[5], s[7], s[9], s[11], s[13]);
+                // printf("tex_spectrum: %f %f %f channel %d\n basis_spectrum: %f %f %f %f"
+                      //  "%f %f "
+                      //  "%f\n result_spectrum: %f %f %f %f %f %f %f\n",
+                      //  tex_spectrum[0], tex_spectrum[1], tex_spectrum[2], c,
+                      //  basisSpectrum[1], basisSpectrum[3], basisSpectrum[5],
+                      //  basisSpectrum[7], basisSpectrum[9], basisSpectrum[11],
+                      //  basisSpectrum[13], s[1], s[3], s[5], s[7], s[9], s[11], s[13]);
             }
             return s;
         } else {
