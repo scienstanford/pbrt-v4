@@ -1169,6 +1169,8 @@ GPUSpectrumImageTexture *GPUSpectrumImageTexture::Create(
             for (int numElem = 0; numElem < elemSize; numElem++)
                 basis.push_back(elem["basis"][numElem]);
         }
+    } else{
+        basis.push_back(0);
     }
 
     // create a cuda texture --zhenyi
@@ -1243,10 +1245,12 @@ GPUSpectrumImageTexture *GPUSpectrumImageTexture::Create(
                 colorSpace = immeta.metadata.GetColorSpace();
 
                 ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
-                // add multispectral texture -- zhenyi
+                // add multispectral texture -- zhenyi 
                 std::vector<std::string> inFileChannelNames = image.ChannelNames();
-                ImageChannelDesc coeffDsec = image.GetChannelDesc(inFileChannelNames);
-                if (coeffDsec) {
+                ImageChannelDesc coeffDsecCheck = image.GetChannelDesc({"coef.1"});
+                if (coeffDsecCheck) {
+                    std::vector<std::string> inFileChannelNames = image.ChannelNames();
+                    ImageChannelDesc coeffDsec = image.GetChannelDesc(inFileChannelNames);
                     image = image.SelectChannels(coeffDsec);
                     MIPMap mipmap(image, colorSpace, WrapMode::Clamp /* TODO */,
                                   Allocator(), filterOptions);

@@ -382,10 +382,10 @@ MIPMap *MIPMap::CreateFromFile(const std::string &filename,
         ImageChannelDesc rgbaDesc = image.GetChannelDesc({"R", "G", "B", "A"});
         ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
         // Get channelNames
-        std::vector<std::string> inFileChannelNames  = image.ChannelNames();
-        ImageChannelDesc coeffDsec = image.GetChannelDesc(inFileChannelNames);// zhenyi
-        // ImageChannelDesc coeffDsec = image.GetChannelDesc({"coef.1","coef.2","coef.3","coef.4","coef.5","coef.6"}); // zhenyi
-        if (coeffDsec){ 
+        ImageChannelDesc coeffDsecCheck = image.GetChannelDesc({"coef.1"});
+        if (coeffDsecCheck){ 
+            std::vector<std::string> inFileChannelNames  = image.ChannelNames();
+            ImageChannelDesc coeffDsec = image.GetChannelDesc(inFileChannelNames);// zhenyi
             image = image.SelectChannels(coeffDsec, alloc);
         }
         else if (rgbaDesc) {
