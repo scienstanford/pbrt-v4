@@ -924,6 +924,8 @@ add_sanitizers (pbrt_exe)
 ######################
 # imgtool
 
+link_directories (src/ext/matlab/lib)
+
 add_executable (imgtool src/pbrt/cmd/imgtool.cpp)
 add_executable (pbrt::imgtool ALIAS imgtool)
 
@@ -932,8 +934,8 @@ set_property (TARGET sky_lib PROPERTY FOLDER "ext")
 
 target_compile_definitions (imgtool PRIVATE ${PBRT_DEFINITIONS})
 target_compile_options (imgtool PRIVATE ${PBRT_CXX_FLAGS})
-target_include_directories (imgtool PRIVATE src src/ext ${FLIP_INCLUDE})
-target_link_libraries (imgtool PRIVATE ${ALL_PBRT_LIBS} pbrt_opt pbrt_warnings sky_lib flip_lib)
+target_include_directories (imgtool PRIVATE src src/ext src/ext/matlab/inc ${FLIP_INCLUDE})
+target_link_libraries (imgtool PRIVATE ${ALL_PBRT_LIBS} pbrt_opt pbrt_warnings sky_lib flip_lib libmat libmx)
 
 add_sanitizers (imgtool)
 

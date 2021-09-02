@@ -376,12 +376,12 @@ SampledSpectrum SpectrumImageTexture::Evaluate(TextureEvalContext ctx,
                 basisSpectrum[nWave] = basisChannel[nWave];
             }
             s = basisSpectrum * (rgb_spectrum[c] - offset) + s;
-            printf("CPU: tex_spectrum: %f channel %d \n basis_spectrum: %f %f %f %f %f "
+            /*printf("CPU: tex_spectrum: %f channel %d \n basis_spectrum: %f %f %f %f %f "
                    "%f %f\n result_spectrum: %f %f %f %f %f %f %f\n",
                    rgb_spectrum[c], c, basisSpectrum[1], basisSpectrum[3],
                    basisSpectrum[5], basisSpectrum[7], basisSpectrum[9],
                    basisSpectrum[11], basisSpectrum[13], s[1], s[3], s[5], s[7], s[9],
-                   s[11], s[13]);
+                   s[11], s[13]);*/
         }
         return s;
     } else {

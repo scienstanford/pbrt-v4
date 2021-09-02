@@ -22,6 +22,9 @@
 #include <pbrt/util/spectrum.h>
 #include <pbrt/util/string.h>
 #include <pbrt/util/vecmath.h>
+#include <ext/matlab/inc/mat.h>
+#include <ext/matlab/inc/matrix.h>
+#include <ext/matlab/inc/tmwtypes.h>
 
 extern "C" {
 #include <skymodel/ArHosekSkyModel.h>
@@ -127,6 +130,11 @@ static std::map<std::string, CommandUsage> commandUsage = {
     --despike <v>      For any pixels with a luminance value greater than <v>,
                        replace the pixel with the median of the 3x3 neighboring
                        pixels. Default: infinity (i.e., disabled).
+    --exr2mat [<ch1,ch2...>|<chx:chy>]
+                       Convert input .exr file to .mat file according to channels specified.
+                       e.g. imgtool convert --exr2mat 1,2,3,5 pbrt.exr
+                       e.g. imgtool convert --exr2mat 1:5 pbrt.exr
+                       Default: all channels
     --flipy            Flip the image along the y axis
     --gamma <v>        Apply a gamma curve with exponent v. (Default: 1 (none)).
     --maxluminance <n> Luminance value mapped to white by tonemapping.
@@ -1595,78 +1603,79 @@ int bloom(std::vector<std::string> args) {
         }
     }
 
-    if (outFile.empty())
-        usage("bloom", "--outfile must be specified");
-    if (inFile.empty())
-        usage("bloom", "input filename must be specified");
+if (outFile.empty())
+usage("bloom", "--outfile must be specified");
+if (inFile.empty())
+usage("bloom", "input filename must be specified");
 
-    ImageAndMetadata imRead = Image::Read(inFile);
-    Image &image = imRead.image;
+ImageAndMetadata imRead = Image::Read(inFile);
+Image& image = imRead.image;
 
-    std::vector<Image> blurred;
+std::vector<Image> blurred;
 
-    // First, threshold the source image
-    int nSurvivors = 0;
-    Point2i res = image.Resolution();
-    int nc = image.NChannels();
-    Image thresholdedImage(PixelFormat::Float, image.Resolution(), image.ChannelNames());
-    for (int y = 0; y < res.y; ++y) {
-        for (int x = 0; x < res.x; ++x) {
-            bool overThreshold = false;
+// First, threshold the source image
+int nSurvivors = 0;
+Point2i res = image.Resolution();
+int nc = image.NChannels();
+Image thresholdedImage(PixelFormat::Float, image.Resolution(), image.ChannelNames());
+for (int y = 0; y < res.y; ++y) {
+    for (int x = 0; x < res.x; ++x) {
+        bool overThreshold = false;
+        for (int c = 0; c < nc; ++c)
+            if (image.GetChannel({ x, y }, c) > level)
+                overThreshold = true;
+        if (overThreshold) {
+            ++nSurvivors;
             for (int c = 0; c < nc; ++c)
-                if (image.GetChannel({x, y}, c) > level)
-                    overThreshold = true;
-            if (overThreshold) {
-                ++nSurvivors;
-                for (int c = 0; c < nc; ++c)
-                    thresholdedImage.SetChannel({x, y}, c, image.GetChannel({x, y}, c));
-            } else
-                for (int c = 0; c < nc; ++c)
-                    thresholdedImage.SetChannel({x, y}, c, 0.f);
+                thresholdedImage.SetChannel({ x, y }, c, image.GetChannel({ x, y }, c));
+        }
+        else
+            for (int c = 0; c < nc; ++c)
+                thresholdedImage.SetChannel({ x, y }, c, 0.f);
+    }
+}
+if (nSurvivors == 0) {
+    fprintf(stderr, "imgtool: no pixels were above bloom threshold %f\n", level);
+    return 1;
+}
+blurred.push_back(std::move(thresholdedImage));
+
+if ((width % 2) == 0) {
+    ++width;
+    fprintf(stderr, "imgtool bloom: width must be an odd value. Rounding up to %d.\n",
+        width);
+}
+int radius = width / 2;
+
+// Blur thresholded image.
+Float sigma = radius / 2.;  // TODO: make a parameter
+
+for (int iter = 0; iter < iterations; ++iter) {
+    Image blur =
+        blurred.back().GaussianFilter(image.AllChannelsDesc(), radius, sigma);
+    blurred.push_back(blur);
+}
+
+// Finally, add all of the blurred images, scaled, to the original.
+for (int y = 0; y < res.y; ++y) {
+    for (int x = 0; x < res.x; ++x) {
+        for (int c = 0; c < nc; ++c) {
+            Float blurredSum = 0.f;
+            // Skip the thresholded image, since it's already
+            // present in the original; just add pixels from the
+            // blurred ones.
+            for (size_t j = 1; j < blurred.size(); ++j)
+                blurredSum += blurred[j].GetChannel({ x, y }, c);
+            image.SetChannel(
+                { x, y }, c,
+                image.GetChannel({ x, y }, c) + (scale / iterations) * blurredSum);
         }
     }
-    if (nSurvivors == 0) {
-        fprintf(stderr, "imgtool: no pixels were above bloom threshold %f\n", level);
-        return 1;
-    }
-    blurred.push_back(std::move(thresholdedImage));
+}
 
-    if ((width % 2) == 0) {
-        ++width;
-        fprintf(stderr, "imgtool bloom: width must be an odd value. Rounding up to %d.\n",
-                width);
-    }
-    int radius = width / 2;
+image.Write(outFile);
 
-    // Blur thresholded image.
-    Float sigma = radius / 2.;  // TODO: make a parameter
-
-    for (int iter = 0; iter < iterations; ++iter) {
-        Image blur =
-            blurred.back().GaussianFilter(image.AllChannelsDesc(), radius, sigma);
-        blurred.push_back(blur);
-    }
-
-    // Finally, add all of the blurred images, scaled, to the original.
-    for (int y = 0; y < res.y; ++y) {
-        for (int x = 0; x < res.x; ++x) {
-            for (int c = 0; c < nc; ++c) {
-                Float blurredSum = 0.f;
-                // Skip the thresholded image, since it's already
-                // present in the original; just add pixels from the
-                // blurred ones.
-                for (size_t j = 1; j < blurred.size(); ++j)
-                    blurredSum += blurred[j].GetChannel({x, y}, c);
-                image.SetChannel(
-                    {x, y}, c,
-                    image.GetChannel({x, y}, c) + (scale / iterations) * blurredSum);
-            }
-        }
-    }
-
-    image.Write(outFile);
-
-    return 0;
+return 0;
 }
 
 int convert(std::vector<std::string> args) {
@@ -1679,14 +1688,16 @@ int convert(std::vector<std::string> args) {
     Float despikeLimit = Infinity;
     bool preserveColors = false;
     bool bw = false;
+    bool exr2mat = false;
     std::string inFile, outFile;
     std::string colorspace;
     std::string channelNames;
-    std::array<int, 4> cropWindow = {-1, 0, -1, 0};
+    std::vector<int> exr2mat_channels;
+    std::array<int, 4> cropWindow = { -1, 0, -1, 0 };
     Float clamp = Infinity;
 
     for (auto iter = args.begin(); iter != args.end(); ++iter) {
-        auto onError = [](const std::string &err) {
+        auto onError = [](const std::string& err) {
             usage("convert", "%s", err.c_str());
             exit(1);
         };
@@ -1707,7 +1718,24 @@ int convert(std::vector<std::string> args) {
             ParseArg(&iter, args.end(), "scale", &scale, onError) ||
             ParseArg(&iter, args.end(), "tonemap", &tonemap, onError)) {
             // success
-        } else if ((*iter)[0] != '-' && inFile.empty()) {
+        } else if (normalizeArg(*iter) == normalizeArg("exr2mat")) {
+            exr2mat = true;
+            int n;
+            if (isdigit((*(iter+1))[0])) {
+                ++iter;
+                if ((n = (*iter).find(':')) != std::string::npos) {
+                    int start = std::stoi((*iter).substr(0, n));
+                    int end = std::stoi((*iter).substr(n + 1, std::string::npos));
+                    for (int i = start; i != end + 1; i++) {
+                        exr2mat_channels.push_back(i);
+                    }
+                } else {
+                    std::vector<int> v = SplitStringToInts((*iter), ',');
+                    std::copy(v.begin(), v.end(), exr2mat_channels.begin());
+                }
+            }
+        } 
+        else if ((*iter)[0] != '-' && inFile.empty()) {
             inFile = *iter;
         } else
             usage("convert", "%s: unknown command flag", iter->c_str());
@@ -1727,6 +1755,43 @@ int convert(std::vector<std::string> args) {
     ImageAndMetadata imRead = Image::Read(inFile);
     Image image = std::move(imRead.image);
     ImageMetadata metadata = std::move(imRead.metadata);
+
+    if (exr2mat) {
+        Point2i res = image.Resolution();
+        int nc = image.NChannels();
+        if (exr2mat_channels.empty())
+            for (int i = 0; i != nc; ++i) {
+                exr2mat_channels.push_back(i);
+            }
+        int mc = exr2mat_channels.size();
+        size_t datasize = res.x * res.y * mc;
+        Float *buf_exr = new float[datasize];
+        for (int y = 0; y < res.y; ++y)
+            for (int x = 0; x < res.x; ++x)
+                for (int c = 0; c < mc; ++c) {
+                    buf_exr[c * res.x * res.y + x * res.y + y] =
+                        image.GetChannel({x, y}, c);
+                }
+
+        mxArray *pWriteArray = NULL;
+        MATFile *pmatFile = NULL;
+        pmatFile = matOpen(outFile.c_str(), "w");
+        mwSize *dims = new mwSize[3];
+        memset((void *)dims, 0, sizeof(mwSize) * 3);
+        dims[0] = res.y;
+        dims[1] = res.x;
+        dims[2] = mc;
+        pWriteArray = mxCreateNumericArray(3, dims, mxSINGLE_CLASS, mxREAL);
+        memcpy((void *)(mxGetPr(pWriteArray)), (void *)buf_exr, sizeof(float) * datasize);
+        std::string vName = "exr";
+        matPutVariable(pmatFile, vName.c_str(), pWriteArray);
+        matClose(pmatFile);
+        mxDestroyArray(pWriteArray);
+        delete[] buf_exr;
+        buf_exr = NULL;
+        delete[] dims;
+        dims = NULL;
+    }
 
     if (channelNames.empty()) {
         // If the input image has AOVs and the target image is a regular
