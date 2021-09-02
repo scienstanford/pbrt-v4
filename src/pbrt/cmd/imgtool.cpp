@@ -130,7 +130,7 @@ static std::map<std::string, CommandUsage> commandUsage = {
                        replace the pixel with the median of the 3x3 neighboring
                        pixels. Default: infinity (i.e., disabled).
     --exr2bin [<ch1,ch2...>|<chx:chy>]
-                       Convert input .exr file to .mat file according to channels specified.
+                       Convert input .exr file to binary file according to channels specified.
                        e.g. imgtool convert --exr2bin 1,2,3,5 pbrt.exr
                        e.g. imgtool convert --exr2bin 1:5 pbrt.exr
                        e.g. imgtool convert --exr2bin B,G,R,Radiance.C05 pbrt.exr
