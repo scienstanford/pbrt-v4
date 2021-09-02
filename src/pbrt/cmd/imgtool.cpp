@@ -131,11 +131,13 @@ static std::map<std::string, CommandUsage> commandUsage = {
                        pixels. Default: infinity (i.e., disabled).
     --exr2bin [<ch1,ch2...>|<chx:chy>]
                        Convert input .exr file to binary file according to channels specified.
+                       --outfile <path\to\output\dir\filename> can be specifiled for output path.
                        e.g. imgtool convert --exr2bin 1,2,3,5 pbrt.exr
                        e.g. imgtool convert --exr2bin 1:5 pbrt.exr
                        e.g. imgtool convert --exr2bin B,G,R,Radiance.C05 pbrt.exr
-                       e.g. imgtool convert --exr2bin Radiance pbrt.exr
-                       Default: all channels
+                       e.g. imgtool convert --exr2bin Radiance --outfile /path/to/dir/ pbrt.exr
+                       e.g. imgtool convert --exr2bin Radiance --outfile /path/to/dir/filename pbrt.exr    
+                       Default: all channels at the same directory with pbrt.exr
     --flipy            Flip the image along the y axis
     --gamma <v>        Apply a gamma curve with exponent v. (Default: 1 (none)).
     --maxluminance <n> Luminance value mapped to white by tonemapping.
@@ -1723,7 +1725,7 @@ int convert(std::vector<std::string> args) {
         } else if (normalizeArg(*iter) == normalizeArg("exr2bin")) {
             exr2bin = true;
             std::string::size_type n;
-            if ((*(iter + 1)).find(".exr") == std::string::npos) {
+            if (((*(iter + 1)).find(".exr") == std::string::npos) && ((*(iter + 1)).find("outfile") == std::string::npos)) {
                 ++iter;
                 if ((n = (*iter).find(':')) != std::string::npos) {
                     int start = std::stoi((*iter).substr(0, n));
@@ -1732,8 +1734,7 @@ int convert(std::vector<std::string> args) {
                         exr2mat_channels.push_back(i);
                     }
                 } else if (isdigit((*iter)[0])) {
-                    std::vector<int> v = SplitStringToInts((*iter), ',');
-                    std::copy(v.begin(), v.end(), exr2mat_channels.begin());
+                    exr2mat_channels = SplitStringToInts((*iter), ',');
                 } else {
                     targetChannelNames =
                         SplitString((*iter), ',');
@@ -1786,7 +1787,7 @@ int convert(std::vector<std::string> args) {
 
         if (inFile.find(".exr") == inFile.npos ||
             inFile.find(".exr") != (inFile.size() - 4)) {
-            fprintf(stderr, "Wrong input filename: %s  \n", inFile);
+            fprintf(stderr, "Wrong input filename: %s  \n", inFile.c_str());
             return 1;
         }
         for (int c = 0; c < mc; ++c) {
@@ -1796,7 +1797,24 @@ int convert(std::vector<std::string> args) {
                     buf_exr[x * res.y + y] =
                         image.GetChannel({x, y}, exr2mat_channels.at(c) - 1);
                 }
-            std::string binaryName = inFile.substr(0, inFile.size() - 4) + '_' +
+            std::size_t dirOffset;
+            std::string outDir;
+            std::string fileName;
+            if (!outFile.empty()) {
+                dirOffset = outFile.find_last_of("/\\");
+                outDir = outFile.substr(0, dirOffset + 1);
+                fileName = outFile.substr(dirOffset + 1);
+                if (fileName.empty())
+                    fileName = inFile.substr(0, inFile.size() - 4);
+                else if ((fileName.find(".bin") != fileName.npos) ||
+                         (fileName.find(".dat") != fileName.npos))
+                    fileName = fileName.substr(0, fileName.size() - 4);
+                else
+                    fileName = outDir + fileName;
+            }
+            else 
+                fileName = inFile.substr(0, inFile.size() - 4);
+            std::string binaryName = fileName + '_' +
                                      std::to_string(res.y) + '_' + std::to_string(res.x) +
                                      '_' + exrChannelNames.at(exr2mat_channels.at(c)-1);
             //'_' + std::to_string(exr2mat_channels.at(c));
