@@ -22,9 +22,6 @@
 #include <pbrt/util/spectrum.h>
 #include <pbrt/util/string.h>
 #include <pbrt/util/vecmath.h>
-#include <ext/matlab/inc/mat.h>
-#include <ext/matlab/inc/matrix.h>
-#include <ext/matlab/inc/tmwtypes.h>
 
 extern "C" {
 #include <skymodel/ArHosekSkyModel.h>
@@ -38,6 +35,8 @@ extern "C" {
 #include <cstdlib>
 #include <map>
 #include <string>
+#include <iostream>
+#include <fstream>
 
 #include <flip.h>
 
@@ -130,10 +129,12 @@ static std::map<std::string, CommandUsage> commandUsage = {
     --despike <v>      For any pixels with a luminance value greater than <v>,
                        replace the pixel with the median of the 3x3 neighboring
                        pixels. Default: infinity (i.e., disabled).
-    --exr2mat [<ch1,ch2...>|<chx:chy>]
+    --exr2bin [<ch1,ch2...>|<chx:chy>]
                        Convert input .exr file to .mat file according to channels specified.
-                       e.g. imgtool convert --exr2mat 1,2,3,5 pbrt.exr
-                       e.g. imgtool convert --exr2mat 1:5 pbrt.exr
+                       e.g. imgtool convert --exr2bin 1,2,3,5 pbrt.exr
+                       e.g. imgtool convert --exr2bin 1:5 pbrt.exr
+                       e.g. imgtool convert --exr2bin B,G,R,Radiance.C05 pbrt.exr
+                       e.g. imgtool convert --exr2bin Radiance pbrt.exr
                        Default: all channels
     --flipy            Flip the image along the y axis
     --gamma <v>        Apply a gamma curve with exponent v. (Default: 1 (none)).
@@ -1688,10 +1689,11 @@ int convert(std::vector<std::string> args) {
     Float despikeLimit = Infinity;
     bool preserveColors = false;
     bool bw = false;
-    bool exr2mat = false;
+    bool exr2bin = false;
     std::string inFile, outFile;
     std::string colorspace;
     std::string channelNames;
+    std::vector<std::string> targetChannelNames;
     std::vector<int> exr2mat_channels;
     std::array<int, 4> cropWindow = { -1, 0, -1, 0 };
     Float clamp = Infinity;
@@ -1718,10 +1720,10 @@ int convert(std::vector<std::string> args) {
             ParseArg(&iter, args.end(), "scale", &scale, onError) ||
             ParseArg(&iter, args.end(), "tonemap", &tonemap, onError)) {
             // success
-        } else if (normalizeArg(*iter) == normalizeArg("exr2mat")) {
-            exr2mat = true;
-            int n;
-            if (isdigit((*(iter+1))[0])) {
+        } else if (normalizeArg(*iter) == normalizeArg("exr2bin")) {
+            exr2bin = true;
+            std::string::size_type n;
+            if ((*(iter + 1)).find(".exr") == std::string::npos) {
                 ++iter;
                 if ((n = (*iter).find(':')) != std::string::npos) {
                     int start = std::stoi((*iter).substr(0, n));
@@ -1729,11 +1731,14 @@ int convert(std::vector<std::string> args) {
                     for (int i = start; i != end + 1; i++) {
                         exr2mat_channels.push_back(i);
                     }
-                } else {
+                } else if (isdigit((*iter)[0])) {
                     std::vector<int> v = SplitStringToInts((*iter), ',');
                     std::copy(v.begin(), v.end(), exr2mat_channels.begin());
+                } else {
+                    targetChannelNames =
+                        SplitString((*iter), ',');
                 }
-            }
+            } 
         } 
         else if ((*iter)[0] != '-' && inFile.empty()) {
             inFile = *iter;
@@ -1747,7 +1752,7 @@ int convert(std::vector<std::string> args) {
         usage("convert", "--repeatpix value must be greater than zero");
     if (scale == 0)
         usage("convert", "--scale value must be non-zero");
-    if (outFile.empty())
+    if (outFile.empty()&&!exr2bin)
         usage("convert", "--outfile filename must be specified");
     if (inFile.empty())
         usage("convert", "input filename not specified");
@@ -1756,41 +1761,57 @@ int convert(std::vector<std::string> args) {
     Image image = std::move(imRead.image);
     ImageMetadata metadata = std::move(imRead.metadata);
 
-    if (exr2mat) {
+    if (exr2bin) {
         Point2i res = image.Resolution();
         int nc = image.NChannels();
-        if (exr2mat_channels.empty())
+        std::vector<std::string> exrChannelNames = image.ChannelNames();
+        if (exr2mat_channels.empty() && targetChannelNames.empty())
             for (int i = 0; i != nc; ++i) {
-                exr2mat_channels.push_back(i);
+                exr2mat_channels.push_back(i + 1);
             }
-        int mc = exr2mat_channels.size();
-        size_t datasize = res.x * res.y * mc;
-        Float *buf_exr = new float[datasize];
-        for (int y = 0; y < res.y; ++y)
-            for (int x = 0; x < res.x; ++x)
-                for (int c = 0; c < mc; ++c) {
-                    buf_exr[c * res.x * res.y + x * res.y + y] =
-                        image.GetChannel({x, y}, c);
+        else if (exr2mat_channels.empty() && !targetChannelNames.empty()) {
+            for (auto target : targetChannelNames) {
+                for (int i = 0; i < exrChannelNames.size(); ++i) {
+                    auto name = exrChannelNames.at(i);
+                    if ((!name.compare(target)) ||
+                        ((name.find(target) != std::string::npos) &&
+                         (name.at(name.find(target) + target.size()) == '.'))) {
+                        exr2mat_channels.push_back(i + 1);
+                    }
                 }
+            }
+        }
+        int mc = exr2mat_channels.size();
+        size_t datasize = res.x * res.y;
 
-        mxArray *pWriteArray = NULL;
-        MATFile *pmatFile = NULL;
-        pmatFile = matOpen(outFile.c_str(), "w");
-        mwSize *dims = new mwSize[3];
-        memset((void *)dims, 0, sizeof(mwSize) * 3);
-        dims[0] = res.y;
-        dims[1] = res.x;
-        dims[2] = mc;
-        pWriteArray = mxCreateNumericArray(3, dims, mxSINGLE_CLASS, mxREAL);
-        memcpy((void *)(mxGetPr(pWriteArray)), (void *)buf_exr, sizeof(float) * datasize);
-        std::string vName = "exr";
-        matPutVariable(pmatFile, vName.c_str(), pWriteArray);
-        matClose(pmatFile);
-        mxDestroyArray(pWriteArray);
-        delete[] buf_exr;
-        buf_exr = NULL;
-        delete[] dims;
-        dims = NULL;
+        if (inFile.find(".exr") == inFile.npos ||
+            inFile.find(".exr") != (inFile.size() - 4)) {
+            fprintf(stderr, "Wrong input filename: %s  \n", inFile);
+            return 1;
+        }
+        for (int c = 0; c < mc; ++c) {
+            float *buf_exr = new float[datasize];
+            for (int y = 0; y < res.y; ++y)
+                for (int x = 0; x < res.x; ++x) {
+                    buf_exr[x * res.y + y] =
+                        image.GetChannel({x, y}, exr2mat_channels.at(c) - 1);
+                }
+            std::string binaryName = inFile.substr(0, inFile.size() - 4) + '_' +
+                                     std::to_string(res.y) + '_' + std::to_string(res.x) +
+                                     '_' + exrChannelNames.at(exr2mat_channels.at(c)-1);
+            //'_' + std::to_string(exr2mat_channels.at(c));
+            std::fstream file(binaryName, std::ios::out | std::ios::binary);
+            if (!file) {
+                fprintf(stderr, "Failed opening binary file.  \n");
+                return 1;
+            }
+            file.write((char *)buf_exr, datasize * sizeof(float));
+            file.close();
+            delete[] buf_exr;
+            buf_exr = NULL;
+        }
+        printf("exr2bin done.");
+        return 0;
     }
 
     if (channelNames.empty()) {
