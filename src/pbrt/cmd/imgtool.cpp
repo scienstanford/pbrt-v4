@@ -35,6 +35,8 @@ extern "C" {
 #include <cstdlib>
 #include <map>
 #include <string>
+#include <iostream>
+#include <fstream>
 
 #include <flip.h>
 
@@ -127,6 +129,15 @@ static std::map<std::string, CommandUsage> commandUsage = {
     --despike <v>      For any pixels with a luminance value greater than <v>,
                        replace the pixel with the median of the 3x3 neighboring
                        pixels. Default: infinity (i.e., disabled).
+    --exr2bin [<ch1,ch2...>|<chx:chy>]
+                       Convert input .exr file to binary file according to channels specified.
+                       --outfile <path\to\output\dir\filename> can be specifiled for output path.
+                       e.g. imgtool convert --exr2bin 1,2,3,5 pbrt.exr
+                       e.g. imgtool convert --exr2bin 1:5 pbrt.exr
+                       e.g. imgtool convert --exr2bin B,G,R,Radiance.C05 pbrt.exr
+                       e.g. imgtool convert --exr2bin Radiance --outfile /path/to/dir/ pbrt.exr
+                       e.g. imgtool convert --exr2bin Radiance --outfile /path/to/dir/filename pbrt.exr    
+                       Default: all channels at the same directory with pbrt.exr
     --flipy            Flip the image along the y axis
     --gamma <v>        Apply a gamma curve with exponent v. (Default: 1 (none)).
     --maxluminance <n> Luminance value mapped to white by tonemapping.
@@ -1595,78 +1606,79 @@ int bloom(std::vector<std::string> args) {
         }
     }
 
-    if (outFile.empty())
-        usage("bloom", "--outfile must be specified");
-    if (inFile.empty())
-        usage("bloom", "input filename must be specified");
+if (outFile.empty())
+usage("bloom", "--outfile must be specified");
+if (inFile.empty())
+usage("bloom", "input filename must be specified");
 
-    ImageAndMetadata imRead = Image::Read(inFile);
-    Image &image = imRead.image;
+ImageAndMetadata imRead = Image::Read(inFile);
+Image& image = imRead.image;
 
-    std::vector<Image> blurred;
+std::vector<Image> blurred;
 
-    // First, threshold the source image
-    int nSurvivors = 0;
-    Point2i res = image.Resolution();
-    int nc = image.NChannels();
-    Image thresholdedImage(PixelFormat::Float, image.Resolution(), image.ChannelNames());
-    for (int y = 0; y < res.y; ++y) {
-        for (int x = 0; x < res.x; ++x) {
-            bool overThreshold = false;
+// First, threshold the source image
+int nSurvivors = 0;
+Point2i res = image.Resolution();
+int nc = image.NChannels();
+Image thresholdedImage(PixelFormat::Float, image.Resolution(), image.ChannelNames());
+for (int y = 0; y < res.y; ++y) {
+    for (int x = 0; x < res.x; ++x) {
+        bool overThreshold = false;
+        for (int c = 0; c < nc; ++c)
+            if (image.GetChannel({ x, y }, c) > level)
+                overThreshold = true;
+        if (overThreshold) {
+            ++nSurvivors;
             for (int c = 0; c < nc; ++c)
-                if (image.GetChannel({x, y}, c) > level)
-                    overThreshold = true;
-            if (overThreshold) {
-                ++nSurvivors;
-                for (int c = 0; c < nc; ++c)
-                    thresholdedImage.SetChannel({x, y}, c, image.GetChannel({x, y}, c));
-            } else
-                for (int c = 0; c < nc; ++c)
-                    thresholdedImage.SetChannel({x, y}, c, 0.f);
+                thresholdedImage.SetChannel({ x, y }, c, image.GetChannel({ x, y }, c));
+        }
+        else
+            for (int c = 0; c < nc; ++c)
+                thresholdedImage.SetChannel({ x, y }, c, 0.f);
+    }
+}
+if (nSurvivors == 0) {
+    fprintf(stderr, "imgtool: no pixels were above bloom threshold %f\n", level);
+    return 1;
+}
+blurred.push_back(std::move(thresholdedImage));
+
+if ((width % 2) == 0) {
+    ++width;
+    fprintf(stderr, "imgtool bloom: width must be an odd value. Rounding up to %d.\n",
+        width);
+}
+int radius = width / 2;
+
+// Blur thresholded image.
+Float sigma = radius / 2.;  // TODO: make a parameter
+
+for (int iter = 0; iter < iterations; ++iter) {
+    Image blur =
+        blurred.back().GaussianFilter(image.AllChannelsDesc(), radius, sigma);
+    blurred.push_back(blur);
+}
+
+// Finally, add all of the blurred images, scaled, to the original.
+for (int y = 0; y < res.y; ++y) {
+    for (int x = 0; x < res.x; ++x) {
+        for (int c = 0; c < nc; ++c) {
+            Float blurredSum = 0.f;
+            // Skip the thresholded image, since it's already
+            // present in the original; just add pixels from the
+            // blurred ones.
+            for (size_t j = 1; j < blurred.size(); ++j)
+                blurredSum += blurred[j].GetChannel({ x, y }, c);
+            image.SetChannel(
+                { x, y }, c,
+                image.GetChannel({ x, y }, c) + (scale / iterations) * blurredSum);
         }
     }
-    if (nSurvivors == 0) {
-        fprintf(stderr, "imgtool: no pixels were above bloom threshold %f\n", level);
-        return 1;
-    }
-    blurred.push_back(std::move(thresholdedImage));
+}
 
-    if ((width % 2) == 0) {
-        ++width;
-        fprintf(stderr, "imgtool bloom: width must be an odd value. Rounding up to %d.\n",
-                width);
-    }
-    int radius = width / 2;
+image.Write(outFile);
 
-    // Blur thresholded image.
-    Float sigma = radius / 2.;  // TODO: make a parameter
-
-    for (int iter = 0; iter < iterations; ++iter) {
-        Image blur =
-            blurred.back().GaussianFilter(image.AllChannelsDesc(), radius, sigma);
-        blurred.push_back(blur);
-    }
-
-    // Finally, add all of the blurred images, scaled, to the original.
-    for (int y = 0; y < res.y; ++y) {
-        for (int x = 0; x < res.x; ++x) {
-            for (int c = 0; c < nc; ++c) {
-                Float blurredSum = 0.f;
-                // Skip the thresholded image, since it's already
-                // present in the original; just add pixels from the
-                // blurred ones.
-                for (size_t j = 1; j < blurred.size(); ++j)
-                    blurredSum += blurred[j].GetChannel({x, y}, c);
-                image.SetChannel(
-                    {x, y}, c,
-                    image.GetChannel({x, y}, c) + (scale / iterations) * blurredSum);
-            }
-        }
-    }
-
-    image.Write(outFile);
-
-    return 0;
+return 0;
 }
 
 int convert(std::vector<std::string> args) {
@@ -1679,14 +1691,17 @@ int convert(std::vector<std::string> args) {
     Float despikeLimit = Infinity;
     bool preserveColors = false;
     bool bw = false;
+    bool exr2bin = false;
     std::string inFile, outFile;
     std::string colorspace;
     std::string channelNames;
-    std::array<int, 4> cropWindow = {-1, 0, -1, 0};
+    std::vector<std::string> targetChannelNames;
+    std::vector<int> exr2mat_channels;
+    std::array<int, 4> cropWindow = { -1, 0, -1, 0 };
     Float clamp = Infinity;
 
     for (auto iter = args.begin(); iter != args.end(); ++iter) {
-        auto onError = [](const std::string &err) {
+        auto onError = [](const std::string& err) {
             usage("convert", "%s", err.c_str());
             exit(1);
         };
@@ -1707,7 +1722,26 @@ int convert(std::vector<std::string> args) {
             ParseArg(&iter, args.end(), "scale", &scale, onError) ||
             ParseArg(&iter, args.end(), "tonemap", &tonemap, onError)) {
             // success
-        } else if ((*iter)[0] != '-' && inFile.empty()) {
+        } else if (normalizeArg(*iter) == normalizeArg("exr2bin")) {
+            exr2bin = true;
+            std::string::size_type n;
+            if (((*(iter + 1)).find(".exr") == std::string::npos) && ((*(iter + 1)).find("outfile") == std::string::npos)) {
+                ++iter;
+                if ((n = (*iter).find(':')) != std::string::npos) {
+                    int start = std::stoi((*iter).substr(0, n));
+                    int end = std::stoi((*iter).substr(n + 1, std::string::npos));
+                    for (int i = start; i != end + 1; i++) {
+                        exr2mat_channels.push_back(i);
+                    }
+                } else if (isdigit((*iter)[0])) {
+                    exr2mat_channels = SplitStringToInts((*iter), ',');
+                } else {
+                    targetChannelNames =
+                        SplitString((*iter), ',');
+                }
+            } 
+        } 
+        else if ((*iter)[0] != '-' && inFile.empty()) {
             inFile = *iter;
         } else
             usage("convert", "%s: unknown command flag", iter->c_str());
@@ -1719,7 +1753,7 @@ int convert(std::vector<std::string> args) {
         usage("convert", "--repeatpix value must be greater than zero");
     if (scale == 0)
         usage("convert", "--scale value must be non-zero");
-    if (outFile.empty())
+    if (outFile.empty()&&!exr2bin)
         usage("convert", "--outfile filename must be specified");
     if (inFile.empty())
         usage("convert", "input filename not specified");
@@ -1727,6 +1761,76 @@ int convert(std::vector<std::string> args) {
     ImageAndMetadata imRead = Image::Read(inFile);
     Image image = std::move(imRead.image);
     ImageMetadata metadata = std::move(imRead.metadata);
+
+    if (exr2bin) {
+        Point2i res = image.Resolution();
+        int nc = image.NChannels();
+        std::vector<std::string> exrChannelNames = image.ChannelNames();
+        if (exr2mat_channels.empty() && targetChannelNames.empty())
+            for (int i = 0; i != nc; ++i) {
+                exr2mat_channels.push_back(i + 1);
+            }
+        else if (exr2mat_channels.empty() && !targetChannelNames.empty()) {
+            for (auto target : targetChannelNames) {
+                for (int i = 0; i < exrChannelNames.size(); ++i) {
+                    auto name = exrChannelNames.at(i);
+                    if ((!name.compare(target)) ||
+                        ((name.find(target) != std::string::npos) &&
+                         (name.at(name.find(target) + target.size()) == '.'))) {
+                        exr2mat_channels.push_back(i + 1);
+                    }
+                }
+            }
+        }
+        int mc = exr2mat_channels.size();
+        size_t datasize = res.x * res.y;
+
+        if (inFile.find(".exr") == inFile.npos ||
+            inFile.find(".exr") != (inFile.size() - 4)) {
+            fprintf(stderr, "Wrong input filename: %s  \n", inFile.c_str());
+            return 1;
+        }
+        for (int c = 0; c < mc; ++c) {
+            float *buf_exr = new float[datasize];
+            for (int y = 0; y < res.y; ++y)
+                for (int x = 0; x < res.x; ++x) {
+                    buf_exr[x * res.y + y] =
+                        image.GetChannel({x, y}, exr2mat_channels.at(c) - 1);
+                }
+            std::size_t dirOffset;
+            std::string outDir;
+            std::string fileName;
+            if (!outFile.empty()) {
+                dirOffset = outFile.find_last_of("/\\");
+                outDir = outFile.substr(0, dirOffset + 1);
+                fileName = outFile.substr(dirOffset + 1);
+                if (fileName.empty())
+                    fileName = inFile.substr(0, inFile.size() - 4);
+                else if ((fileName.find(".bin") != fileName.npos) ||
+                         (fileName.find(".dat") != fileName.npos))
+                    fileName = fileName.substr(0, fileName.size() - 4);
+                else
+                    fileName = outDir + fileName;
+            }
+            else 
+                fileName = inFile.substr(0, inFile.size() - 4);
+            std::string binaryName = fileName + '_' +
+                                     std::to_string(res.y) + '_' + std::to_string(res.x) +
+                                     '_' + exrChannelNames.at(exr2mat_channels.at(c)-1);
+            //'_' + std::to_string(exr2mat_channels.at(c));
+            std::fstream file(binaryName, std::ios::out | std::ios::binary);
+            if (!file) {
+                fprintf(stderr, "Failed opening binary file.  \n");
+                return 1;
+            }
+            file.write((char *)buf_exr, datasize * sizeof(float));
+            file.close();
+            delete[] buf_exr;
+            buf_exr = NULL;
+        }
+        printf("exr2bin done.");
+        return 0;
+    }
 
     if (channelNames.empty()) {
         // If the input image has AOVs and the target image is a regular
