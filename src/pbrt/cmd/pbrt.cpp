@@ -255,12 +255,12 @@ int main(int argc, char *argv[]) {
         ParseFiles(&formattingTarget, filenames);
     } else {
         // Parse provided scene description files
-        ParsedScene scene;
-        SceneStateManager manager(&scene);
-        ParseFiles(&manager, filenames);
+        BasicScene scene;
+        BasicSceneBuilder builder(&scene);
+        ParseFiles(&builder, filenames);
 
         // Render the scene
-        if (options.useGPU || options.wavefront)
+        if (Options->useGPU || Options->wavefront)
             RenderWavefront(scene);
         else
             RenderCPU(scene);

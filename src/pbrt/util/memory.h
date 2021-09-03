@@ -13,9 +13,11 @@
 
 #include <atomic>
 #include <cstddef>
+#include <list>
 #include <memory>
 #include <mutex>
 #include <type_traits>
+#include <utility>
 
 namespace pbrt {
 
@@ -70,52 +72,56 @@ struct AllocationTraits<T[n]> {
 class alignas(PBRT_L1_CACHE_LINE_SIZE) ScratchBuffer {
   public:
     // ScratchBuffer Public Methods
-    ScratchBuffer() = default;
-    ScratchBuffer(int size) : allocatedBytes(size) {
-        ptr = (uint8_t *)Allocator().allocate_bytes(size, align);
+    ScratchBuffer(int size = 256) : allocSize(size) {
+        ptr = (char *)Allocator().allocate_bytes(size, align);
     }
 
     ScratchBuffer(const ScratchBuffer &) = delete;
 
     ScratchBuffer(ScratchBuffer &&b) {
         ptr = b.ptr;
-        allocatedBytes = b.allocatedBytes;
+        allocSize = b.allocSize;
         offset = b.offset;
+        smallBuffers = std::move(b.smallBuffers);
 
         b.ptr = nullptr;
-        b.allocatedBytes = b.offset = 0;
+        b.allocSize = b.offset = 0;
     }
 
-    ~ScratchBuffer() { Allocator().deallocate_bytes(ptr, allocatedBytes, align); }
+    ~ScratchBuffer() {
+        Reset();
+        Allocator().deallocate_bytes(ptr, allocSize, align);
+    }
 
     ScratchBuffer &operator=(const ScratchBuffer &) = delete;
 
     ScratchBuffer &operator=(ScratchBuffer &&b) {
         std::swap(b.ptr, ptr);
-        std::swap(b.allocatedBytes, allocatedBytes);
+        std::swap(b.allocSize, allocSize);
         std::swap(b.offset, offset);
+        std::swap(b.smallBuffers, smallBuffers);
         return *this;
     }
 
-    PBRT_CPU_GPU
     void *Alloc(size_t size, size_t align) {
         if ((offset % align) != 0)
             offset += align - (offset % align);
-        CHECK_LE(offset + size, allocatedBytes);
+        if (offset + size > allocSize)
+            Realloc(size);
         void *p = ptr + offset;
         offset += size;
         return p;
     }
 
     template <typename T, typename... Args>
-    PBRT_CPU_GPU typename AllocationTraits<T>::SingleObject Alloc(Args &&...args) {
+    typename AllocationTraits<T>::SingleObject Alloc(Args &&...args) {
         T *p = (T *)Alloc(sizeof(T), alignof(T));
         return new (p) T(std::forward<Args>(args)...);
     }
 
     template <typename T>
-    PBRT_CPU_GPU typename AllocationTraits<T>::Array Alloc(size_t n = 1) {
-        using ElementType = typename std::remove_extent<T>::type;
+    typename AllocationTraits<T>::Array Alloc(size_t n = 1) {
+        using ElementType = typename std::remove_extent_t<T>;
         ElementType *ret =
             (ElementType *)Alloc(n * sizeof(ElementType), alignof(ElementType));
         for (size_t i = 0; i < n; ++i)
@@ -124,13 +130,27 @@ class alignas(PBRT_L1_CACHE_LINE_SIZE) ScratchBuffer {
     }
 
     PBRT_CPU_GPU
-    void Reset() { offset = 0; }
+    void Reset() {
+        for (const auto &buf : smallBuffers)
+            Allocator().deallocate_bytes(buf.first, buf.second, align);
+        smallBuffers.clear();
+        offset = 0;
+    }
 
   private:
+    // ScratchBuffer Private Methods
+    void Realloc(size_t minSize) {
+        smallBuffers.push_back(std::make_pair(ptr, allocSize));
+        allocSize = std::max(2 * minSize, allocSize + minSize);
+        ptr = (char *)Allocator().allocate_bytes(allocSize, align);
+        offset = 0;
+    }
+
     // ScratchBuffer Private Members
     static constexpr int align = PBRT_L1_CACHE_LINE_SIZE;
-    uint8_t *ptr = nullptr;
-    int allocatedBytes = 0, offset = 0;
+    char *ptr = nullptr;
+    int allocSize = 0, offset = 0;
+    std::list<std::pair<char *, size_t>> smallBuffers;
 };
 
 }  // namespace pbrt

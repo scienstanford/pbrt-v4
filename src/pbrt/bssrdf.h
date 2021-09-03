@@ -233,7 +233,7 @@ class TabulatedBSSRDF {
 
     PBRT_CPU_GPU
     SampledSpectrum PDF_Sp(Point3f pi, Normal3f ni) const {
-        // Express $\pti-\pto$ and $\bold{n}_i$ with respect to local coordinates at
+        // Express $\pti-\pto$ and $\N{}_\roman{i}$ with respect to local coordinates at
         // $\pto$
         Vector3f d = pi - po;
         Frame f = Frame::FromZ(ns);
@@ -296,11 +296,11 @@ inline pstd::optional<BSSRDFProbeSegment> BSSRDF::SampleSp(Float u1, Point2f u2)
 inline BSSRDFSample BSSRDF::ProbeIntersectionToSample(
     const SubsurfaceInteraction &si, ScratchBuffer &scratchBuffer) const {
     auto pits = [&](auto ptr) {
-        using BxDF = typename std::remove_reference<decltype(*ptr)>::type::BxDF;
+        using BxDF = typename std::remove_reference_t<decltype(*ptr)>::BxDF;
         BxDF *bxdf = (BxDF *)scratchBuffer.Alloc(sizeof(BxDF), alignof(BxDF));
         return ptr->ProbeIntersectionToSample(si, bxdf);
     };
-    return Dispatch(pits);
+    return DispatchCPU(pits);
 }
 
 }  // namespace pbrt

@@ -46,7 +46,7 @@ STAT_MEMORY_COUNTER("Memory/Wavefront integrator pixel state", pathIntegratorByt
 static void updateMaterialNeeds(
     Material m, pstd::array<bool, Material::NumTags()> *haveBasicEvalMaterial,
     pstd::array<bool, Material::NumTags()> *haveUniversalEvalMaterial,
-    bool *haveSubsurface) {
+    bool *haveSubsurface, bool *haveMedia) {
     if (!m)
         return;
 
@@ -59,13 +59,14 @@ static void updateMaterialNeeds(
                       *mix);
 
         updateMaterialNeeds(mix->GetMaterial(0), haveBasicEvalMaterial,
-                            haveUniversalEvalMaterial, haveSubsurface);
+                            haveUniversalEvalMaterial, haveSubsurface, haveMedia);
         updateMaterialNeeds(mix->GetMaterial(1), haveBasicEvalMaterial,
-                            haveUniversalEvalMaterial, haveSubsurface);
+                            haveUniversalEvalMaterial, haveSubsurface, haveMedia);
         return;
     }
 
     *haveSubsurface |= m.HasSubsurfaceScattering();
+    *haveMedia |= (m == nullptr);  // interface material
 
     FloatTexture displace = m.GetDisplacement();
     if (m.CanEvaluateTextures(BasicTextureEvaluator()) &&
@@ -76,13 +77,10 @@ static void updateMaterialNeeds(
 }
 
 WavefrontPathIntegrator::WavefrontPathIntegrator(
-    pstd::pmr::memory_resource *memoryResource, ParsedScene &scene)
+    pstd::pmr::memory_resource *memoryResource, BasicScene &scene)
     : memoryResource(memoryResource) {
-    ThreadLocal<Allocator> threadAllocators([memoryResource]() {
-        pstd::pmr::monotonic_buffer_resource *resource =
-            new pstd::pmr::monotonic_buffer_resource(1024 * 1024, memoryResource);
-        return Allocator(resource);
-    });
+    ThreadLocal<Allocator> threadAllocators(
+        [memoryResource]() { return Allocator(memoryResource); });
 
     Allocator alloc = threadAllocators.Get();
 
@@ -102,12 +100,6 @@ WavefrontPathIntegrator::WavefrontPathIntegrator(
     for (const auto &shape : scene.animatedShapes)
         if (!shape.insideMedium.empty() || !shape.outsideMedium.empty())
             haveMedia = true;
-    for (const auto &mtl : scene.materials)
-        if (mtl.name == "interface")
-            haveMedia = true;
-    for (const auto &namedMtl : scene.namedMaterials)
-        if (namedMtl.second.name == "interface")
-            haveMedia = true;
 
     auto findMedium = [&](const std::string &s, const FileLoc *loc) -> Medium {
         if (s.empty())
@@ -119,28 +111,6 @@ WavefrontPathIntegrator::WavefrontPathIntegrator(
         haveMedia = true;
         return iter->second;
     };
-
-    filter = Filter::Create(scene.filter.name, scene.filter.parameters, &scene.filter.loc,
-                            alloc);
-
-    Float exposureTime = scene.camera.parameters.GetOneFloat("shutterclose", 1.f) -
-                         scene.camera.parameters.GetOneFloat("shutteropen", 0.f);
-    if (exposureTime <= 0)
-        ErrorExit(&scene.camera.loc,
-                  "The specified camera shutter times imply that the shutter "
-                  "does not open.  A black image will result.");
-
-    film = Film::Create(scene.film.name, scene.film.parameters, exposureTime,
-                        scene.camera.cameraTransform, filter, &scene.film.loc, alloc);
-    initializeVisibleSurface = film.UsesVisibleSurface();
-
-    sampler = Sampler::Create(scene.sampler.name, scene.sampler.parameters,
-                              film.FullResolution(), &scene.sampler.loc, alloc);
-    samplesPerPixel = sampler.SamplesPerPixel();
-
-    Medium cameraMedium = findMedium(scene.camera.medium, &scene.camera.loc);
-    camera = Camera::Create(scene.camera.name, scene.camera.parameters, cameraMedium,
-                            scene.camera.cameraTransform, film, &scene.camera.loc, alloc);
 
     // Textures
     LOG_VERBOSE("Starting to create textures");
@@ -165,17 +135,17 @@ WavefrontPathIntegrator::WavefrontPathIntegrator(
     LOG_VERBOSE("Starting to create materials");
     std::map<std::string, pbrt::Material> namedMaterials;
     std::vector<pbrt::Material> materials;
-    scene.CreateMaterials(textures, threadAllocators, &namedMaterials, &materials);
+    scene.CreateMaterials(textures, &namedMaterials, &materials);
 
     haveBasicEvalMaterial.fill(false);
     haveUniversalEvalMaterial.fill(false);
     haveSubsurface = false;
     for (Material m : materials)
         updateMaterialNeeds(m, &haveBasicEvalMaterial, &haveUniversalEvalMaterial,
-                            &haveSubsurface);
+                            &haveSubsurface, &haveMedia);
     for (const auto &m : namedMaterials)
         updateMaterialNeeds(m.second, &haveBasicEvalMaterial, &haveUniversalEvalMaterial,
-                            &haveSubsurface);
+                            &haveSubsurface, &haveMedia);
     LOG_VERBOSE("Finished creating materials");
 
     if (Options->useGPU) {
@@ -218,6 +188,14 @@ WavefrontPathIntegrator::WavefrontPathIntegrator(
     regularize = scene.integrator.parameters.GetOneBool("regularize", false);
     maxDepth = scene.integrator.parameters.GetOneInt("maxdepth", 5);
 
+    camera = scene.GetCamera();
+    film = camera.GetFilm();
+    filter = film.GetFilter();
+    sampler = scene.GetSampler();
+
+    initializeVisibleSurface = film.UsesVisibleSurface();
+    samplesPerPixel = sampler.SamplesPerPixel();
+
     // Warn about unsupported stuff...
     if (Options->forceDiffuse)
         Warning("The wavefront integrator does not support --force-diffuse.");
@@ -234,10 +212,13 @@ WavefrontPathIntegrator::WavefrontPathIntegrator(
         // Allocate storage for all of the queues/buffers...
 
 #ifdef PBRT_BUILD_GPU_RENDERER
-    CUDATrackedMemoryResource *mr =
-        dynamic_cast<CUDATrackedMemoryResource *>(memoryResource);
-    CHECK(mr);
-    size_t startSize = mr->BytesAllocated();
+    size_t startSize = 0;
+    if (Options->useGPU) {
+        CUDATrackedMemoryResource *mr =
+            dynamic_cast<CUDATrackedMemoryResource *>(memoryResource);
+        CHECK(mr);
+        startSize = mr->BytesAllocated();
+    }
 #endif  // PBRT_BUILD_GPU_RENDERER
 
     // Compute number of scanlines to render per pass
@@ -292,8 +273,13 @@ WavefrontPathIntegrator::WavefrontPathIntegrator(
     stats = alloc.new_object<Stats>(maxDepth, alloc);
 
 #ifdef PBRT_BUILD_GPU_RENDERER
-    size_t endSize = mr->BytesAllocated();
-    pathIntegratorBytes += endSize - startSize;
+    if (Options->useGPU) {
+        CUDATrackedMemoryResource *mr =
+            dynamic_cast<CUDATrackedMemoryResource *>(memoryResource);
+        CHECK(mr);
+        size_t endSize = mr->BytesAllocated();
+        pathIntegratorBytes += endSize - startSize;
+    }
 #endif  // PBRT_BUILD_GPU_RENDERER
 }
 
@@ -443,7 +429,7 @@ Float WavefrontPathIntegrator::Render() {
          ++sampleIndex) {
         // Attempt to work around issue #145.
 #if !(defined(PBRT_IS_WINDOWS) && defined(PBRT_BUILD_GPU_RENDERER) && \
-      __CUDACC_VER_MAJOR__ == 11 && __CUDACC_VER_MINIOR__ == 1)
+      __CUDACC_VER_MAJOR__ == 11 && __CUDACC_VER_MINOR__ == 1)
         CheckCallbackScope _([&]() {
             return StringPrintf("Wavefront rendering failed at sample %d. Debug with "
                                 "\"--debugstart %d\"\n",
@@ -585,23 +571,22 @@ void WavefrontPathIntegrator::HandleEscapedRays() {
             for (const auto &light : *infiniteLights) {
                 if (SampledSpectrum Le = light.Le(Ray(w.rayo, w.rayd), w.lambda); Le) {
                     // Compute path radiance contribution from infinite light
-                    PBRT_DBG("L %f %f %f %f T_hat %f %f %f %f Le %f %f %f %f", L[0], L[1],
-                             L[2], L[3], w.T_hat[0], w.T_hat[1], w.T_hat[2], w.T_hat[3],
+                    PBRT_DBG("L %f %f %f %f beta %f %f %f %f Le %f %f %f %f", L[0], L[1],
+                             L[2], L[3], w.beta[0], w.beta[1], w.beta[2], w.beta[3],
                              Le[0], Le[1], Le[2], Le[3]);
-                    PBRT_DBG("pdf uni %f %f %f %f pdf nee %f %f %f %f", w.uniPathPDF[0],
-                             w.uniPathPDF[1], w.uniPathPDF[2], w.uniPathPDF[3],
-                             w.lightPathPDF[0], w.lightPathPDF[1], w.lightPathPDF[2],
-                             w.lightPathPDF[3]);
+                    PBRT_DBG("pdf uni %f %f %f %f pdf nee %f %f %f %f", w.inv_w_u[0],
+                             w.inv_w_u[1], w.inv_w_u[2], w.inv_w_u[3], w.inv_w_l[0],
+                             w.inv_w_l[1], w.inv_w_l[2], w.inv_w_l[3]);
 
                     if (w.depth == 0 || w.specularBounce) {
-                        L += w.T_hat * Le / w.uniPathPDF.Average();
+                        L += w.beta * Le / w.inv_w_u.Average();
                     } else {
                         // Compute MIS-weighted radiance contribution from infinite light
                         LightSampleContext ctx = w.prevIntrCtx;
                         Float lightChoicePDF = lightSampler.PMF(ctx, light);
-                        SampledSpectrum lightPathPDF = w.lightPathPDF * lightChoicePDF *
-                                                       light.PDF_Li(ctx, w.rayd, true);
-                        L += w.T_hat * Le / (w.uniPathPDF + lightPathPDF).Average();
+                        SampledSpectrum inv_w_l =
+                            w.inv_w_l * lightChoicePDF * light.PDF_Li(ctx, w.rayd, true);
+                        L += w.beta * Le / (w.inv_w_u + inv_w_l).Average();
                     }
                 }
             }
@@ -630,8 +615,8 @@ void WavefrontPathIntegrator::HandleEmissiveIntersection() {
 
             // Compute area light's weighted radiance contribution to the path
             SampledSpectrum L(0.f);
-            if (w.depth == 0 || w.isSpecularBounce) {
-                L = w.T_hat * Le / w.uniPathPDF.Average();
+            if (w.depth == 0 || w.specularBounce) {
+                L = w.beta * Le / w.inv_w_u.Average();
             } else {
                 // Compute MIS-weighted radiance contribution from area light
                 Vector3f wi = -w.wo;
@@ -639,9 +624,9 @@ void WavefrontPathIntegrator::HandleEmissiveIntersection() {
                 Float lightChoicePDF = lightSampler.PMF(ctx, w.areaLight);
                 Float lightPDF = lightChoicePDF * w.areaLight.PDF_Li(ctx, wi, true);
 
-                SampledSpectrum uniPathPDF = w.uniPathPDF;
-                SampledSpectrum lightPathPDF = w.lightPathPDF * lightPDF;
-                L = w.T_hat * Le / (uniPathPDF + lightPathPDF).Average();
+                SampledSpectrum inv_w_u = w.inv_w_u;
+                SampledSpectrum inv_w_l = w.inv_w_l * lightPDF;
+                L = w.beta * Le / (inv_w_u + inv_w_l).Average();
             }
 
             PBRT_DBG("Added L %f %f %f %f for pixel index %d\n", L[0], L[1], L[2], L[3],

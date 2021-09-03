@@ -18,9 +18,9 @@ inline PBRT_CPU_GPU void EnqueueWorkAfterMiss(RayWorkItem r,
                                               EscapedRayQueue *escapedRayQueue) {
     if (r.ray.medium) {
         PBRT_DBG("Adding miss ray to mediumSampleQueue. "
-                 "ray %f %f %f d %f %f %f T_hat %f %f %f %f\n",
+                 "ray %f %f %f d %f %f %f beta %f %f %f %f\n",
                  r.ray.o.x, r.ray.o.y, r.ray.o.z, r.ray.d.x, r.ray.d.y, r.ray.d.z,
-                 r.T_hat[0], r.T_hat[1], r.T_hat[2], r.T_hat[3]);
+                 r.beta[0], r.beta[1], r.beta[2], r.beta[3]);
         mediumSampleQueue->Push(r, Infinity);
     } else if (escapedRayQueue) {
         PBRT_DBG("Adding ray to escapedRayQueue pixel index %d\n", r.pixelIndex);
@@ -28,19 +28,19 @@ inline PBRT_CPU_GPU void EnqueueWorkAfterMiss(RayWorkItem r,
     }
 }
 
-inline PBRT_CPU_GPU void RecordShadowRayIntersection(
-    const ShadowRayWorkItem w, SOA<PixelSampleState> *pixelSampleState,
-    bool foundIntersection) {
+inline PBRT_CPU_GPU void RecordShadowRayResult(const ShadowRayWorkItem w,
+                                               SOA<PixelSampleState> *pixelSampleState,
+                                               bool foundIntersection) {
     if (foundIntersection) {
         PBRT_DBG("Shadow ray was occluded\n");
         return;
     }
-    SampledSpectrum Ld = w.Ld / (w.uniPathPDF + w.lightPathPDF).Average();
+    SampledSpectrum Ld = w.Ld / (w.inv_w_u + w.inv_w_l).Average();
     PBRT_DBG("Unoccluded shadow ray. Final Ld %f %f %f %f "
-             "(sr.Ld %f %f %f %f uniPathPDF %f %f %f %f lightPathPDF %f %f %f %f)\n",
-             Ld[0], Ld[1], Ld[2], Ld[3], w.Ld[0], w.Ld[1], w.Ld[2], w.Ld[3],
-             w.uniPathPDF[0], w.uniPathPDF[1], w.uniPathPDF[2], w.uniPathPDF[3],
-             w.lightPathPDF[0], w.lightPathPDF[1], w.lightPathPDF[2], w.lightPathPDF[3]);
+             "(sr.Ld %f %f %f %f inv_w_u %f %f %f %f inv_w_l %f %f %f %f)\n",
+             Ld[0], Ld[1], Ld[2], Ld[3], w.Ld[0], w.Ld[1], w.Ld[2], w.Ld[3], w.inv_w_u[0],
+             w.inv_w_u[1], w.inv_w_u[2], w.inv_w_u[3], w.inv_w_l[0], w.inv_w_l[1],
+             w.inv_w_l[2], w.inv_w_l[3]);
 
     SampledSpectrum Lpixel = pixelSampleState->L[w.pixelIndex];
     pixelSampleState->L[w.pixelIndex] = Lpixel + Ld;
@@ -61,12 +61,12 @@ inline PBRT_CPU_GPU void EnqueueWorkAfterIntersection(
                                                      r.depth,
                                                      tMax,
                                                      r.lambda,
-                                                     r.T_hat,
-                                                     r.uniPathPDF,
-                                                     r.lightPathPDF,
+                                                     r.beta,
+                                                     r.inv_w_u,
+                                                     r.inv_w_l,
                                                      r.pixelIndex,
                                                      r.prevIntrCtx,
-                                                     r.isSpecularBounce,
+                                                     r.specularBounce,
                                                      r.anyNonSpecularBounces,
                                                      r.etaScale,
                                                      intr.areaLight,
@@ -101,10 +101,9 @@ inline PBRT_CPU_GPU void EnqueueWorkAfterIntersection(
         PBRT_DBG("Enqueuing into medium transition queue: pixel index %d \n",
                  r.pixelIndex);
         Ray newRay = intr.SpawnRay(r.ray.d);
-        nextRayQueue->PushIndirectRay(newRay, r.depth, r.prevIntrCtx, r.T_hat,
-                                      r.uniPathPDF, r.lightPathPDF, r.lambda, r.etaScale,
-                                      r.isSpecularBounce, r.anyNonSpecularBounces,
-                                      r.pixelIndex);
+        nextRayQueue->PushIndirectRay(newRay, r.depth, r.prevIntrCtx, r.beta, r.inv_w_u,
+                                      r.inv_w_l, r.lambda, r.etaScale, r.specularBounce,
+                                      r.anyNonSpecularBounces, r.pixelIndex);
         return;
     }
 
@@ -113,10 +112,9 @@ inline PBRT_CPU_GPU void EnqueueWorkAfterIntersection(
                  r.pixelIndex);
         Ray ray = r.ray;
         // TODO: intr.wo == -ray.d?
-        hitAreaLightQueue->Push(
-            HitAreaLightWorkItem{intr.areaLight, intr.p(), intr.n, intr.uv, intr.wo,
-                                 r.lambda, r.depth, r.T_hat, r.uniPathPDF, r.lightPathPDF,
-                                 r.prevIntrCtx, (int)r.isSpecularBounce, r.pixelIndex});
+        hitAreaLightQueue->Push(HitAreaLightWorkItem{
+            intr.areaLight, intr.p(), intr.n, intr.uv, intr.wo, r.lambda, r.depth, r.beta,
+            r.inv_w_u, r.inv_w_l, r.prevIntrCtx, (int)r.specularBounce, r.pixelIndex});
     }
 
     FloatTexture displacement = material.GetDisplacement();
@@ -149,8 +147,8 @@ inline PBRT_CPU_GPU void EnqueueWorkAfterIntersection(
                                                r.pixelIndex,
                                                r.anyNonSpecularBounces,
                                                intr.wo,
-                                               r.T_hat,
-                                               r.uniPathPDF,
+                                               r.beta,
+                                               r.inv_w_u,
                                                r.etaScale,
                                                mediumInterface});
     };
@@ -164,23 +162,6 @@ struct TransmittanceTraceResult {
     Point3f pHit;
     Material material;
 };
-
-inline PBRT_CPU_GPU void rescale(SampledSpectrum &T_hat, SampledSpectrum &lightPathPDF,
-                                 SampledSpectrum &uniPathPDF) {
-    if (T_hat.MaxComponentValue() > 0x1p24f ||
-        lightPathPDF.MaxComponentValue() > 0x1p24f ||
-        uniPathPDF.MaxComponentValue() > 0x1p24f) {
-        T_hat *= 1.f / 0x1p24f;
-        lightPathPDF *= 1.f / 0x1p24f;
-        uniPathPDF *= 1.f / 0x1p24f;
-    } else if (T_hat.MaxComponentValue() < 0x1p-24f ||
-               lightPathPDF.MaxComponentValue() < 0x1p-24f ||
-               uniPathPDF.MaxComponentValue() < 0x1p-24f) {
-        T_hat *= 0x1p24f;
-        lightPathPDF *= 0x1p24f;
-        uniPathPDF *= 0x1p24f;
-    }
-}
 
 template <typename T, typename S>
 inline PBRT_CPU_GPU void TraceTransmittance(ShadowRayWorkItem sr,
@@ -196,7 +177,7 @@ inline PBRT_CPU_GPU void TraceTransmittance(ShadowRayWorkItem sr,
     RNG rng(Hash(ray.o), Hash(ray.d));
 
     SampledSpectrum T_ray(1.f);
-    SampledSpectrum uniPathPDF(1.f), lightPathPDF(1.f);
+    SampledSpectrum inv_w_u(1.f), inv_w_l(1.f);
 
     while (ray.d != Vector3f(0, 0, 0)) {
         PBRT_DBG(
@@ -226,43 +207,40 @@ inline PBRT_CPU_GPU void TraceTransmittance(ShadowRayWorkItem sr,
                         ClampZero(sigma_maj - mp.sigma_a - mp.sigma_s);
 
                     // ratio-tracking: only evaluate null scattering
-                    T_ray *= T_maj * sigma_n;
-                    lightPathPDF *= T_maj * sigma_maj;
-                    uniPathPDF *= T_maj * sigma_n;
+                    Float pr = T_maj[0] * sigma_maj[0];
+                    T_ray *= T_maj * sigma_n / pr;
+                    inv_w_l *= T_maj * sigma_maj / pr;
+                    inv_w_u *= T_maj * sigma_n / pr;
 
                     // Possibly terminate transmittance computation using Russian roulette
-                    SampledSpectrum Tr = T_ray / (lightPathPDF + uniPathPDF).Average();
+                    SampledSpectrum Tr = T_ray / (inv_w_l + inv_w_u).Average();
                     if (Tr.MaxComponentValue() < 0.05f) {
                         Float q = 0.75f;
                         if (rng.Uniform<Float>() < q)
                             T_ray = SampledSpectrum(0.);
-                        else {
-                            lightPathPDF *= 1 - q;
-                            uniPathPDF *= 1 - q;
-                        }
+                        else
+                            T_ray /= 1 - q;
                     }
 
                     PBRT_DBG(
                         "T_maj %f %f %f %f sigma_n %f %f %f %f sigma_maj %f %f %f %f\n",
                         T_maj[0], T_maj[1], T_maj[2], T_maj[3], sigma_n[0], sigma_n[1],
-                        sigma_n[2], sigma_n[3], intr.sigma_maj[0], intr.sigma_maj[1],
-                        intr.sigma_maj[2], intr.sigma_maj[3]);
-                    PBRT_DBG("T_ray %f %f %f %f lightPathPDF %f %f %f %f uniPathPDF %f "
-                             "%f %f %f\n",
-                             T_ray[0], T_ray[1], T_ray[2], T_ray[3], lightPathPDF[0],
-                             lightPathPDF[1], lightPathPDF[2], lightPathPDF[3],
-                             uniPathPDF[0], uniPathPDF[1], uniPathPDF[2], uniPathPDF[3]);
+                        sigma_n[2], sigma_n[3], sigma_maj[0], sigma_maj[1], sigma_maj[2],
+                        sigma_maj[3]);
+                    PBRT_DBG(
+                        "T_ray %f %f %f %f inv_w_l %f %f %f %f inv_w_u %f %f %f %f\n",
+                        T_ray[0], T_ray[1], T_ray[2], T_ray[3], inv_w_l[0], inv_w_l[1],
+                        inv_w_l[2], inv_w_l[3], inv_w_u[0], inv_w_u[1], inv_w_u[2],
+                        inv_w_u[3]);
 
                     if (!T_ray)
                         return false;
 
-                    rescale(T_ray, lightPathPDF, uniPathPDF);
-
                     return true;
                 });
-            T_ray *= T_maj;
-            lightPathPDF *= T_maj;
-            uniPathPDF *= T_maj;
+            T_ray *= T_maj / T_maj[0];
+            inv_w_l *= T_maj / T_maj[0];
+            inv_w_u *= T_maj / T_maj[0];
         }
 
         if (!result.hit || !T_ray)
@@ -272,30 +250,24 @@ inline PBRT_CPU_GPU void TraceTransmittance(ShadowRayWorkItem sr,
         ray = spawnTo(pLight);
     }
 
-    PBRT_DBG("Final T_ray %.9g %.9g %.9g %.9g sr.uniPathPDF %.9g %.9g %.9g %.9g "
-             "uniPathPDF %.9g %.9g %.9g %.9g\n",
-             T_ray[0], T_ray[1], T_ray[2], T_ray[3], sr.uniPathPDF[0], sr.uniPathPDF[1],
-             sr.uniPathPDF[2], sr.uniPathPDF[3], uniPathPDF[0], uniPathPDF[1],
-             uniPathPDF[2], uniPathPDF[3]);
-    PBRT_DBG("sr.lightPathPDF %.9g %.9g %.9g %.9g lightPathPDF %.9g %.9g %.9g %.9g\n",
-             sr.lightPathPDF[0], sr.lightPathPDF[1], sr.lightPathPDF[2],
-             sr.lightPathPDF[3], lightPathPDF[0], lightPathPDF[1], lightPathPDF[2],
-             lightPathPDF[3]);
+    PBRT_DBG("Final T_ray %.9g %.9g %.9g %.9g sr.inv_w_u %.9g %.9g %.9g %.9g inv_w_u "
+             "%.9g %.9g %.9g %.9g\n",
+             T_ray[0], T_ray[1], T_ray[2], T_ray[3], sr.inv_w_u[0], sr.inv_w_u[1],
+             sr.inv_w_u[2], sr.inv_w_u[3], inv_w_u[0], inv_w_u[1], inv_w_u[2],
+             inv_w_u[3]);
+    PBRT_DBG("sr.inv_w_l %.9g %.9g %.9g %.9g inv_w_l %.9g %.9g %.9g %.9g\n",
+             sr.inv_w_l[0], sr.inv_w_l[1], sr.inv_w_l[2], sr.inv_w_l[3], inv_w_l[0],
+             inv_w_l[1], inv_w_l[2], inv_w_l[3]);
     PBRT_DBG("scaled throughput %.9g %.9g %.9g %.9g\n",
-             T_ray[0] /
-                 (sr.uniPathPDF * uniPathPDF + sr.lightPathPDF * lightPathPDF).Average(),
-             T_ray[1] /
-                 (sr.uniPathPDF * uniPathPDF + sr.lightPathPDF * lightPathPDF).Average(),
-             T_ray[2] /
-                 (sr.uniPathPDF * uniPathPDF + sr.lightPathPDF * lightPathPDF).Average(),
-             T_ray[3] /
-                 (sr.uniPathPDF * uniPathPDF + sr.lightPathPDF * lightPathPDF).Average());
+             T_ray[0] / (sr.inv_w_u * inv_w_u + sr.inv_w_l * inv_w_l).Average(),
+             T_ray[1] / (sr.inv_w_u * inv_w_u + sr.inv_w_l * inv_w_l).Average(),
+             T_ray[2] / (sr.inv_w_u * inv_w_u + sr.inv_w_l * inv_w_l).Average(),
+             T_ray[3] / (sr.inv_w_u * inv_w_u + sr.inv_w_l * inv_w_l).Average());
 
     if (T_ray) {
-        // FIXME/reconcile: this takes lightPathPDF as input while
+        // FIXME/reconcile: this takes inv_w_l as input while
         // e.g. VolPathIntegrator::SampleLd() does not...
-        Ld *= T_ray /
-              (sr.uniPathPDF * uniPathPDF + sr.lightPathPDF * lightPathPDF).Average();
+        Ld *= T_ray / (sr.inv_w_u * inv_w_u + sr.inv_w_l * inv_w_l).Average();
 
         PBRT_DBG("Setting final Ld for shadow ray pixel index %d = as %f %f %f %f\n",
                  sr.pixelIndex, Ld[0], Ld[1], Ld[2], Ld[3]);

@@ -418,8 +418,6 @@ OptiXAggregate::BVH OptiXAggregate::buildBVHForTriangles(
         } else
               LOG_FATAL("Logic error in GPUAggregate::buildBVHForTriangles()");
 
-        shape.parameters.ReportUnused();
-
         Bounds3f bounds;
         for (size_t i = 0; i < mesh->nVertices; ++i)
             bounds = Union(bounds, mesh->p[i]);
@@ -463,6 +461,9 @@ OptiXAggregate::BVH OptiXAggregate::buildBVHForTriangles(
             Material material = getMaterial(shape, namedMaterials, materials);
             triangleInputFlags[meshIndex] = getOptixGeometryFlags(true, alphaTexture);
             input.triangleArray.flags = &triangleInputFlags[meshIndex];
+
+            // Do this here, after the alpha texture has been consumed.
+            shape.parameters.ReportUnused();
 
             input.triangleArray.numSbtRecords = 1;
             input.triangleArray.sbtIndexOffsetBuffer = CUdeviceptr(nullptr);
@@ -765,13 +766,11 @@ OptiXAggregate::BVH OptiXAggregate::buildBVHForBLPs(
             BilinearPatchMesh *mesh = BilinearPatch::CreateMesh(
                 shape.renderFromObject, shape.reverseOrientation, shape.parameters,
                 &shape.loc, alloc);
-            shape.parameters.ReportUnused();
             meshes[meshIndex] = mesh;
             nPatches += mesh->nPatches;
         } else if (shape.name == "curve") {
             BilinearPatchMesh *curveMesh =
                 diceCurveToBLP(shape, 5 /* nseg */, 5 /* nvert */, alloc);
-            shape.parameters.ReportUnused();
             if (curveMesh) {
                 meshes[meshIndex] = curveMesh;
                 nPatches += curveMesh->nPatches;
@@ -830,6 +829,9 @@ OptiXAggregate::BVH OptiXAggregate::buildBVHForBLPs(
         const auto &shape = shapes[shapeIndex];
         Material material = getMaterial(shape, namedMaterials, materials);
         FloatTexture alphaTexture = getAlphaTexture(shape, floatTextures, alloc);
+
+        // After "alpha" has been consumed...
+        shape.parameters.ReportUnused();
 
         flags[meshIndex] = getOptixGeometryFlags(false, alphaTexture);
 
@@ -941,6 +943,9 @@ OptiXAggregate::BVH OptiXAggregate::buildBVHForQuadrics(
         Material material = getMaterial(s, namedMaterials, materials);
         FloatTexture alphaTexture = getAlphaTexture(s, floatTextures, alloc);
         flags[quadricIndex] = getOptixGeometryFlags(false, alphaTexture);
+
+        // Once again, after any alpha texture is created...
+        s.parameters.ReportUnused();
 
         HitgroupRecord hgRecord;
         OPTIX_CHECK(optixSbtRecordPackHeader(intersectPG, &hgRecord));
@@ -1121,7 +1126,7 @@ OptixProgramGroup OptiXAggregate::createIntersectionPG(const char *closest,
 }
 
 OptiXAggregate::OptiXAggregate(
-    const ParsedScene &scene, CUDATrackedMemoryResource *memoryResource,
+    const BasicScene &scene, CUDATrackedMemoryResource *memoryResource,
     NamedTextures &textures,
     const std::map<int, pstd::vector<Light> *> &shapeIndexToAreaLights,
     const std::map<std::string, Medium> &media,
@@ -1131,6 +1136,18 @@ OptiXAggregate::OptiXAggregate(
     CUcontext cudaContext;
     CU_CHECK(cuCtxGetCurrent(&cudaContext));
     CHECK(cudaContext != nullptr);
+
+#ifdef PBRT_IS_WINDOWS
+    // On Windows, it is unfortunately necessary to disable
+    // multithreading here.  The issue is that GPU managed memory can
+    // only be accessed by one of the CPU or the GPU at a time; the
+    // program crashes if this is restriction is violated.  Thus, it's
+    // bad news if we are simultaneously, say, reading PLY files on
+    // the CPU and storing them in managed memory while an OptiX
+    // kernel is running on the GPU to build a BVH... (Issue #164).
+    if (Options->useGPU)
+        DisableThreadPool();
+#endif // PBRT_IS_WINDOWS
 
     ThreadLocal<cudaStream_t> threadCUDAStreams([]() {
         cudaStream_t stream;
@@ -1583,6 +1600,11 @@ OptiXAggregate::OptiXAggregate(
     randomHitSBT.hitgroupRecordBase = randomHitHGRBDevicePtr;
     randomHitSBT.hitgroupRecordStrideInBytes = sizeof(HitgroupRecord);
     randomHitSBT.hitgroupRecordCount = randomHitHGRecords.size();
+
+#ifdef PBRT_IS_WINDOWS
+    if (Options->useGPU)
+      ReenableThreadPool();
+#endif // PBRT_IS_WINDOWS
 }
 
 OptiXAggregate::ParamBufferState &OptiXAggregate::getParamBuffer(

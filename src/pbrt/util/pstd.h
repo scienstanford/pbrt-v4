@@ -15,9 +15,9 @@
 #include <cstring>
 #include <initializer_list>
 #include <iterator>
-#include <list>
 #include <new>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <typeinfo>
 #include <utility>
@@ -299,7 +299,7 @@ PBRT_CPU_GPU inline constexpr auto GetData(C &c) noexcept -> decltype(GetDataImp
 // Detection idioms for size() and data().
 template <typename C>
 using HasSize =
-    std::is_integral<typename std::decay<decltype(std::declval<C &>().size())>::type>;
+    std::is_integral<typename std::decay_t<decltype(std::declval<C &>().size())>>;
 
 // We want to enable conversion from vector<T*> to span<const T* const> but
 // disable conversion from vector<Derived> to span<Base>. Here we use
@@ -308,8 +308,9 @@ using HasSize =
 // data() to avoid problems with classes which have a member function data()
 // which returns a reference.
 template <typename T, typename C>
-using HasData = std::is_convertible<
-    typename std::decay<decltype(GetData(std::declval<C &>()))>::type *, T *const *>;
+using HasData =
+    std::is_convertible<typename std::decay_t<decltype(GetData(std::declval<C &>()))> *,
+                        T *const *>;
 
 }  // namespace span_internal
 
@@ -334,7 +335,7 @@ class span {
     template <typename U>
     using EnableIfMutableView = typename std::enable_if_t<!std::is_const<T>::value, U>;
 
-    using value_type = typename std::remove_cv<T>::type;
+    using value_type = typename std::remove_cv_t<T>;
     using iterator = T *;
     using const_iterator = const T *;
 
@@ -528,10 +529,17 @@ memory_resource *get_default_resource() noexcept;
 
 class alignas(64) monotonic_buffer_resource : public memory_resource {
   public:
-    explicit monotonic_buffer_resource(memory_resource *upstream)
-        : upstreamResource(upstream) {}
-    monotonic_buffer_resource(size_t blockSize, memory_resource *upstream)
-        : blockSize(blockSize), upstreamResource(upstream) {}
+    explicit monotonic_buffer_resource(memory_resource *upstream) : upstream(upstream) {
+#ifndef NDEBUG
+        constructTID = std::this_thread::get_id();
+#endif
+    }
+    monotonic_buffer_resource(size_t block_size, memory_resource *upstream)
+        : block_size(block_size), upstream(upstream) {
+#ifndef NDEBUG
+        constructTID = std::this_thread::get_id();
+#endif
+    }
 #if 0
     // TODO
     monotonic_buffer_resource(void *buffer, size_t buffer_size,
@@ -552,50 +560,26 @@ class alignas(64) monotonic_buffer_resource : public memory_resource {
     monotonic_buffer_resource operator=(const monotonic_buffer_resource &) = delete;
 
     void release() {
-        for (const auto &block : usedBlocks)
-            upstreamResource->deallocate(block.ptr, block.size);
-        usedBlocks.clear();
-
-        upstreamResource->deallocate(currentBlock.ptr, currentBlock.size);
-        currentBlock = MemoryBlock();
+        block *b = block_list;
+        while (b) {
+            block *next = b->next;
+            free_block(b);
+            b = next;
+        }
+        block_list = nullptr;
+        current = nullptr;
     }
 
-    memory_resource *upstream_resource() const { return upstreamResource; }
+    memory_resource *upstream_resource() const { return upstream; }
 
   protected:
-    void *do_allocate(size_t bytes, size_t align) override {
-        if (bytes > blockSize) {
-            // We've got a big allocation; let the current block be so that
-            // smaller allocations have a chance at using up more of it.
-            usedBlocks.push_back(
-                MemoryBlock{upstreamResource->allocate(bytes, align), bytes});
-            return usedBlocks.back().ptr;
-        }
-
-        if ((currentBlockPos % align) != 0)
-            currentBlockPos += align - (currentBlockPos % align);
-        DCHECK_EQ(0, currentBlockPos % align);
-
-        if (currentBlockPos + bytes > currentBlock.size) {
-            // Add current block to _usedBlocks_ list
-            if (currentBlock.size) {
-                usedBlocks.push_back(currentBlock);
-                currentBlock = {};
-            }
-
-            currentBlock = {
-                upstreamResource->allocate(blockSize, alignof(std::max_align_t)),
-                blockSize};
-            currentBlockPos = 0;
-        }
-
-        void *ptr = (char *)currentBlock.ptr + currentBlockPos;
-        currentBlockPos += bytes;
-        return ptr;
-    }
+    void *do_allocate(size_t bytes, size_t align) override;
 
     void do_deallocate(void *p, size_t bytes, size_t alignment) override {
-        // no-op
+        if (bytes > block_size)
+            // do_allocate() passes large allocations on to the upstream memory resource,
+            // so we might as well deallocate when it's possible.
+            upstream->deallocate(p, bytes);
     }
 
     bool do_is_equal(const memory_resource &other) const noexcept override {
@@ -603,17 +587,35 @@ class alignas(64) monotonic_buffer_resource : public memory_resource {
     }
 
   private:
-    struct MemoryBlock {
-        void *ptr = nullptr;
-        size_t size = 0;
+    struct block {
+        void *ptr;
+        size_t size;
+        block *next;
     };
+    block *allocate_block(size_t size) {
+        // Single allocation for both the block and its memory. This means
+        // that strictly speaking MemoryBlock::ptr is redundant, but let's not get too
+        // fancy here...
+        block *b = static_cast<block *>(
+            upstream->allocate(sizeof(block) + size, alignof(block)));
 
-    memory_resource *upstreamResource;
-    size_t blockSize = 256 * 1024;
-    MemoryBlock currentBlock;
-    size_t currentBlockPos = 0;
-    // TODO: should use the memory_resource for this list's allocations...
-    std::list<MemoryBlock> usedBlocks;
+        b->ptr = reinterpret_cast<char *>(b) + sizeof(block);
+        b->size = size;
+        b->next = block_list;
+        block_list = b;
+
+        return b;
+    }
+    void free_block(block *b) { upstream->deallocate(b, sizeof(block) + b->size); }
+
+#ifndef NDEBUG
+    std::thread::id constructTID;
+#endif
+    memory_resource *upstream;
+    size_t block_size = 256 * 1024;
+    block *current = nullptr;
+    size_t current_pos = 0;
+    block *block_list = nullptr;
 };
 
 template <class Tp = std::byte>

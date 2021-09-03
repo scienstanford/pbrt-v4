@@ -5,7 +5,6 @@
 #include <pbrt/util/lowdiscrepancy.h>
 
 #include <pbrt/util/math.h>
-#include <pbrt/util/parallel.h>
 #include <pbrt/util/primes.h>
 #include <pbrt/util/print.h>
 #include <pbrt/util/stats.h>
@@ -50,9 +49,8 @@ pstd::vector<DigitPermutation> *ComputeRadicalInversePermutations(uint32_t seed,
     pstd::vector<DigitPermutation> *perms =
         alloc.new_object<pstd::vector<DigitPermutation>>(alloc);
     perms->resize(PrimeTableSize);
-    ParallelFor(0, PrimeTableSize, [&perms, &alloc, seed](int64_t i) {
+    for (int i = 0; i < PrimeTableSize; ++i)
         (*perms)[i] = DigitPermutation(Primes[i], seed, alloc);
-    });
     return perms;
 }
 

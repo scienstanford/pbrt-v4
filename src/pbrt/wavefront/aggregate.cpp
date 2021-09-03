@@ -21,7 +21,7 @@
 namespace pbrt {
 
 CPUAggregate::CPUAggregate(
-    ParsedScene &scene, NamedTextures &textures,
+    BasicScene &scene, NamedTextures &textures,
     const std::map<int, pstd::vector<Light> *> &shapeIndexToAreaLights,
     const std::map<std::string, Medium> &media,
     const std::map<std::string, pbrt::Material> &namedMaterials,
@@ -42,6 +42,10 @@ void CPUAggregate::IntersectClosest(int maxRays, const RayQueue *rayQueue,
     ParallelFor(0, rayQueue->Size(), [=](int index) {
         const RayWorkItem r = (*rayQueue)[index];
         // Intersect _r_'s ray with the scene and enqueue resulting work
+        if (!aggregate) {
+            EnqueueWorkAfterMiss(r, mediumSampleQueue, escapedRayQueue);
+            return;
+        }
         pstd::optional<ShapeIntersection> si = aggregate.Intersect(r.ray);
         if (!si)
             EnqueueWorkAfterMiss(r, mediumSampleQueue, escapedRayQueue);
@@ -59,7 +63,7 @@ void CPUAggregate::IntersectShadow(int maxRays, ShadowRayQueue *shadowRayQueue,
     ParallelFor(0, shadowRayQueue->Size(), [=](int index) {
         const ShadowRayWorkItem w = (*shadowRayQueue)[index];
         bool hit = aggregate.IntersectP(w.ray, w.tMax);
-        RecordShadowRayIntersection(w, pixelSampleState, hit);
+        RecordShadowRayResult(w, pixelSampleState, hit);
     });
 }
 

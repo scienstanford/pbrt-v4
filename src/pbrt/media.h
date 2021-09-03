@@ -737,9 +737,19 @@ inline MediumProperties Medium::SamplePoint(Point3f p,
 }
 
 // Medium Sampling Function Definitions
+template <typename F>
+PBRT_CPU_GPU SampledSpectrum SampleT_maj(Ray ray, Float tMax, Float u, RNG &rng,
+                                         const SampledWavelengths &lambda, F callback) {
+    auto sample = [&](auto medium) {
+        using M = typename std::remove_reference_t<decltype(*medium)>;
+        return SampleT_maj<M>(ray, tMax, u, rng, lambda, callback);
+    };
+    return ray.medium.Dispatch(sample);
+}
+
 template <typename ConcreteMedium, typename F>
 PBRT_CPU_GPU SampledSpectrum SampleT_maj(Ray ray, Float tMax, Float u, RNG &rng,
-                                         const SampledWavelengths &lambda, F func) {
+                                         const SampledWavelengths &lambda, F callback) {
     // Normalize ray direction and update _tMax_ accordingly
     tMax *= Length(ray.d);
     ray.d = Normalize(ray.d);
@@ -749,7 +759,7 @@ PBRT_CPU_GPU SampledSpectrum SampleT_maj(Ray ray, Float tMax, Float u, RNG &rng,
     typename ConcreteMedium::MajorantIterator iter;
     medium->SampleRay(ray, tMax, lambda, &iter);
 
-    // Generate ray majorant samples until termination event
+    // Generate ray majorant samples until termination
     SampledSpectrum T_maj(1.f);
     bool done = false;
     while (!done) {
@@ -757,25 +767,31 @@ PBRT_CPU_GPU SampledSpectrum SampleT_maj(Ray ray, Float tMax, Float u, RNG &rng,
         pstd::optional<RayMajorantSegment> seg = iter.Next();
         if (!seg)
             return T_maj;
-        // Handle cases that skip majorant segment sampling
-        Float dt = seg->tMax - seg->tMin;
-        if (IsInf(dt))
-            dt = std::numeric_limits<Float>::max();
+        // Handle zero-valued majorant for current segment
         if (seg->sigma_maj[0] == 0) {
+            Float dt = seg->tMax - seg->tMin;
+            // Handle infinite _dt_ for ray majorant segment
+            if (IsInf(dt))
+                dt = std::numeric_limits<Float>::max();
+
             T_maj *= FastExp(-dt * seg->sigma_maj);
             continue;
         }
 
+        // Generate samples along current majorant segment
         Float tMin = seg->tMin;
         while (true) {
             // Try to generate sample along current majorant segment
             Float t = tMin + SampleExponential(u, seg->sigma_maj[0]);
+            PBRT_DBG("Sampled t = %f from tMin %f u %f sigma_maj[0] %f\n",
+                     t, tMin, u, seg->sigma_maj[0]);
             u = rng.Uniform<Float>();
             if (t < seg->tMax) {
-                // Call callback function for sample along majorant segment
+                // Call callback function for sample within segment
                 T_maj *= FastExp(-(t - tMin) * seg->sigma_maj);
+                PBRT_DBG("t < seg->tMax\n");
                 MediumProperties mp = medium->SamplePoint(ray(t), lambda);
-                if (!func(ray(t), mp, seg->sigma_maj, T_maj)) {
+                if (!callback(ray(t), mp, seg->sigma_maj, T_maj)) {
                     // Returning out of doubly-nested while loop is not as good perf. wise
                     // on the GPU vs using "done" here.
                     done = true;
@@ -786,22 +802,18 @@ PBRT_CPU_GPU SampledSpectrum SampleT_maj(Ray ray, Float tMax, Float u, RNG &rng,
 
             } else {
                 // Handle sample past end of majorant segment
+                Float dt = seg->tMax - tMin;
+                // Handle infinite _dt_ for ray majorant segment
+                if (IsInf(dt))
+                    dt = std::numeric_limits<Float>::max();
+
                 T_maj *= FastExp(-dt * seg->sigma_maj);
+                PBRT_DBG("Past end, added dt %f * maj[0] %f\n", dt, seg->sigma_maj[0]);
                 break;
             }
         }
     }
     return SampledSpectrum(1.f);
-}
-
-template <typename F>
-PBRT_CPU_GPU SampledSpectrum SampleT_maj(Ray ray, Float tMax, Float u, RNG &rng,
-                                         const SampledWavelengths &lambda, F func) {
-    auto sample = [&](auto medium) {
-        using Medium = typename std::remove_reference_t<decltype(*medium)>;
-        return SampleT_maj<Medium>(ray, tMax, u, rng, lambda, func);
-    };
-    return ray.medium.Dispatch(sample);
 }
 
 inline RayMajorantIterator Medium::SampleRay(Ray ray, Float tMax,
@@ -815,7 +827,7 @@ inline RayMajorantIterator Medium::SampleRay(Ray ray, Float tMax,
         medium->SampleRay(ray, tMax, lambda, iter);
         return iter;
     };
-    return Dispatch(sample);
+    return DispatchCPU(sample);
 }
 
 }  // namespace pbrt

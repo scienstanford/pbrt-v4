@@ -39,10 +39,9 @@ std::string UTF8FromWString(std::wstring str);
 // InternedString Definition
 class InternedString {
   public:
-    // InterenedString Public Methods
+    // InternedString Public Methods
     InternedString() = default;
     InternedString(const std::string *str) : str(str) {}
-
     operator const std::string &() const { return *str; }
 
     bool operator==(const char *s) const { return *str == s; }
@@ -55,7 +54,6 @@ class InternedString {
     std::string ToString() const { return *str; }
 
   private:
-    // InterenedString Private Members
     const std::string *str = nullptr;
 };
 

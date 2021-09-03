@@ -38,12 +38,12 @@ struct MaterialEvalContext : public TextureEvalContext {
     Vector3f dpdus;
 };
 
-// BumpEvalContext Definition
-struct BumpEvalContext {
-    // BumpEvalContext Public Methods
-    BumpEvalContext() = default;
+// NormalBumpEvalContext Definition
+struct NormalBumpEvalContext {
+    // NormalBumpEvalContext Public Methods
+    NormalBumpEvalContext() = default;
     PBRT_CPU_GPU
-    BumpEvalContext(const SurfaceInteraction &si)
+    NormalBumpEvalContext(const SurfaceInteraction &si)
         : p(si.p()),
           uv(si.uv),
           n(si.n),
@@ -68,7 +68,7 @@ struct BumpEvalContext {
                                   faceIndex);
     }
 
-    // BumpEvalContext Public Members
+    // NormalBumpEvalContext Public Members
     Point3f p;
     Point2f uv;
     Normal3f n;
@@ -82,56 +82,59 @@ struct BumpEvalContext {
     int faceIndex = 0;
 };
 
-// Bump-mapping Function Definitions
+// Normal Mapping Function Definitions
+inline PBRT_CPU_GPU void NormalMap(const Image *normalMap,
+                                   const NormalBumpEvalContext &ctx, Vector3f *dpdu,
+                                   Vector3f *dpdv) {
+    // Get normalized normal vector from normal map
+    WrapMode2D wrap(WrapMode::Repeat);
+    Point2f uv(ctx.uv[0], 1 - ctx.uv[1]);
+    Vector3f ns(2 * normalMap->BilerpChannel(uv, 0, wrap) - 1,
+                2 * normalMap->BilerpChannel(uv, 1, wrap) - 1,
+                2 * normalMap->BilerpChannel(uv, 2, wrap) - 1);
+    ns = Normalize(ns);
+
+    // Transform tangent-space normal to rendering space
+    Frame frame = Frame::FromZ(ctx.shading.n);
+    ns = frame.FromLocal(ns);
+
+    // Find $\dpdu$ and $\dpdv$ that give shading normal
+    Float ulen = Length(ctx.shading.dpdu), vlen = Length(ctx.shading.dpdv);
+    *dpdu = Normalize(GramSchmidt(ctx.shading.dpdu, ns)) * ulen;
+    *dpdv = Normalize(Cross(ns, *dpdu)) * vlen;
+}
+
+// Bump Mapping Function Definitions
 template <typename TextureEvaluator>
-PBRT_CPU_GPU void Bump(TextureEvaluator texEval, FloatTexture displacement,
-                       const Image *normalMap, const BumpEvalContext &ctx, Vector3f *dpdu,
-                       Vector3f *dpdv) {
-    DCHECK(displacement || normalMap);
-    if (displacement) {
-        if (displacement)
-            DCHECK(texEval.CanEvaluate({displacement}, {}));
-        // Compute offset positions and evaluate displacement texture
-        TextureEvalContext shiftedCtx = ctx;
-        // Shift _shiftedCtx_ _du_ in the $u$ direction
-        Float du = .5f * (std::abs(ctx.dudx) + std::abs(ctx.dudy));
-        if (du == 0)
-            du = .0005f;
-        shiftedCtx.p = ctx.p + du * ctx.shading.dpdu;
-        shiftedCtx.uv = ctx.uv + Vector2f(du, 0.f);
+PBRT_CPU_GPU void BumpMap(TextureEvaluator texEval, FloatTexture displacement,
+                          const NormalBumpEvalContext &ctx, Vector3f *dpdu,
+                          Vector3f *dpdv) {
+    DCHECK(texEval.CanEvaluate({displacement}, {}));
+    // Compute offset positions and evaluate displacement texture
+    TextureEvalContext shiftedCtx = ctx;
+    // Shift _shiftedCtx_ _du_ in the $u$ direction
+    Float du = .5f * (std::abs(ctx.dudx) + std::abs(ctx.dudy));
+    if (du == 0)
+        du = .0005f;
+    shiftedCtx.p = ctx.p + du * ctx.shading.dpdu;
+    shiftedCtx.uv = ctx.uv + Vector2f(du, 0.f);
 
-        Float uDisplace = texEval(displacement, shiftedCtx);
-        // Shift _shiftedCtx_ _dv_ in the $v$ direction
-        Float dv = .5f * (std::abs(ctx.dvdx) + std::abs(ctx.dvdy));
-        if (dv == 0)
-            dv = .0005f;
-        shiftedCtx.p = ctx.p + dv * ctx.shading.dpdv;
-        shiftedCtx.uv = ctx.uv + Vector2f(0.f, dv);
+    Float uDisplace = texEval(displacement, shiftedCtx);
+    // Shift _shiftedCtx_ _dv_ in the $v$ direction
+    Float dv = .5f * (std::abs(ctx.dvdx) + std::abs(ctx.dvdy));
+    if (dv == 0)
+        dv = .0005f;
+    shiftedCtx.p = ctx.p + dv * ctx.shading.dpdv;
+    shiftedCtx.uv = ctx.uv + Vector2f(0.f, dv);
 
-        Float vDisplace = texEval(displacement, shiftedCtx);
-        Float displace = texEval(displacement, ctx);
+    Float vDisplace = texEval(displacement, shiftedCtx);
+    Float displace = texEval(displacement, ctx);
 
-        // Compute bump-mapped differential geometry
-        *dpdu = ctx.shading.dpdu + (uDisplace - displace) / du * Vector3f(ctx.shading.n) +
-                displace * Vector3f(ctx.shading.dndu);
-        *dpdv = ctx.shading.dpdv + (vDisplace - displace) / dv * Vector3f(ctx.shading.n) +
-                displace * Vector3f(ctx.shading.dndv);
-
-    } else {
-        // Sample normal map to compute shading normal
-        WrapMode2D wrap(WrapMode::Repeat);
-        Point2f uv(ctx.uv[0], 1 - ctx.uv[1]);
-        Vector3f ns(2 * normalMap->BilerpChannel(uv, 0, wrap) - 1,
-                    2 * normalMap->BilerpChannel(uv, 1, wrap) - 1,
-                    2 * normalMap->BilerpChannel(uv, 2, wrap) - 1);
-        ns = Normalize(ns);
-        Frame frame = Frame::FromZ(ctx.shading.n);
-        ns = frame.FromLocal(ns);
-
-        Float ulen = Length(ctx.shading.dpdu), vlen = Length(ctx.shading.dpdv);
-        *dpdu = Normalize(GramSchmidt(ctx.shading.dpdu, ns)) * ulen;
-        *dpdv = Normalize(Cross(ns, *dpdu)) * vlen;
-    }
+    // Compute bump-mapped differential geometry
+    *dpdu = ctx.shading.dpdu + (uDisplace - displace) / du * Vector3f(ctx.shading.n) +
+            displace * Vector3f(ctx.shading.dndu);
+    *dpdv = ctx.shading.dpdv + (vDisplace - displace) / dv * Vector3f(ctx.shading.n) +
+            displace * Vector3f(ctx.shading.dndv);
 }
 
 // DielectricMaterial Definition
@@ -182,6 +185,8 @@ class DielectricMaterial {
         Float sampledEta = eta(lambda[0]);
         if (!eta.template Is<ConstantSpectrum>())
             lambda.TerminateSecondary();
+        // Handle edge case in case lambda[0] is beyond the wavelengths stored by the
+        // Spectrum.
         if (sampledEta == 0)
             sampledEta = 1;
 
@@ -203,8 +208,8 @@ class DielectricMaterial {
     FloatTexture displacement;
     Image *normalMap;
     FloatTexture uRoughness, vRoughness;
-    Spectrum eta;
     bool remapRoughness;
+    Spectrum eta;
 };
 
 // ThinDielectricMaterial Definition
@@ -226,6 +231,8 @@ class ThinDielectricMaterial {
         Float sampledEta = eta(lambda[0]);
         if (!eta.template Is<ConstantSpectrum>())
             lambda.TerminateSecondary();
+        // Handle edge case in case lambda[0] is beyond the wavelengths stored by the
+        // Spectrum.
         if (sampledEta == 0)
             sampledEta = 1;
 
@@ -276,6 +283,18 @@ class MixMaterial {
         materials[1] = m[1];
     }
 
+    template <typename TextureEvaluator>
+    PBRT_CPU_GPU Material ChooseMaterial(TextureEvaluator texEval,
+                                         MaterialEvalContext ctx) const {
+        Float amt = texEval(amount, ctx);
+        if (amt <= 0)
+            return materials[0];
+        if (amt >= 1)
+            return materials[1];
+        Float u = HashFloat(ctx.p, ctx.wo, materials[0], materials[1]);
+        return (amt < u) ? materials[0] : materials[1];
+    }
+
     PBRT_CPU_GPU
     Material GetMaterial(int i) const { return materials[i]; }
 
@@ -316,19 +335,6 @@ class MixMaterial {
     template <typename TextureEvaluator>
     PBRT_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
         return texEval.CanEvaluate({amount}, {});
-    }
-
-    template <typename TextureEvaluator>
-    PBRT_CPU_GPU Material ChooseMaterial(TextureEvaluator texEval,
-                                         MaterialEvalContext ctx) const {
-        Float amt = texEval(amount, ctx);
-        if (amt <= 0)
-            return materials[0];
-        if (amt >= 1)
-            return materials[1];
-
-        Float u = HashFloat(ctx.p, ctx.wo, materials[0], materials[1]);
-        return (amt < u) ? materials[0] : materials[1];
     }
 
     template <typename TextureEvaluator>
@@ -428,7 +434,7 @@ class HairMaterial {
 class DiffuseMaterial {
   public:
     // DiffuseMaterial Type Definitions
-    using BxDF = RoughDiffuseBxDF;
+    using BxDF = DiffuseBxDF;
     using BSSRDF = void;
 
     // DiffuseMaterial Public Methods
@@ -450,24 +456,20 @@ class DiffuseMaterial {
 
     std::string ToString() const;
 
-    DiffuseMaterial(SpectrumTexture reflectance, FloatTexture sigma,
-                    FloatTexture displacement, Image *normalMap)
-        : displacement(displacement),
-          normalMap(normalMap),
-          reflectance(reflectance),
-          sigma(sigma) {}
+    DiffuseMaterial(SpectrumTexture reflectance, FloatTexture displacement,
+                    Image *normalMap)
+        : displacement(displacement), normalMap(normalMap), reflectance(reflectance) {}
 
     template <typename TextureEvaluator>
     PBRT_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
-        return texEval.CanEvaluate({sigma}, {reflectance});
+        return texEval.CanEvaluate({}, {reflectance});
     }
 
     template <typename TextureEvaluator>
     PBRT_CPU_GPU BSDF GetBSDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                              SampledWavelengths &lambda, RoughDiffuseBxDF *bxdf) const {
+                              SampledWavelengths &lambda, DiffuseBxDF *bxdf) const {
         SampledSpectrum r = Clamp(texEval(reflectance, ctx, lambda), 0, 1);
-        Float sig = Clamp(texEval(sigma, ctx), 0, 90);
-        *bxdf = RoughDiffuseBxDF(r, SampledSpectrum(0), sig);
+        *bxdf = DiffuseBxDF(r);
         return BSDF(ctx.ns, ctx.dpdus, bxdf);
     }
 
@@ -476,7 +478,6 @@ class DiffuseMaterial {
     FloatTexture displacement;
     Image *normalMap;
     SpectrumTexture reflectance;
-    FloatTexture sigma;
 };
 
 // ConductorMaterial Definition
@@ -799,20 +800,19 @@ class DiffuseTransmissionMaterial {
     using BSSRDF = void;
     // DiffuseTransmissionMaterial Public Methods
     DiffuseTransmissionMaterial(SpectrumTexture reflectance,
-                                SpectrumTexture transmittance, FloatTexture sigma,
-                                FloatTexture displacement, Image *normalMap, Float scale)
+                                SpectrumTexture transmittance, FloatTexture displacement,
+                                Image *normalMap, Float scale)
         : displacement(displacement),
           normalMap(normalMap),
           reflectance(reflectance),
           transmittance(transmittance),
-          sigma(sigma),
           scale(scale) {}
 
     static const char *Name() { return "DiffuseTransmissionMaterial"; }
 
     template <typename TextureEvaluator>
     PBRT_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
-        return texEval.CanEvaluate({sigma}, {reflectance, transmittance});
+        return texEval.CanEvaluate({}, {reflectance, transmittance});
     }
 
     template <typename TextureEvaluator>
@@ -820,8 +820,7 @@ class DiffuseTransmissionMaterial {
                               SampledWavelengths &lambda, RoughDiffuseBxDF *bxdf) const {
         SampledSpectrum r = Clamp(scale * texEval(reflectance, ctx, lambda), 0, 1);
         SampledSpectrum t = Clamp(scale * texEval(transmittance, ctx, lambda), 0, 1);
-        Float s = texEval(sigma, ctx);
-        *bxdf = RoughDiffuseBxDF(r, t, s);
+        *bxdf = RoughDiffuseBxDF(r, t, 0);
         return BSDF(ctx.ns, ctx.dpdus, bxdf);
     }
 
@@ -847,7 +846,6 @@ class DiffuseTransmissionMaterial {
     FloatTexture displacement;
     Image *normalMap;
     SpectrumTexture reflectance, transmittance;
-    FloatTexture sigma;
     Float scale;
 };
 
@@ -905,7 +903,7 @@ inline BSDF Material::GetBSDF(TextureEvaluator texEval, MaterialEvalContext ctx,
                               ScratchBuffer &scratchBuffer) const {
     // Define _getBSDF_ lamba function for _Material::GetBSDF()_
     auto getBSDF = [&](auto mtl) -> BSDF {
-        using Material = typename std::remove_reference<decltype(*mtl)>::type;
+        using Material = typename std::remove_reference_t<decltype(*mtl)>;
         using BxDF = typename Material::BxDF;
         BxDF *bxdf = (BxDF *)scratchBuffer.Alloc(sizeof(BxDF), alignof(BxDF));
         return mtl->GetBSDF(texEval, ctx, lambda, bxdf);
@@ -925,7 +923,7 @@ inline BSSRDF Material::GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext 
                                   SampledWavelengths &lambda,
                                   ScratchBuffer &scratchBuffer) const {
     auto get = [&](auto ptr) -> BSSRDF {
-        using Material = typename std::remove_reference<decltype(*ptr)>::type;
+        using Material = typename std::remove_reference_t<decltype(*ptr)>;
         using BSSRDF = typename Material::BSSRDF;
         if constexpr (std::is_same_v<BSSRDF, void>)
             return nullptr;
