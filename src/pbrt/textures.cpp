@@ -395,10 +395,11 @@ SampledSpectrum SpectrumImageTexture::Evaluate(TextureEvalContext ctx,
                 return RGBAlbedoSpectrum(*cs, Clamp(rgb, 0, 1)).Sample(lambda);
             else
                 return RGBIlluminantSpectrum(*cs, rgb).Sample(lambda);
-    }
+        }
     // otherwise it better be a one-channel texture
     DCHECK(rgb[0] == rgb[1] && rgb[1] == rgb[2]);
     return SampledSpectrum(rgb[0]);
+    }
 
 #endif
 }
