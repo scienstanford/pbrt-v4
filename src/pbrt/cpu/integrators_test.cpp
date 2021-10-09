@@ -334,7 +334,7 @@ std::vector<TestIntegrator> GetIntegrators() {
                 cbp, 45, Bounds2f(Point2f(-1, -1), Point2f(1, 1)), 0., 10., distpoly);
             const Film filmp = camera->GetFilm();
 
-            Integrator *integrator = new VolPathIntegrator(8, camera, sampler.first,
+            Integrator *integrator = new VolPathIntegrator(0, 255, 10, 256, 8, camera, sampler.first,
                                                            scene.aggregate, scene.lights);
             integrators.push_back({integrator, filmp,
                                    "VolPath, depth 8, Perspective, " + sampler.second +
@@ -353,7 +353,7 @@ std::vector<TestIntegrator> GetIntegrators() {
                 cbp, Bounds2f(Point2f(-.1, -.1), Point2f(.1, .1)), 0., 10.);
             const Film filmp = camera->GetFilm();
 
-            Integrator *integrator = new VolPathIntegrator(8, camera, sampler.first,
+            Integrator *integrator = new VolPathIntegrator(0, 255, 10, 256, 8, camera, sampler.first,
                                                            scene.aggregate, scene.lights);
             integrators.push_back(
                 {integrator, filmp,

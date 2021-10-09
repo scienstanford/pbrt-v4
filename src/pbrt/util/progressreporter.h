@@ -101,3 +101,4 @@ inline void ProgressReporter::Update(int64_t num) {
 }  // namespace pbrt
 
 #endif  // PBRT_UTIL_PROGRESSREPORTER_H
+ 

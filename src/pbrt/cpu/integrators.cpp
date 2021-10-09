@@ -41,6 +41,7 @@
 #include <pbrt/util/string.h>
 
 #include <algorithm>
+#include <cmath>
 
 namespace pbrt {
 
@@ -953,6 +954,9 @@ SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &l
     bool specularBounce = false, anyNonSpecularBounces = false;
     int depth = 0;
     Float etaScale = 1;
+    Float rayDistance = 0;
+    std::vector<SampledSpectrum> L_tof(nTimeBins);
+    Float unitBin = 2 * maxRange / nTimeBins;
 
     LightSampleContext prevIntrContext;
 
@@ -961,7 +965,9 @@ SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &l
         PBRT_DBG("%s\n", StringPrintf("Path tracer depth %d, current L = %s, beta = %s\n",
                                       depth, L, beta)
                              .c_str());
+
         pstd::optional<ShapeIntersection> si = Intersect(ray);
+
         if (ray.medium) {
             // Sample the participating medium
             bool scattered = false, terminated = false;
@@ -1069,15 +1075,16 @@ SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &l
             r_u *= T_maj / T_maj[0];
             r_l *= T_maj / T_maj[0];
         }
+
         // Handle surviving unscattered rays
         // Add emitted light at volume path vertex or from the environment
         if (!si) {
             // Accumulate contributions from infinite light sources
             for (const auto &light : infiniteLights) {
                 if (SampledSpectrum Le = light.Le(ray, lambda); Le) {
-                    if (depth == 0 || specularBounce)
+                    if (depth == 0 || specularBounce) {
                         L += beta * Le / r_u.Average();
-                    else {
+                    } else {
                         // Add infinite light contribution using both PDFs with MIS
                         Float lightPDF = lightSampler.PMF(prevIntrContext, light) *
                                          light.PDF_Li(prevIntrContext, ray.d, true);
@@ -1089,11 +1096,46 @@ SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &l
 
             break;
         }
-        SurfaceInteraction &isect = si->intr;
+        SurfaceInteraction &isect = si->intr;  // added by zhenyi
+        Point3f rayOrigin = ray.o;
+        Point3f isectP = isect.p();
+
+        rayDistance += std::sqrt(pow((rayOrigin.x - isectP.x), 2.0) +
+                                 pow((rayOrigin.y - isectP.y), 2.0) +
+                                 pow((rayOrigin.z - isectP.z), 2.0));
+
+        float distanceOffset = rayDistance / unitBin;
+        int offset = std::floor(distanceOffset);
+        Float weight = 1 + offset - distanceOffset;
+
+        // not sure whether this should be here
+        // L_tof[offset] += weight * (L);
+        // L_tof[offset + 1] += (1 - weight) * (L);
+
         if (SampledSpectrum Le = isect.Le(-ray.d, lambda); Le) {
             // Add contribution of emission from intersected surface
-            if (depth == 0 || specularBounce)
+            if (depth == 0 || specularBounce) {
                 L += beta * Le / r_u.Average();
+
+                std::vector<SampledSpectrum> L_tof_tmp(nTimeBins);
+                L_tof_tmp[offset] = weight * (beta * Le / r_u.Average());
+                L_tof_tmp[offset + 1] =
+                    (1 - weight) *  (beta * Le / r_u.Average());
+                std::vector<SampledSpectrum> L_tof_offset(nTimeBins);
+                for (int k = 0; k < nTimeBins; k++) {
+                    if (k + offset < nTimeBins) {
+                        L_tof_offset[k + offset] += weight * L_tof_tmp[k];
+                        L_tof_offset[k + offset+1] += (1 - weight) * L_tof_tmp[k];
+                    }
+                }
+                for (int k = 0; k < nTimeBins; k++) {
+                    if (k < nTimeBins) {
+                        L_tof[k] += L_tof_offset[k];
+                    }
+                }
+
+            }
+
             else {
                 // Add surface light contribution using both PDFs with MIS
                 Light areaLight(isect.areaLight);
@@ -1101,6 +1143,26 @@ SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &l
                                  areaLight.PDF_Li(prevIntrContext, ray.d, true);
                 r_l *= lightPDF;
                 L += beta * Le / (r_u + r_l).Average();
+                // rount trip
+                if (offset < nTimeBins) {
+                    std::vector<SampledSpectrum> L_tof_tmp(nTimeBins);
+                    L_tof_tmp[offset] = weight * (beta * Le / (r_u + r_l).Average());
+                    L_tof_tmp[offset + 1] =
+                        (1 - weight) * (beta * Le / (r_u + r_l).Average());
+
+                    std::vector<SampledSpectrum> L_tof_offset(nTimeBins);
+                    for (int k = 0; k < nTimeBins; k++) {
+                        if (k + offset < nTimeBins) {
+                            L_tof_offset[k + offset] += weight * L_tof_tmp[k];
+                            L_tof_offset[k + offset+1] += (1 - weight) * L_tof_tmp[k];
+                        }
+                    }
+                    for (int k = 0; k < nTimeBins; k++) {
+                        if (k < nTimeBins) {
+                            L_tof[k] += L_tof_offset[k];
+                        }
+                    }
+                }
             }
         }
 
@@ -1136,8 +1198,14 @@ SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &l
         }
 
         // Terminate path if maximum depth reached
-        if (depth++ >= maxDepth)
+        if (depth++ >= maxDepth) {
+            SampledSpectrum L_Range;
+            for (int t = timeMin; t < timeMax; t++) {
+                L_Range += L_tof[t];
+            }
+            L = L_Range;
             return L;
+        }
 
         ++surfaceInteractions;
         // Possibly regularize the BSDF
@@ -1148,7 +1216,24 @@ SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &l
 
         // Sample illumination from lights to find attenuated path contribution
         if (IsNonSpecular(bsdf.Flags())) {
-            L += SampleLd(isect, &bsdf, lambda, sampler, beta, r_u);
+            SampledSpectrum Ld = SampleLd(isect, &bsdf, lambda, sampler, beta, r_u);
+            L += Ld;
+            std::vector<SampledSpectrum> L_tof_tmp(nTimeBins);
+            L_tof_tmp[offset] = weight * Ld;
+            L_tof_tmp[offset + 1] = (1 - weight) * Ld;
+            std::vector<SampledSpectrum> L_tof_offset(nTimeBins);
+            for (int k = 0; k < nTimeBins; k++) {
+                if (k + offset < nTimeBins) {
+                    L_tof_offset[k + offset] += weight * L_tof_tmp[k];
+                    L_tof_offset[k + offset+1] += (1 - weight) * L_tof_tmp[k];
+                }
+            }
+            for (int k = 0; k < nTimeBins; k++) {
+                if (k < nTimeBins) {
+                    L_tof[k] += L_tof_offset[k];
+                }
+            }
+
             DCHECK(IsInf(L.y(lambda)) == false);
         }
         prevIntrContext = LightSampleContext(isect);
@@ -1260,6 +1345,11 @@ SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &l
             beta /= 1 - q;
         }
     }
+    SampledSpectrum L_Range;
+    for (int t = timeMin; t < timeMax; t++) {
+        L_Range += L_tof[t];
+    }
+    L = L_Range;
     return L;
 }
 
@@ -1391,10 +1481,16 @@ std::string VolPathIntegrator::ToString() const {
 std::unique_ptr<VolPathIntegrator> VolPathIntegrator::Create(
     const ParameterDictionary &parameters, Camera camera, Sampler sampler,
     Primitive aggregate, std::vector<Light> lights, const FileLoc *loc) {
+    int timeMin = parameters.GetOneInt("timeMin", 0);
+    int timeMax = parameters.GetOneInt("timeMax", 255);
+    float maxRange = parameters.GetOneFloat("maxRange", 10);
+    int nTimeBins = parameters.GetOneInt("nTimeBins", 256);
+
     int maxDepth = parameters.GetOneInt("maxdepth", 5);
     std::string lightStrategy = parameters.GetOneString("lightsampler", "bvh");
     bool regularize = parameters.GetOneBool("regularize", false);
-    return std::make_unique<VolPathIntegrator>(maxDepth, camera, sampler, aggregate,
+    return std::make_unique<VolPathIntegrator>(timeMin, timeMax, maxRange, nTimeBins,
+                                               maxDepth, camera, sampler, aggregate,
                                                lights, lightStrategy, regularize);
 }
 

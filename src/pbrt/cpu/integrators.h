@@ -261,11 +261,16 @@ class SimpleVolPathIntegrator : public RayIntegrator {
 class VolPathIntegrator : public RayIntegrator {
   public:
     // VolPathIntegrator Public Methods
-    VolPathIntegrator(int maxDepth, Camera camera, Sampler sampler, Primitive aggregate,
+    VolPathIntegrator(int timeMin, int timeMax, Float maxRange, int nTimeBins, 
+                      int maxDepth, Camera camera, Sampler sampler, Primitive aggregate,
                       std::vector<Light> lights,
                       const std::string &lightSampleStrategy = "bvh",
                       bool regularize = false)
         : RayIntegrator(camera, sampler, aggregate, lights),
+          timeMin(timeMin),
+          timeMax(timeMax),
+          maxRange(maxRange),
+          nTimeBins(nTimeBins),
           maxDepth(maxDepth),
           lightSampler(LightSampler::Create(lightSampleStrategy, lights, Allocator())),
           regularize(regularize) {}
@@ -287,6 +292,10 @@ class VolPathIntegrator : public RayIntegrator {
                              SampledSpectrum beta, SampledSpectrum inv_w_u) const;
 
     // VolPathIntegrator Private Members
+    int timeMin;
+    int timeMax;
+    float maxRange;
+    int nTimeBins;
     int maxDepth;
     LightSampler lightSampler;
     bool regularize;
