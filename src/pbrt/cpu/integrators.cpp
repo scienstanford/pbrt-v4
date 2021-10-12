@@ -1123,15 +1123,13 @@ SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &l
                     (1 - weight) *  (beta * Le / r_u.Average());
                 std::vector<SampledSpectrum> L_tof_offset(nTimeBins);
                 for (int k = 0; k < nTimeBins; k++) {
-                    if (k + offset < nTimeBins) {
+                    if (k + offset + 1 < nTimeBins) {
                         L_tof_offset[k + offset] += weight * L_tof_tmp[k];
                         L_tof_offset[k + offset+1] += (1 - weight) * L_tof_tmp[k];
                     }
                 }
                 for (int k = 0; k < nTimeBins; k++) {
-                    if (k < nTimeBins) {
-                        L_tof[k] += L_tof_offset[k];
-                    }
+                    L_tof[k] += L_tof_offset[k];
                 }
 
             }
@@ -1152,15 +1150,13 @@ SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &l
 
                     std::vector<SampledSpectrum> L_tof_offset(nTimeBins);
                     for (int k = 0; k < nTimeBins; k++) {
-                        if (k + offset < nTimeBins) {
+                        if (k + offset + 1 < nTimeBins) {
                             L_tof_offset[k + offset] += weight * L_tof_tmp[k];
                             L_tof_offset[k + offset+1] += (1 - weight) * L_tof_tmp[k];
                         }
                     }
                     for (int k = 0; k < nTimeBins; k++) {
-                        if (k < nTimeBins) {
-                            L_tof[k] += L_tof_offset[k];
-                        }
+                        L_tof[k] += L_tof_offset[k];
                     }
                 }
             }
@@ -1223,15 +1219,13 @@ SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &l
             L_tof_tmp[offset + 1] = (1 - weight) * Ld;
             std::vector<SampledSpectrum> L_tof_offset(nTimeBins);
             for (int k = 0; k < nTimeBins; k++) {
-                if (k + offset < nTimeBins) {
+                if (k + offset + 1 < nTimeBins) {
                     L_tof_offset[k + offset] += weight * L_tof_tmp[k];
                     L_tof_offset[k + offset+1] += (1 - weight) * L_tof_tmp[k];
                 }
             }
             for (int k = 0; k < nTimeBins; k++) {
-                if (k < nTimeBins) {
-                    L_tof[k] += L_tof_offset[k];
-                }
+                L_tof[k] += L_tof_offset[k];
             }
 
             DCHECK(IsInf(L.y(lambda)) == false);
