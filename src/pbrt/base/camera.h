@@ -29,10 +29,11 @@ class PerspectiveCamera;
 class OrthographicCamera;
 class SphericalCamera;
 class RealisticCamera;
+class OmniCamera;
 
 // Camera Definition
 class Camera : public TaggedPointer<PerspectiveCamera, OrthographicCamera,
-                                    SphericalCamera, RealisticCamera> {
+                                    SphericalCamera, RealisticCamera, OmniCamera> {
   public:
     // Camera Interface
     using TaggedPointer::TaggedPointer;

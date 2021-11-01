@@ -94,6 +94,8 @@ set (BUILD_SHARED_LIBS OFF)
 
 add_subdirectory (${CMAKE_CURRENT_SOURCE_DIR}/src/ext)
 
+find_package(GSL)
+include_directories(${GSL_INCLUDE_DIR})
 ########################################
 # os/compiler-specific stuff
 
