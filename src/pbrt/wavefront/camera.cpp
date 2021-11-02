@@ -66,9 +66,6 @@ void WavefrontPathIntegrator::GenerateCameraRays(int y0, int sampleIndex) {
             if (initializeVisibleSurface)
                 pixelSampleState.visibleSurface[pixelIndex] = VisibleSurface();
 
-            // printf("After Camera Ray: %f %f %f \n\n", 
-            //     cameraRay->ray.o.x, cameraRay->ray.o.y, cameraRay->ray.o.z);
-
             // Enqueue camera ray for intersection tests
             if (cameraRay) {
                 rayQueue->PushCameraRay(cameraRay->ray, lambda, pixelIndex);

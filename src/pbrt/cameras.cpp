@@ -1755,13 +1755,13 @@ pstd::optional<CameraRay> OmniCamera::GenerateRay(CameraSample sample,
     if (weight == 0)
         return {};
 
-    // Finish initialization of _RealisticCamera_ ray
+    // Finish initialization of _OmniCamera_ ray
     ray.time = SampleTime(sample.time);
     ray.medium = medium;
     ray = RenderFromCamera(ray);
     ray.d = Normalize(ray.d);
 
-    // Compute weighting for _RealisticCamera_ ray
+    // Compute weighting for _OmniCamera_ ray
     Float cosTheta = Normalize(rFilm.d).z;
     weight *= Pow<4>(cosTheta) / (eps->pdf * Sqr(LensRearZ()));
     return CameraRay{ray, SampledSpectrum(weight)};
