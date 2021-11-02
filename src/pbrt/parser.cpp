@@ -1231,7 +1231,7 @@ void FormattingParserTarget::Camera(const std::string &name, ParsedParameterVect
                indent());
     else
         Printf("%sCamera \"%s\"\n", indent(), name);
-    if (upgrade && name == "realistic")
+    if ((upgrade && name == "realistic") || (upgrade && name == "omni"))
         dict.RemoveBool("simpleweighting");
 
     std::cout << dict.ToParameterList(catIndentCount);

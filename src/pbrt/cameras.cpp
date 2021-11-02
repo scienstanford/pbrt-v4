@@ -984,7 +984,6 @@ pstd::optional<CameraRay> RealisticCamera::GenerateRay(CameraSample sample,
     // Compute weighting for _RealisticCamera_ ray
     Float cosTheta = Normalize(rFilm.d).z;
     weight *= Pow<4>(cosTheta) / (eps->pdf * Sqr(LensRearZ()));
-
     return CameraRay{ray, SampledSpectrum(weight)};
 }
 
@@ -1741,16 +1740,13 @@ pstd::optional<CameraRay> OmniCamera::GenerateRay(CameraSample sample,
     Point2f pFilm2 = physicalExtent.Lerp(s);
     Point3f pFilm(-pFilm2.x, pFilm2.y, 0);
 
-    pstd::optional<ExitPupilSample> eps;
     // Trace ray from _pFilm_ through lens system
-    if (HasMicrolens()){
+    pstd::optional<ExitPupilSample> eps;
+    if (microlens.elementInterfaces.size() > 0){
         eps = SampleMicrolensPupil(Point2f(pFilm.x, pFilm.y), sample.pLens);
     } else {
         eps = SampleExitPupil(Point2f(pFilm.x, pFilm.y), sample.pLens);
-        if (!eps)
-            return {};
     }
-
     if (!eps)
         return {};
     Ray rFilm(pFilm, eps->pPupil - pFilm);
@@ -1759,22 +1755,18 @@ pstd::optional<CameraRay> OmniCamera::GenerateRay(CameraSample sample,
     if (weight == 0)
         return {};
 
-    // Finish initialization of _OmniCamera_ ray
+    // Finish initialization of _RealisticCamera_ ray
     ray.time = SampleTime(sample.time);
     ray.medium = medium;
     ray = RenderFromCamera(ray);
     ray.d = Normalize(ray.d);
 
-    // Compute weighting for _OmniCamera_ ray
+    // Compute weighting for _RealisticCamera_ ray
     Float cosTheta = Normalize(rFilm.d).z;
     weight *= Pow<4>(cosTheta) / (eps->pdf * Sqr(LensRearZ()));
-
     return CameraRay{ray, SampledSpectrum(weight)};
 }
 
-bool OmniCamera::HasMicrolens() const {
-    return microlens.elementInterfaces.size() > 0;
-}
 // STAT_PERCENT("Camera/Rays vignetted by lens system", vignettedRays, totalRays);
 
 std::string OmniCamera::LensElementInterface::ToString() const {
@@ -2125,7 +2117,7 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
     CameraBaseParameters cameraBaseParameters(cameraTransform, film, medium, parameters,
                                               loc);
 
-    // Realistic camera-specific parameters
+    // Omni camera-specific parameters
     std::string lensFile = ResolveFilename(parameters.GetOneString("lensfile", ""));
     Float apertureDiameter = parameters.GetOneFloat("aperturediameter", 1.0);
     Float focusDistance = parameters.GetOneFloat("focusdistance", 10.0);

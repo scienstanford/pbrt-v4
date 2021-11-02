@@ -728,7 +728,6 @@ class OmniCamera : public CameraBase {
     pstd::optional<ExitPupilSample> SampleMicrolensPupil(Point2f pFilm, Point2f uLens) const;
 
     void TestExitPupilBounds() const;
-    bool HasMicrolens() const;  
 
     // OmniCamera Private Members
     Bounds2f physicalExtent;
