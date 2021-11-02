@@ -167,7 +167,7 @@ void CameraBase::FindMinimumDifferentials(Camera camera) {
     CameraSample sample;
     sample.pLens = Point2f(0.5, 0.5);
     sample.time = 0.5;
-    SampledWavelengths lambda = SampledWavelengths::SampleXYZ(0.5);
+    SampledWavelengths lambda = SampledWavelengths::SampleVisible(0.5);
 
     int n = 512;
     for (int i = 0; i < n; ++i) {
@@ -573,7 +573,7 @@ PerspectiveCamera *PerspectiveCamera::Create(const ParameterDictionary &paramete
 }
 
 SampledSpectrum PerspectiveCamera::We(const Ray &ray, SampledWavelengths &lambda,
-                                      Point2f *pRaster2) const {
+                                      Point2f *pRasterOut) const {
     // Check if ray is forward-facing with respect to the camera
     Float cosTheta = Dot(ray.d, RenderFromCamera(Vector3f(0, 0, 1), ray.time));
     if (cosTheta <= cosTotalWidth)
@@ -585,8 +585,8 @@ SampledSpectrum PerspectiveCamera::We(const Ray &ray, SampledWavelengths &lambda
     Point3f pRaster = cameraFromRaster.ApplyInverse(pCamera);
 
     // Return raster position if requested
-    if (pRaster2)
-        *pRaster2 = Point2f(pRaster.x, pRaster.y);
+    if (pRasterOut)
+        *pRasterOut = Point2f(pRaster.x, pRaster.y);
 
     // Return zero importance for out of bounds points
     Bounds2f sampleBounds = film.SampleBounds();
@@ -640,8 +640,8 @@ pstd::optional<CameraWiSample> PerspectiveCamera::SampleWi(
     wi /= dist;
 
     // Compute PDF for importance arriving at _ref_
-    Float lensArea = lensRadius != 0 ? (Pi * lensRadius * lensRadius) : 1;
-    Float pdf = (dist * dist) / (AbsDot(lensIntr.n, wi) * lensArea);
+    Float lensArea = lensRadius != 0 ? (Pi * Sqr(lensRadius)) : 1;
+    Float pdf = Sqr(dist) / (AbsDot(lensIntr.n, wi) * lensArea);
 
     // Compute importance and return _CameraWiSample_
     Point2f pRaster;
@@ -1407,9 +1407,9 @@ RealisticCamera *RealisticCamera::Create(const ParameterDictionary &parameters,
         } else if (apertureName == "square") {
             apertureImage = Image(PixelFormat::Float, {builtinRes, builtinRes}, {"Y"},
                                   nullptr, alloc);
-            for (int y = 0; y < apertureImage.Resolution().y; ++y)
-                for (int x = 0; x < apertureImage.Resolution().x; ++x)
-                    apertureImage.SetChannel({x, y}, 0, 1.f);
+            for (int y = .25 * builtinRes; y < .75 * builtinRes; ++y)
+                for (int x = .25 * builtinRes; x < .75 * builtinRes; ++x)
+                    apertureImage.SetChannel({x, y}, 0, 4.f);
         } else if (apertureName == "pentagon") {
             // https://mathworld.wolfram.com/RegularPentagon.html
             Float c1 = (std::sqrt(5.f) - 1) / 4;

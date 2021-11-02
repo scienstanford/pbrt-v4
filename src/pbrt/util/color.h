@@ -34,42 +34,42 @@ class RGB {
     RGB(Float r, Float g, Float b) : r(r), g(g), b(b) {}
 
     PBRT_CPU_GPU
-    RGB &operator+=(const RGB &s) {
+    RGB &operator+=(RGB s) {
         r += s.r;
         g += s.g;
         b += s.b;
         return *this;
     }
     PBRT_CPU_GPU
-    RGB operator+(const RGB &s) const {
+    RGB operator+(RGB s) const {
         RGB ret = *this;
         return ret += s;
     }
 
     PBRT_CPU_GPU
-    RGB &operator-=(const RGB &s) {
+    RGB &operator-=(RGB s) {
         r -= s.r;
         g -= s.g;
         b -= s.b;
         return *this;
     }
     PBRT_CPU_GPU
-    RGB operator-(const RGB &s) const {
+    RGB operator-(RGB s) const {
         RGB ret = *this;
         return ret -= s;
     }
     PBRT_CPU_GPU
-    friend RGB operator-(Float a, const RGB &s) { return {a - s.r, a - s.g, a - s.b}; }
+    friend RGB operator-(Float a, RGB s) { return {a - s.r, a - s.g, a - s.b}; }
 
     PBRT_CPU_GPU
-    RGB &operator*=(const RGB &s) {
+    RGB &operator*=(RGB s) {
         r *= s.r;
         g *= s.g;
         b *= s.b;
         return *this;
     }
     PBRT_CPU_GPU
-    RGB operator*(const RGB &s) const {
+    RGB operator*(RGB s) const {
         RGB ret = *this;
         return ret *= s;
     }
@@ -87,17 +87,17 @@ class RGB {
         return *this;
     }
     PBRT_CPU_GPU
-    friend RGB operator*(Float a, const RGB &s) { return s * a; }
+    friend RGB operator*(Float a, RGB s) { return s * a; }
 
     PBRT_CPU_GPU
-    RGB &operator/=(const RGB &s) {
+    RGB &operator/=(RGB s) {
         r /= s.r;
         g /= s.g;
         b /= s.b;
         return *this;
     }
     PBRT_CPU_GPU
-    RGB operator/(const RGB &s) const {
+    RGB operator/(RGB s) const {
         RGB ret = *this;
         return ret /= s;
     }
@@ -123,9 +123,9 @@ class RGB {
     Float Average() const { return (r + g + b) / 3; }
 
     PBRT_CPU_GPU
-    bool operator==(const RGB &s) const { return r == s.r && g == s.g && b == s.b; }
+    bool operator==(RGB s) const { return r == s.r && g == s.g && b == s.b; }
     PBRT_CPU_GPU
-    bool operator!=(const RGB &s) const { return r != s.r || g != s.g || b != s.b; }
+    bool operator!=(RGB s) const { return r != s.r || g != s.g || b != s.b; }
     PBRT_CPU_GPU
     Float operator[](int c) const {
         DCHECK(c >= 0 && c < 3);
@@ -152,22 +152,22 @@ class RGB {
 };
 
 PBRT_CPU_GPU
-inline RGB max(const RGB &a, const RGB &b) {
+inline RGB max(RGB a, RGB b) {
     return RGB(std::max(a.r, b.r), std::max(a.g, b.g), std::max(a.b, b.b));
 }
 
 PBRT_CPU_GPU
-inline RGB Lerp(Float t, const RGB &s1, const RGB &s2) {
+inline RGB Lerp(Float t, RGB s1, RGB s2) {
     return (1 - t) * s1 + t * s2;
 }
 
 // RGB Inline Functions
 template <typename U, typename V>
-PBRT_CPU_GPU inline RGB Clamp(const RGB &rgb, U min, V max) {
+PBRT_CPU_GPU inline RGB Clamp(RGB rgb, U min, V max) {
     return RGB(pbrt::Clamp(rgb.r, min, max), pbrt::Clamp(rgb.g, min, max),
                pbrt::Clamp(rgb.b, min, max));
 }
-PBRT_CPU_GPU inline RGB ClampZero(const RGB &rgb) {
+PBRT_CPU_GPU inline RGB ClampZero(RGB rgb) {
     return RGB(std::max<Float>(0, rgb.r), std::max<Float>(0, rgb.g),
                std::max<Float>(0, rgb.b));
 }
@@ -339,26 +339,26 @@ class RGBSigmoidPolynomial {
 
     PBRT_CPU_GPU
     Float operator()(Float lambda) const {
-        Float v = EvaluatePolynomial(lambda, c2, c1, c0);
-        if (IsInf(v))
-            return v > 0 ? 1 : 0;
-        return s(v);
+        return s(EvaluatePolynomial(lambda, c2, c1, c0));
     }
 
     PBRT_CPU_GPU
     Float MaxValue() const {
-        if (c0 < 0) {
-            Float lambda = -c1 / (2 * c0);
-            if (lambda >= 360 && lambda <= 830)
-                return std::max({(*this)(lambda), (*this)(360), (*this)(830)});
-        }
-        return std::max((*this)(360), (*this)(830));
+        Float result = std::max((*this)(360), (*this)(830));
+        Float lambda = -c1 / (2 * c0);
+        if (lambda >= 360 && lambda <= 830)
+            result = std::max(result, (*this)(lambda));
+        return result;
     }
 
   private:
     // RGBSigmoidPolynomial Private Methods
     PBRT_CPU_GPU
-    static Float s(Float x) { return .5f + x / (2 * std::sqrt(1 + Sqr(x))); };
+    static Float s(Float x) {
+        if (IsInf(x))
+            return x > 0 ? 1 : 0;
+        return .5f + x / (2 * std::sqrt(1 + Sqr(x)));
+    };
 
     // RGBSigmoidPolynomial Private Members
     Float c0, c1, c2;
@@ -367,12 +367,17 @@ class RGBSigmoidPolynomial {
 // RGBToSpectrumTable Definition
 class RGBToSpectrumTable {
   public:
+    // RGBToSpectrumTable Public Constants
+    static constexpr int res = 64;
+
+    using CoefficientArray = float[3][res][res][res][3];
+
     // RGBToSpectrumTable Public Methods
-    RGBToSpectrumTable(int res, const float *scale, const float *data)
-        : res(res), scale(scale), data(data) {}
+    RGBToSpectrumTable(const float *zNodes, const CoefficientArray *coeffs)
+        : zNodes(zNodes), coeffs(coeffs) {}
 
     PBRT_CPU_GPU
-    RGBSigmoidPolynomial operator()(const RGB &rgb) const;
+    RGBSigmoidPolynomial operator()(RGB rgb) const;
 
     static void Init(Allocator alloc);
 
@@ -385,8 +390,8 @@ class RGBToSpectrumTable {
 
   private:
     // RGBToSpectrumTable Private Members
-    int res = 0;
-    const float *scale = nullptr, *data = nullptr;
+    const float *zNodes;
+    const CoefficientArray *coeffs;
 };
 
 // ColorEncoding Definitions

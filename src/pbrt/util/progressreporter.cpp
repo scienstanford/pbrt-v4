@@ -34,8 +34,8 @@ std::string Timer::ToString() const {
 }
 
 // ProgressReporter Method Definitions
-ProgressReporter::ProgressReporter(int64_t totalWork, const std::string &title,
-                                   bool quiet, bool gpu)
+ProgressReporter::ProgressReporter(int64_t totalWork, std::string title, bool quiet,
+                                   bool gpu)
     : totalWork(std::max<int64_t>(1, totalWork)), title(title), quiet(quiet) {
     workDone = 0;
     exitThread = false;
@@ -54,24 +54,14 @@ ProgressReporter::ProgressReporter(int64_t totalWork, const std::string &title,
 #endif
 
     // Launch thread to periodically update progress bar
-    if (!quiet)
-        launchThread();
-}
-
-void ProgressReporter::launchThread() {
-    Barrier *barrier = new Barrier(2);
-    updateThread = std::thread([this, barrier]() {
+    if (!quiet) {
+        updateThread = std::thread([this]() {
 #ifdef PBRT_BUILD_GPU_RENDERER
-        GPURegisterThread("PBRT_PROGRESS_BAR");
+            GPURegisterThread("PBRT_PROGRESS_BAR");
 #endif
-        if (barrier->Block())
-            delete barrier;
-        printBar();
-    });
-    // Wait for the thread to get past the ProfilerWorkerThreadInit()
-    // call.
-    if (barrier->Block())
-        delete barrier;
+            printBar();
+        });
+    }
 }
 
 ProgressReporter::~ProgressReporter() {
@@ -150,7 +140,9 @@ void ProgressReporter::printBar() {
         // Update elapsed time and estimated time to completion
         Float elapsed = ElapsedSeconds();
         Float estRemaining = elapsed / percentDone - elapsed;
-        if (percentDone == 1.f)
+        if (exitThread)
+            printf(" (%.1fs)       ", *finishTime);
+        else if (percentDone == 1.f)
             printf(" (%.1fs)       ", elapsed);
         else if (!std::isinf(estRemaining))
             printf(" (%.1fs|%.1fs)  ", elapsed, std::max<Float>(0, estRemaining));
@@ -176,6 +168,7 @@ void ProgressReporter::Done() {
 
         // Only let one thread shut things down.
         bool fa = false;
+        finishTime = ElapsedSeconds();
         if (exitThread.compare_exchange_strong(fa, true)) {
             workDone = totalWork;
             exitThread = true;

@@ -28,19 +28,6 @@ void RenderCPU(BasicScene &parsedScene) {
     // Create media first (so have them for the camera...)
     std::map<std::string, Medium> media = parsedScene.CreateMedia();
 
-    bool haveScatteringMedia = false;
-    auto findMedium = [&media, &haveScatteringMedia](const std::string &s,
-                                                     const FileLoc *loc) -> Medium {
-        if (s.empty())
-            return nullptr;
-
-        auto iter = media.find(s);
-        if (iter == media.end())
-            ErrorExit(loc, "%s: medium not defined", s);
-        haveScatteringMedia = true;
-        return iter->second;
-    };
-
     // Textures
     LOG_VERBOSE("Starting textures");
     NamedTextures textures = parsedScene.CreateTextures();
@@ -65,10 +52,13 @@ void RenderCPU(BasicScene &parsedScene) {
     Sampler sampler = parsedScene.GetSampler();
 
     // Integrator
+    LOG_VERBOSE("Starting to create integrator");
     std::unique_ptr<Integrator> integrator(
         parsedScene.CreateIntegrator(camera, sampler, accel, lights));
+    LOG_VERBOSE("Finished creating integrator");
 
     // Helpful warnings
+    bool haveScatteringMedia = false;
     for (const auto &sh : parsedScene.shapes)
         if (!sh.insideMedium.empty() || !sh.outsideMedium.empty())
             haveScatteringMedia = true;

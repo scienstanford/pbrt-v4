@@ -62,8 +62,8 @@ std::string ToString(TransportMode mode) {
 std::string DiffuseBxDF::ToString() const {
     return StringPrintf("[ DiffuseBxDF R: %s ]", R);
 }
-std::string RoughDiffuseBxDF::ToString() const {
-    return StringPrintf("[ RoughDiffuseBxDF R: %s T: %s A: %f B: %f ]", R, T, A, B);
+std::string DiffuseTransmissionBxDF::ToString() const {
+    return StringPrintf("[ DiffuseTransmissionBxDF R: %s T: %s ]", R, T);
 }
 
 template <typename TopBxDF, typename BottomBxDF, bool twoSided>
@@ -128,13 +128,16 @@ pstd::optional<BSDFSample> DielectricBxDF::Sample_f(
         if (pr == 0 && pt == 0)
             return {};
 
+        Float pdf;
         if (uc < pr / (pr + pt)) {
             // Sample reflection at rough dielectric interface
             Vector3f wi = Reflect(wo, wm);
             if (!SameHemisphere(wo, wi))
                 return {};
-            Float pdf = mfDistrib.PDF(wo, wm) / (4 * AbsDot(wo, wm)) * pr / (pr + pt);
-            CHECK(!IsNaN(pdf));
+            // Compute PDF of rough dielectric reflection
+            pdf = mfDistrib.PDF(wo, wm) / (4 * AbsDot(wo, wm)) * pr / (pr + pt);
+
+            DCHECK(!IsNaN(pdf));
             SampledSpectrum f(mfDistrib.D(wm) * mfDistrib.G(wo, wi) * R /
                               (4 * CosTheta(wi) * CosTheta(wo)));
             return BSDFSample(f, wi, pdf, BxDFFlags::GlossyReflection);
@@ -147,12 +150,12 @@ pstd::optional<BSDFSample> DielectricBxDF::Sample_f(
             CHECK_RARE(1e-5f, tir);
             if (SameHemisphere(wo, wi) || wi.z == 0 || tir)
                 return {};
-            // Compute PDF of direction $\wi$ for rough transmission
+            // Compute PDF of rough dielectric transmission
             Float denom = Sqr(Dot(wi, wm) + Dot(wo, wm) / etap);
             Float dwm_dwi = AbsDot(wi, wm) / denom;
-            Float pdf = mfDistrib.PDF(wo, wm) * dwm_dwi * pt / (pr + pt);
-            CHECK(!IsNaN(pdf));
+            pdf = mfDistrib.PDF(wo, wm) * dwm_dwi * pt / (pr + pt);
 
+            CHECK(!IsNaN(pdf));
             // Evaluate BRDF and return _BSDFSample_ for rough transmission
             SampledSpectrum ft(T * mfDistrib.D(wm) * mfDistrib.G(wo, wi) *
                                std::abs(Dot(wi, wm) * Dot(wo, wm) /
@@ -182,7 +185,7 @@ SampledSpectrum DielectricBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) 
         return {};
     wm = FaceForward(Normalize(wm), Normal3f(0, 0, 1));
 
-    // Discard back-facing microfacets
+    // Discard backfacing microfacets
     if (Dot(wm, wi) * cosTheta_i < 0 || Dot(wm, wo) * cosTheta_o < 0)
         return {};
 
@@ -194,10 +197,9 @@ SampledSpectrum DielectricBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) 
 
     } else {
         // Compute transmission at rough dielectric interface
-        Float denom = Sqr(Dot(wi, wm) + Dot(wo, wm) / etap);
-        Float ft =
-            (1 - F) * mfDistrib.D(wm) * mfDistrib.G(wo, wi) *
-            std::abs(Dot(wi, wm) * Dot(wo, wm) / (cosTheta_i * cosTheta_o * denom));
+        Float denom = Sqr(Dot(wi, wm) + Dot(wo, wm) / etap) * cosTheta_i * cosTheta_o;
+        Float ft = mfDistrib.D(wm) * (1 - F) * mfDistrib.G(wo, wi) *
+                   std::abs(Dot(wi, wm) * Dot(wo, wm) / denom);
         // Account for non-symmetry with transmission to different medium
         if (mode == TransportMode::Radiance)
             ft /= Sqr(etap);
@@ -209,7 +211,7 @@ SampledSpectrum DielectricBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) 
 Float DielectricBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
                           BxDFReflTransFlags sampleFlags) const {
     if (eta == 1 || mfDistrib.EffectivelySmooth())
-        return 0.f;
+        return 0;
     // Evaluate sampling PDF of rough dielectric BSDF
     // Compute generalized half vector _wm_
     Float cosTheta_o = CosTheta(wo), cosTheta_i = CosTheta(wi);
@@ -223,13 +225,13 @@ Float DielectricBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
         return {};
     wm = FaceForward(Normalize(wm), Normal3f(0, 0, 1));
 
-    // Discard back-facing microfacets
+    // Discard backfacing microfacets
     if (Dot(wm, wi) * cosTheta_i < 0 || Dot(wm, wo) * cosTheta_o < 0)
         return {};
 
     // Determine Fresnel reflectance of rough dielectric boundary
     Float R = FrDielectric(Dot(wo, wm), eta);
-    Float T = 1.f - R;
+    Float T = 1 - R;
 
     // Compute probabilities _pr_ and _pt_ for sampling reflection and transmission
     Float pr = R, pt = T;
@@ -240,15 +242,19 @@ Float DielectricBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
     if (pr == 0 && pt == 0)
         return {};
 
+    // Return PDF for rough dielectric
+    Float pdf;
     if (reflect) {
-        // Return PDF of rough dielectric reflection
-        return mfDistrib.PDF(wo, wm) / (4 * AbsDot(wo, wm)) * pr / (pr + pt);
+        // Compute PDF of rough dielectric reflection
+        pdf = mfDistrib.PDF(wo, wm) / (4 * AbsDot(wo, wm)) * pr / (pr + pt);
 
     } else {
-        // Return PDF of rough dielectric transmission
-        Float dwm_dwi = AbsDot(wi, wm) / Sqr(Dot(wi, wm) + Dot(wo, wm) / etap);
-        return mfDistrib.PDF(wo, wm) * dwm_dwi * pt / (pr + pt);
+        // Compute PDF of rough dielectric transmission
+        Float denom = Sqr(Dot(wi, wm) + Dot(wo, wm) / etap);
+        Float dwm_dwi = AbsDot(wi, wm) / denom;
+        pdf = mfDistrib.PDF(wo, wm) * dwm_dwi * pt / (pr + pt);
     }
+    return pdf;
 }
 
 std::string DielectricBxDF::ToString() const {
@@ -268,16 +274,11 @@ std::string ConductorBxDF::ToString() const {
 // HairBxDF Method Definitions
 HairBxDF::HairBxDF(Float h, Float eta, const SampledSpectrum &sigma_a, Float beta_m,
                    Float beta_n, Float alpha)
-    : h(h),
-      gamma_o(SafeASin(h)),
-      eta(eta),
-      sigma_a(sigma_a),
-      beta_m(beta_m),
-      beta_n(beta_n) {
+    : h(h), eta(eta), sigma_a(sigma_a), beta_m(beta_m), beta_n(beta_n) {
     CHECK(h >= -1 && h <= 1);
     CHECK(beta_m >= 0 && beta_m <= 1);
     CHECK(beta_n >= 0 && beta_n <= 1);
-    // Compute longitudinal variance from $\beta_m$
+    // _HairBxDF_ constructor implementation
     static_assert(pMax >= 3,
                   "Longitudinal variance code must be updated to handle low pMax");
     v[0] = Sqr(0.726f * beta_m + 0.812f * Sqr(beta_m) + 3.7f * Pow<20>(beta_m));
@@ -287,15 +288,13 @@ HairBxDF::HairBxDF(Float h, Float eta, const SampledSpectrum &sigma_a, Float bet
         // TODO: is there anything better here?
         v[p] = v[2];
 
-    // Compute azimuthal logistic scale factor from $\beta_n$
     static const Float SqrtPiOver8 = 0.626657069f;
     s = SqrtPiOver8 * (0.265f * beta_n + 1.194f * Sqr(beta_n) + 5.372f * Pow<22>(beta_n));
-    CHECK(!IsNaN(s));
+    DCHECK(!IsNaN(s));
 
-    // Compute $\alpha$ terms for hair scales
     sin2kAlpha[0] = std::sin(Radians(alpha));
     cos2kAlpha[0] = SafeSqrt(1 - Sqr(sin2kAlpha[0]));
-    for (int i = 1; i < 3; ++i) {
+    for (int i = 1; i < pMax; ++i) {
         sin2kAlpha[i] = 2 * cos2kAlpha[i - 1] * sin2kAlpha[i - 1];
         cos2kAlpha[i] = Sqr(cos2kAlpha[i - 1]) - Sqr(sin2kAlpha[i - 1]);
     }
@@ -306,6 +305,7 @@ SampledSpectrum HairBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const 
     Float sinTheta_o = wo.x;
     Float cosTheta_o = SafeSqrt(1 - Sqr(sinTheta_o));
     Float phi_o = std::atan2(wo.z, wo.y);
+    Float gamma_o = SafeASin(h);
 
     // Compute hair coordinate system terms related to _wi_
     Float sinTheta_i = wi.x;
@@ -317,7 +317,7 @@ SampledSpectrum HairBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const 
     Float cosTheta_t = SafeSqrt(1 - Sqr(sinTheta_t));
 
     // Compute $\gammat$ for refracted ray
-    Float etap = SafeSqrt(eta * eta - Sqr(sinTheta_o)) / cosTheta_o;
+    Float etap = SafeSqrt(Sqr(eta) - Sqr(sinTheta_o)) / cosTheta_o;
     Float sinGamma_t = h / etap;
     Float cosGamma_t = SafeSqrt(1 - Sqr(sinGamma_t));
     Float gamma_t = SafeASin(sinGamma_t);
@@ -330,7 +330,7 @@ SampledSpectrum HairBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const 
     pstd::array<SampledSpectrum, pMax + 1> ap = Ap(cosTheta_o, eta, h, T);
     SampledSpectrum fsum(0.);
     for (int p = 0; p < pMax; ++p) {
-        // Compute $\sin \thetai$ and $\cos \thetai$ terms accounting for scales
+        // Compute $\sin \thetao$ and $\cos \thetao$ terms accounting for scales
         Float sinThetap_o, cosThetap_o;
         if (p == 0) {
             sinThetap_o = sinTheta_o * cos2kAlpha[1] - cosTheta_o * sin2kAlpha[1];
@@ -355,24 +355,24 @@ SampledSpectrum HairBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const 
                 Np(phi, p, s, gamma_o, gamma_t);
     }
     // Compute contribution of remaining terms after _pMax_
-    fsum += Mp(cosTheta_i, cosTheta_o, sinTheta_i, sinTheta_o, v[pMax]) * ap[pMax] /
-            (2.f * Pi);
+    fsum +=
+        Mp(cosTheta_i, cosTheta_o, sinTheta_i, sinTheta_o, v[pMax]) * ap[pMax] / (2 * Pi);
 
     if (AbsCosTheta(wi) > 0)
         fsum /= AbsCosTheta(wi);
-    CHECK(!IsInf(fsum.Average()) && !IsNaN(fsum.Average()));
+    DCHECK(!IsInf(fsum.Average()) && !IsNaN(fsum.Average()));
     return fsum;
 }
 
-pstd::array<Float, HairBxDF::pMax + 1> HairBxDF::ComputeApPDF(Float cosTheta_o) const {
-    // Compute array of $A_p$ values for _cosThetaO_
-    Float sinTheta_o = SafeSqrt(1 - cosTheta_o * cosTheta_o);
+pstd::array<Float, HairBxDF::pMax + 1> HairBxDF::ApPDF(Float cosTheta_o) const {
+    // Initialize array of $A_p$ values for _cosTheta_o_
+    Float sinTheta_o = SafeSqrt(1 - Sqr(cosTheta_o));
     // Compute $\cos \thetat$ for refracted ray
     Float sinTheta_t = sinTheta_o / eta;
     Float cosTheta_t = SafeSqrt(1 - Sqr(sinTheta_t));
 
     // Compute $\gammat$ for refracted ray
-    Float etap = SafeSqrt(eta * eta - Sqr(sinTheta_o)) / cosTheta_o;
+    Float etap = SafeSqrt(Sqr(eta) - Sqr(sinTheta_o)) / cosTheta_o;
     Float sinGamma_t = h / etap;
     Float cosGamma_t = SafeSqrt(1 - Sqr(sinGamma_t));
     Float gamma_t = SafeASin(sinGamma_t);
@@ -400,17 +400,20 @@ pstd::optional<BSDFSample> HairBxDF::Sample_f(Vector3f wo, Float uc, Point2f u,
     Float sinTheta_o = wo.x;
     Float cosTheta_o = SafeSqrt(1 - Sqr(sinTheta_o));
     Float phi_o = std::atan2(wo.z, wo.y);
+    Float gamma_o = SafeASin(h);
 
     // Determine which term $p$ to sample for hair scattering
-    pstd::array<Float, pMax + 1> apPDF = ComputeApPDF(cosTheta_o);
+    pstd::array<Float, pMax + 1> apPDF = ApPDF(cosTheta_o);
     int p = SampleDiscrete(apPDF, uc, nullptr, &uc);
 
-    // Rotate $\sin \thetao$ and $\cos \thetao$ to account for hair scale tilt
+    // Compute $\sin \thetao$ and $\cos \thetao$ terms accounting for scales
     Float sinThetap_o, cosThetap_o;
     if (p == 0) {
         sinThetap_o = sinTheta_o * cos2kAlpha[1] - cosTheta_o * sin2kAlpha[1];
         cosThetap_o = cosTheta_o * cos2kAlpha[1] + sinTheta_o * sin2kAlpha[1];
-    } else if (p == 1) {
+    }
+    // Handle remainder of $p$ values for hair scale tilt
+    else if (p == 1) {
         sinThetap_o = sinTheta_o * cos2kAlpha[0] + cosTheta_o * sin2kAlpha[0];
         cosThetap_o = cosTheta_o * cos2kAlpha[0] - sinTheta_o * sin2kAlpha[0];
     } else if (p == 2) {
@@ -420,6 +423,9 @@ pstd::optional<BSDFSample> HairBxDF::Sample_f(Vector3f wo, Float uc, Point2f u,
         sinThetap_o = sinTheta_o;
         cosThetap_o = cosTheta_o;
     }
+
+    // Handle out-of-range $\cos \thetao$ from scale adjustment
+    cosThetap_o = std::abs(cosThetap_o);
 
     // Sample $M_p$ to compute $\thetai$
     Float cosTheta = 1 + v[p] * std::log(std::max<Float>(u[0], 1e-5) +
@@ -431,7 +437,7 @@ pstd::optional<BSDFSample> HairBxDF::Sample_f(Vector3f wo, Float uc, Point2f u,
 
     // Sample $N_p$ to compute $\Delta\phi$
     // Compute $\gammat$ for refracted ray
-    Float etap = SafeSqrt(eta * eta - Sqr(sinTheta_o)) / cosTheta_o;
+    Float etap = SafeSqrt(Sqr(eta) - Sqr(sinTheta_o)) / cosTheta_o;
     Float sinGamma_t = h / etap;
     Float cosGamma_t = SafeSqrt(1 - Sqr(sinGamma_t));
     Float gamma_t = SafeASin(sinGamma_t);
@@ -449,68 +455,12 @@ pstd::optional<BSDFSample> HairBxDF::Sample_f(Vector3f wo, Float uc, Point2f u,
     // Compute PDF for sampled hair scattering direction _wi_
     Float pdf = 0;
     for (int p = 0; p < pMax; ++p) {
-        // Rotate $\sin \thetao$ and $\cos \thetao$ to account for hair scale tilt
-        Float sinThetap_o, cosThetap_o;
-        if (p == 0) {
-            sinThetap_o = sinTheta_o * cos2kAlpha[1] - cosTheta_o * sin2kAlpha[1];
-            cosThetap_o = cosTheta_o * cos2kAlpha[1] + sinTheta_o * sin2kAlpha[1];
-        } else if (p == 1) {
-            sinThetap_o = sinTheta_o * cos2kAlpha[0] + cosTheta_o * sin2kAlpha[0];
-            cosThetap_o = cosTheta_o * cos2kAlpha[0] - sinTheta_o * sin2kAlpha[0];
-        } else if (p == 2) {
-            sinThetap_o = sinTheta_o * cos2kAlpha[2] + cosTheta_o * sin2kAlpha[2];
-            cosThetap_o = cosTheta_o * cos2kAlpha[2] - sinTheta_o * sin2kAlpha[2];
-        } else {
-            sinThetap_o = sinTheta_o;
-            cosThetap_o = cosTheta_o;
-        }
-
-        // Handle out-of-range $\cos \thetao$ from scale adjustment
-        cosThetap_o = std::abs(cosThetap_o);
-
-        pdf += Mp(cosTheta_i, cosThetap_o, sinTheta_i, sinThetap_o, v[p]) * apPDF[p] *
-               Np(dphi, p, s, gamma_o, gamma_t);
-    }
-    pdf += Mp(cosTheta_i, cosTheta_o, sinTheta_i, sinTheta_o, v[pMax]) * apPDF[pMax] *
-           (1 / (2 * Pi));
-    // if (std::abs(wi->x) < .9999) CHECK_NEAR(*pdf, PDF(wo, *wi), .01);
-
-    return BSDFSample(f(wo, wi, mode), wi, pdf, Flags());
-}
-
-Float HairBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
-                    BxDFReflTransFlags sampleFlags) const {
-    // TODO? flags...
-
-    // Compute hair coordinate system terms related to _wo_
-    Float sinTheta_o = wo.x;
-    Float cosTheta_o = SafeSqrt(1 - Sqr(sinTheta_o));
-    Float phi_o = std::atan2(wo.z, wo.y);
-
-    // Compute hair coordinate system terms related to _wi_
-    Float sinTheta_i = wi.x;
-    Float cosTheta_i = SafeSqrt(1 - Sqr(sinTheta_i));
-    Float phi_i = std::atan2(wi.z, wi.y);
-
-    // Compute $\gammat$ for refracted ray
-    Float etap = SafeSqrt(eta * eta - Sqr(sinTheta_o)) / cosTheta_o;
-    Float sinGamma_t = h / etap;
-    Float gamma_t = SafeASin(sinGamma_t);
-
-    // Compute PDF for $A_p$ terms
-    pstd::array<Float, pMax + 1> apPDF = ComputeApPDF(cosTheta_o);
-
-    // Compute PDF sum for hair scattering events
-    Float phi = phi_i - phi_o;
-    Float pdf = 0;
-    for (int p = 0; p < pMax; ++p) {
         // Compute $\sin \thetao$ and $\cos \thetao$ terms accounting for scales
         Float sinThetap_o, cosThetap_o;
         if (p == 0) {
             sinThetap_o = sinTheta_o * cos2kAlpha[1] - cosTheta_o * sin2kAlpha[1];
             cosThetap_o = cosTheta_o * cos2kAlpha[1] + sinTheta_o * sin2kAlpha[1];
         }
-
         // Handle remainder of $p$ values for hair scale tilt
         else if (p == 1) {
             sinThetap_o = sinTheta_o * cos2kAlpha[0] + cosTheta_o * sin2kAlpha[0];
@@ -525,6 +475,67 @@ Float HairBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
 
         // Handle out-of-range $\cos \thetao$ from scale adjustment
         cosThetap_o = std::abs(cosThetap_o);
+
+        // Handle out-of-range $\cos \thetao$ from scale adjustment
+        cosThetap_o = std::abs(cosThetap_o);
+
+        pdf += Mp(cosTheta_i, cosThetap_o, sinTheta_i, sinThetap_o, v[p]) * apPDF[p] *
+               Np(dphi, p, s, gamma_o, gamma_t);
+    }
+    pdf += Mp(cosTheta_i, cosTheta_o, sinTheta_i, sinTheta_o, v[pMax]) * apPDF[pMax] *
+           (1 / (2 * Pi));
+
+    return BSDFSample(f(wo, wi, mode), wi, pdf, Flags());
+}
+
+Float HairBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
+                    BxDFReflTransFlags sampleFlags) const {
+    // TODO? flags...
+
+    // Compute hair coordinate system terms related to _wo_
+    Float sinTheta_o = wo.x;
+    Float cosTheta_o = SafeSqrt(1 - Sqr(sinTheta_o));
+    Float phi_o = std::atan2(wo.z, wo.y);
+    Float gamma_o = SafeASin(h);
+
+    // Compute hair coordinate system terms related to _wi_
+    Float sinTheta_i = wi.x;
+    Float cosTheta_i = SafeSqrt(1 - Sqr(sinTheta_i));
+    Float phi_i = std::atan2(wi.z, wi.y);
+
+    // Compute $\gammat$ for refracted ray
+    Float etap = SafeSqrt(eta * eta - Sqr(sinTheta_o)) / cosTheta_o;
+    Float sinGamma_t = h / etap;
+    Float gamma_t = SafeASin(sinGamma_t);
+
+    // Compute PDF for $A_p$ terms
+    pstd::array<Float, pMax + 1> apPDF = ApPDF(cosTheta_o);
+
+    // Compute PDF sum for hair scattering events
+    Float phi = phi_i - phi_o;
+    Float pdf = 0;
+    for (int p = 0; p < pMax; ++p) {
+        // Compute $\sin \thetao$ and $\cos \thetao$ terms accounting for scales
+        Float sinThetap_o, cosThetap_o;
+        if (p == 0) {
+            sinThetap_o = sinTheta_o * cos2kAlpha[1] - cosTheta_o * sin2kAlpha[1];
+            cosThetap_o = cosTheta_o * cos2kAlpha[1] + sinTheta_o * sin2kAlpha[1];
+        }
+        // Handle remainder of $p$ values for hair scale tilt
+        else if (p == 1) {
+            sinThetap_o = sinTheta_o * cos2kAlpha[0] + cosTheta_o * sin2kAlpha[0];
+            cosThetap_o = cosTheta_o * cos2kAlpha[0] - sinTheta_o * sin2kAlpha[0];
+        } else if (p == 2) {
+            sinThetap_o = sinTheta_o * cos2kAlpha[2] + cosTheta_o * sin2kAlpha[2];
+            cosThetap_o = cosTheta_o * cos2kAlpha[2] - sinTheta_o * sin2kAlpha[2];
+        } else {
+            sinThetap_o = sinTheta_o;
+            cosThetap_o = cosTheta_o;
+        }
+
+        // Handle out-of-range $\cos \thetao$ from scale adjustment
+        cosThetap_o = std::abs(cosThetap_o);
+
         pdf += Mp(cosTheta_i, cosThetap_o, sinTheta_i, sinThetap_o, v[p]) * apPDF[p] *
                Np(phi, p, s, gamma_o, gamma_t);
     }
@@ -534,9 +545,9 @@ Float HairBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
 }
 
 RGBUnboundedSpectrum HairBxDF::SigmaAFromConcentration(Float ce, Float cp) {
-    RGB eumelaninSigmaA(0.419f, 0.697f, 1.37f);
-    RGB pheomelaninSigmaA(0.187f, 0.4f, 1.05f);
-    RGB sigma_a = ce * eumelaninSigmaA + cp * pheomelaninSigmaA;
+    RGB eumelaninSigma_a(0.419f, 0.697f, 1.37f);
+    RGB pheomelaninSigma_a(0.187f, 0.4f, 1.05f);
+    RGB sigma_a = ce * eumelaninSigma_a + cp * pheomelaninSigma_a;
 #ifdef PBRT_IS_GPU_CODE
     return RGBUnboundedSpectrum(*RGBColorSpace_sRGB, sigma_a);
 #else
@@ -556,9 +567,9 @@ SampledSpectrum HairBxDF::SigmaAFromReflectance(const SampledSpectrum &c, Float 
 }
 
 std::string HairBxDF::ToString() const {
-    return StringPrintf("[ HairBxDF h: %f gamma_o: %f eta: %f beta_m: %f beta_n: %f "
-                        "v[0]: %f s: %f sigma_a: %s ]",
-                        h, gamma_o, eta, beta_m, beta_n, v[0], s, sigma_a);
+    return StringPrintf(
+        "[ HairBxDF h: %f eta: %f beta_m: %f beta_n: %f v[0]: %f s: %f sigma_a: %s ]", h,
+        eta, beta_m, beta_n, v[0], s, sigma_a);
 }
 
 // *****************************************************************************

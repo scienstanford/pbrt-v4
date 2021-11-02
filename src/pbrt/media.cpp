@@ -59,11 +59,11 @@ std::string DDAMajorantIterator::ToString() const {
     return StringPrintf("[ DDAMajorantIterator tMin: %f tMax: %f sigma_t: %s "
                         "nextCrossingT: [ %f %f %f ] deltaT: [ %f %f %f ] "
                         "step: [ %d %d %d ] voxelLimit: [ %d %d %d ] voxel: [ %d %d %d ] "
-                        "grid: %p res: %s ]",
+                        "grid: %p ]",
                         tMin, tMax, sigma_t, nextCrossingT[0], nextCrossingT[1],
                         nextCrossingT[2], deltaT[0], deltaT[1], deltaT[2], step[0],
                         step[1], step[2], voxelLimit[0], voxelLimit[1], voxelLimit[2],
-                        voxel[0], voxel[1], voxel[2], grid, res);
+                        voxel[0], voxel[1], voxel[2], grid);
 }
 
 // HenyeyGreenstein Method Definitions
@@ -193,120 +193,94 @@ HomogeneousMedium *HomogeneousMedium::Create(const ParameterDictionary &paramete
     else
         LeScale /= SpectrumToPhotometric(Le);
 
-    Float sigScale = parameters.GetOneFloat("scale", 1.f);
+    Float sigmaScale = parameters.GetOneFloat("scale", 1.f);
     Float g = parameters.GetOneFloat("g", 0.0f);
 
-    return alloc.new_object<HomogeneousMedium>(sig_a, sig_s, sigScale, Le, LeScale, g,
+    return alloc.new_object<HomogeneousMedium>(sig_a, sig_s, sigmaScale, Le, LeScale, g,
                                                alloc);
 }
 
 std::string HomogeneousMedium::ToString() const {
     return StringPrintf(
-        "[ Homogeneous medium sigma_a_spec: %s sigma_s_spec: %s Le_spec: phase: %s ]",
+        "[ Homogeneous medium sigma_a_spec: %s sigma_s_spec: %s Le_spec: %s phase: %s ]",
         sigma_a_spec, sigma_s_spec, Le_spec, phase);
 }
 
 STAT_MEMORY_COUNTER("Memory/Volume grids", volumeGridBytes);
 
-// UniformGridMediumProvider Method Definitions
-UniformGridMediumProvider::UniformGridMediumProvider(
-    const Bounds3f &bounds, pstd::optional<SampledGrid<Float>> d,
-    pstd::optional<SampledGrid<Float>> sa, pstd::optional<SampledGrid<Float>> ss,
-    pstd::optional<SampledGrid<RGBUnboundedSpectrum>> rgbGrid, Spectrum Le,
-    SampledGrid<Float> LeGrid, Allocator alloc)
+// GridMedium Method Definitions
+GridMedium::GridMedium(const Bounds3f &bounds, const Transform &renderFromMedium,
+                       Spectrum sigma_a, Spectrum sigma_s, Float sigmaScale, Float g,
+                       SampledGrid<Float> d,
+                       pstd::optional<SampledGrid<Float>> temperature, Spectrum Le,
+                       SampledGrid<Float> LeGrid, Allocator alloc)
     : bounds(bounds),
+      renderFromMedium(renderFromMedium),
+      sigma_a_spec(sigma_a, alloc),
+      sigma_s_spec(sigma_s, alloc),
       densityGrid(std::move(d)),
-      sigma_aGrid(std::move(sa)),
-      sigma_sGrid(std::move(ss)),
-      rgbGrid(std::move(rgbGrid)),
+      phase(g),
+      temperatureGrid(std::move(temperature)),
       Le_spec(Le, alloc),
-      LeScale(std::move(LeGrid)) {
-    if (densityGrid) {
-        CHECK(!sigma_aGrid && !sigma_sGrid && !rgbGrid);
-    }
-    if (sigma_aGrid) {
-        CHECK(sigma_sGrid && !densityGrid && !rgbGrid);
-    }
-    if (sigma_sGrid) {
-        CHECK(sigma_aGrid);
-    }
-    if (rgbGrid) {
-        CHECK(!densityGrid && !sigma_aGrid && !sigma_sGrid);
-    }
+      LeScale(std::move(LeGrid)),
+      majorantGrid(bounds, {16, 16, 16}, alloc) {
+    sigma_a_spec.Scale(sigmaScale);
+    sigma_s_spec.Scale(sigmaScale);
+
     volumeGridBytes += LeScale.BytesAllocated();
-    if (densityGrid)
-        volumeGridBytes += densityGrid->BytesAllocated();
-    if (sigma_aGrid)
-        volumeGridBytes += sigma_aGrid->BytesAllocated();
-    if (sigma_sGrid)
-        volumeGridBytes += sigma_sGrid->BytesAllocated();
-    if (rgbGrid)
-        volumeGridBytes += rgbGrid->BytesAllocated();
+    volumeGridBytes += densityGrid.BytesAllocated();
+    if (temperatureGrid)
+        volumeGridBytes += temperatureGrid->BytesAllocated();
+
+    isEmissive = temperatureGrid ? true : (Le_spec.MaxValue() > 0);
+
+    // Initialize _majorantGrid_ for _GridMedium_
+    for (int z = 0; z < majorantGrid.res.z; ++z)
+        for (int y = 0; y < majorantGrid.res.y; ++y)
+            for (int x = 0; x < majorantGrid.res.x; ++x) {
+                Bounds3f bounds = majorantGrid.VoxelBounds(x, y, z);
+                majorantGrid.Set(x, y, z, densityGrid.MaxValue(bounds));
+            }
 }
 
-UniformGridMediumProvider *UniformGridMediumProvider::Create(
-    const ParameterDictionary &parameters, const FileLoc *loc, Allocator alloc) {
+GridMedium *GridMedium::Create(const ParameterDictionary &parameters,
+                               const Transform &renderFromMedium, const FileLoc *loc,
+                               Allocator alloc) {
     std::vector<Float> density = parameters.GetFloatArray("density");
-    std::vector<Float> sigma_a = parameters.GetFloatArray("density.sigma_a");
-    std::vector<Float> sigma_s = parameters.GetFloatArray("density.sigma_s");
-    std::vector<RGB> rgbDensity = parameters.GetRGBArray("density.rgb");
+    std::vector<Float> temperature = parameters.GetFloatArray("temperature");
 
     size_t nDensity;
-    if (!density.empty()) {
-        nDensity = density.size();
-        if (!sigma_a.empty())
-            ErrorExit(loc,
-                      "Both \"density\" and \"density.sigma_a\" values were provided.");
-        if (!sigma_s.empty())
-            ErrorExit(loc,
-                      "Both \"density\" and \"density.sigma_s\" values were provided.");
-        if (!rgbDensity.empty())
-            ErrorExit(loc, "Both \"density\" and \"density.rgb\" values were provided.");
-    } else if (!sigma_a.empty()) {
-        if (sigma_s.empty())
-            ErrorExit(loc,
-                      "No \"density.sigma_s\" was provided with \"density.sigma_a\".");
-        if (!rgbDensity.empty())
-            ErrorExit(loc, "Both \"density.sigma_a/sigma_s\" and \"density.rgb\" values "
-                           "were provided.");
-        nDensity = sigma_a.size();
-        if (sigma_s.size() != sigma_a.size())
+    if (density.empty())
+        ErrorExit(loc, "No \"density\" value provided for grid medium.");
+    nDensity = density.size();
+
+    if (!temperature.empty())
+        if (nDensity != temperature.size())
             ErrorExit(loc,
                       "Different number of samples (%d vs %d) provided for "
-                      "\"density.sigma_a\" and \"density.sigma_s\".",
-                      sigma_a.size(), sigma_s.size());
-    } else if (!rgbDensity.empty())
-        nDensity = rgbDensity.size();
-    else
-        ErrorExit(loc, "No \"density\" values provided for uniform grid medium.");
+                      "\"density\" and \"temperature\".",
+                      nDensity, temperature.size());
 
     int nx = parameters.GetOneInt("nx", 1);
     int ny = parameters.GetOneInt("ny", 1);
     int nz = parameters.GetOneInt("nz", 1);
     if (nDensity != nx * ny * nz)
-        ErrorExit(loc,
-                  "Uniform grid medium has %d density values; expected nx*ny*nz = %d",
+        ErrorExit(loc, "Grid medium has %d density values; expected nx*ny*nz = %d",
                   nDensity, nx * ny * nz);
 
-    pstd::optional<SampledGrid<Float>> densityGrid;
-    pstd::optional<SampledGrid<Float>> sigma_aGrid, sigma_sGrid;
-    pstd::optional<SampledGrid<RGBUnboundedSpectrum>> rgbDensityGrid;
-    if (density.size())
-        densityGrid = SampledGrid<Float>(density, nx, ny, nz, alloc);
-    else if (sigma_a.size()) {
-        sigma_aGrid = SampledGrid<Float>(sigma_a, nx, ny, nz, alloc);
-        sigma_sGrid = SampledGrid<Float>(sigma_s, nx, ny, nz, alloc);
-    } else {
-        const RGBColorSpace *colorSpace = parameters.ColorSpace();
-        std::vector<RGBUnboundedSpectrum> rgbSpectrumDensity;
-        for (RGB rgb : rgbDensity)
-            rgbSpectrumDensity.push_back(RGBUnboundedSpectrum(*colorSpace, rgb));
-        rgbDensityGrid =
-            SampledGrid<RGBUnboundedSpectrum>(rgbSpectrumDensity, nx, ny, nz, alloc);
-    }
+    // Create Density Grid
+    SampledGrid<Float> densityGrid = SampledGrid<Float>(density, nx, ny, nz, alloc);
+
+    pstd::optional<SampledGrid<Float>> temperatureGrid;
+    if (temperature.size())
+        temperatureGrid = SampledGrid<Float>(temperature, nx, ny, nz, alloc);
 
     Spectrum Le =
         parameters.GetOneSpectrum("Le", nullptr, SpectrumType::Illuminant, alloc);
+
+    if (Le && !temperature.empty())
+        ErrorExit(loc, "Both \"Le\" and \"temperature\" values were provided.");
+
     Float LeNorm = 1;
     if (!Le || Le.MaxValue() == 0)
         Le = alloc.new_object<ConstantSpectrum>(0.f);
@@ -315,6 +289,7 @@ UniformGridMediumProvider *UniformGridMediumProvider::Create(
 
     SampledGrid<Float> LeGrid(alloc);
     std::vector<Float> LeScale = parameters.GetFloatArray("Lescale");
+
     if (LeScale.empty())
         LeGrid = SampledGrid<Float>({LeNorm}, 1, 1, 1, alloc);
     else {
@@ -330,31 +305,177 @@ UniformGridMediumProvider *UniformGridMediumProvider::Create(
     Point3f p0 = parameters.GetOnePoint3f("p0", Point3f(0.f, 0.f, 0.f));
     Point3f p1 = parameters.GetOnePoint3f("p1", Point3f(1.f, 1.f, 1.f));
 
-    return alloc.new_object<UniformGridMediumProvider>(
-        Bounds3f(p0, p1), std::move(densityGrid), std::move(sigma_aGrid),
-        std::move(sigma_sGrid), std::move(rgbDensityGrid), Le, std::move(LeGrid), alloc);
+    Float g = parameters.GetOneFloat("g", 0.);
+    Spectrum sigma_a =
+        parameters.GetOneSpectrum("sigma_a", nullptr, SpectrumType::Unbounded, alloc);
+    if (!sigma_a)
+        sigma_a = alloc.new_object<ConstantSpectrum>(1.f);
+    Spectrum sigma_s =
+        parameters.GetOneSpectrum("sigma_s", nullptr, SpectrumType::Unbounded, alloc);
+    if (!sigma_s)
+        sigma_s = alloc.new_object<ConstantSpectrum>(1.f);
+    Float sigmaScale = parameters.GetOneFloat("scale", 1.f);
+
+    return alloc.new_object<GridMedium>(
+        Bounds3f(p0, p1), renderFromMedium, sigma_a, sigma_s, sigmaScale, g,
+        std::move(densityGrid), std::move(temperatureGrid), Le, std::move(LeGrid), alloc);
 }
 
-std::string UniformGridMediumProvider::ToString() const {
-    return StringPrintf("[ UniformGridMediumProvider Le_spec: %s (grids elided) ]",
-                        Le_spec);
+std::string GridMedium::ToString() const {
+    return StringPrintf("[ GridMedium bounds: %s renderFromMedium: %s phase: %s "
+                        "LeScale: %f (grids elided) ]",
+                        bounds, renderFromMedium, phase, LeScale);
 }
 
-// CloudMediumProvider Method Definitions
-CloudMediumProvider *CloudMediumProvider::Create(const ParameterDictionary &parameters,
-                                                 const FileLoc *loc, Allocator alloc) {
+// RGBGridMedium Method Definitions
+RGBGridMedium::RGBGridMedium(const Bounds3f &bounds, const Transform &renderFromMedium,
+                             Float g,
+                             pstd::optional<SampledGrid<RGBUnboundedSpectrum>> rgbA,
+                             pstd::optional<SampledGrid<RGBUnboundedSpectrum>> rgbS,
+                             Float sigmaScale,
+                             pstd::optional<SampledGrid<RGBIlluminantSpectrum>> rgbLe,
+                             Float LeScale, Allocator alloc)
+    : bounds(bounds),
+      renderFromMedium(renderFromMedium),
+      phase(g),
+      sigma_aGrid(std::move(rgbA)),
+      sigma_sGrid(std::move(rgbS)),
+      sigmaScale(sigmaScale),
+      majorantGrid(bounds, {16, 16, 16}, alloc),
+      LeGrid(std::move(rgbLe)),
+      LeScale(LeScale) {
+    if (LeGrid)
+        CHECK(sigma_aGrid);
+    if (sigma_aGrid)
+        volumeGridBytes += sigma_aGrid->BytesAllocated();
+    if (sigma_sGrid)
+        volumeGridBytes += sigma_sGrid->BytesAllocated();
+    if (LeGrid)
+        volumeGridBytes += LeGrid->BytesAllocated();
+
+    // Initialize _majorantGrid_ for _RGBGridMedium_
+    for (int z = 0; z < majorantGrid.res.z; ++z)
+        for (int y = 0; y < majorantGrid.res.y; ++y)
+            for (int x = 0; x < majorantGrid.res.x; ++x) {
+                Bounds3f bounds = majorantGrid.VoxelBounds(x, y, z);
+                // Initialize _majorantGrid_ voxel for RGB $\sigmaa$ and $\sigmas$
+                auto max = [] PBRT_CPU_GPU(RGBUnboundedSpectrum s) {
+                    return s.MaxValue();
+                };
+                Float maxSigma_t =
+                    (sigma_aGrid ? sigma_aGrid->MaxValue(bounds, max) : 1) +
+                    (sigma_sGrid ? sigma_sGrid->MaxValue(bounds, max) : 1);
+                majorantGrid.Set(x, y, z, sigmaScale * maxSigma_t);
+            }
+}
+
+RGBGridMedium *RGBGridMedium::Create(const ParameterDictionary &parameters,
+                                     const Transform &renderFromMedium,
+                                     const FileLoc *loc, Allocator alloc) {
+    std::vector<RGB> sigma_a = parameters.GetRGBArray("sigma_a");
+    std::vector<RGB> sigma_s = parameters.GetRGBArray("sigma_s");
+    std::vector<RGB> Le = parameters.GetRGBArray("Le");
+
+    if (sigma_a.empty() && sigma_s.empty())
+        ErrorExit(loc,
+                  "RGB grid requires \"sigma_a\" and/or \"sigma_s\" parameter values.");
+
+    size_t nDensity;
+    if (!sigma_a.empty()) {
+        nDensity = sigma_a.size();
+        if (!sigma_s.empty() && nDensity != sigma_s.size())
+            ErrorExit(loc,
+                      "Different number of samples (%d vs %d) provided for \"sigma_a\" "
+                      "and \"sigma_s\".",
+                      nDensity, sigma_s.size());
+    } else
+        nDensity = sigma_s.size();
+
+    if (!Le.empty() && sigma_a.empty())
+        ErrorExit(loc, "RGB grid requires \"sigma_a\" if \"Le\" value provided.");
+
+    if (!Le.empty() && nDensity != Le.size())
+        ErrorExit("Expected %d values for \"Le\" parameter but were given %d.", nDensity,
+                  Le.size());
+
+    int nx = parameters.GetOneInt("nx", 1);
+    int ny = parameters.GetOneInt("ny", 1);
+    int nz = parameters.GetOneInt("nz", 1);
+    if (nDensity != nx * ny * nz)
+        ErrorExit(loc, "RGB grid medium has %d density values; expected nx*ny*nz = %d",
+                  nDensity, nx * ny * nz);
+
+    pstd::optional<SampledGrid<RGBUnboundedSpectrum>> sigma_aGrid, sigma_sGrid;
+    pstd::optional<SampledGrid<RGBIlluminantSpectrum>> LeGrid;
+
+    if (!sigma_a.empty()) {
+        const RGBColorSpace *colorSpace = parameters.ColorSpace();
+        std::vector<RGBUnboundedSpectrum> rgbSpectrumDensity;
+        for (RGB rgb : sigma_a)
+            rgbSpectrumDensity.push_back(RGBUnboundedSpectrum(*colorSpace, rgb));
+        sigma_aGrid =
+            SampledGrid<RGBUnboundedSpectrum>(rgbSpectrumDensity, nx, ny, nz, alloc);
+    }
+    if (!sigma_s.empty()) {
+        const RGBColorSpace *colorSpace = parameters.ColorSpace();
+        std::vector<RGBUnboundedSpectrum> rgbSpectrumDensity;
+        for (RGB rgb : sigma_s)
+            rgbSpectrumDensity.push_back(RGBUnboundedSpectrum(*colorSpace, rgb));
+        sigma_sGrid =
+            SampledGrid<RGBUnboundedSpectrum>(rgbSpectrumDensity, nx, ny, nz, alloc);
+    }
+    if (!Le.empty()) {
+        const RGBColorSpace *colorSpace = parameters.ColorSpace();
+        std::vector<RGBIlluminantSpectrum> rgbSpectrumDensity;
+        for (RGB rgb : Le)
+            rgbSpectrumDensity.push_back(RGBIlluminantSpectrum(*colorSpace, rgb));
+        LeGrid =
+            SampledGrid<RGBIlluminantSpectrum>(rgbSpectrumDensity, nx, ny, nz, alloc);
+    }
+
+    Point3f p0 = parameters.GetOnePoint3f("p0", Point3f(0.f, 0.f, 0.f));
+    Point3f p1 = parameters.GetOnePoint3f("p1", Point3f(1.f, 1.f, 1.f));
+    Float LeScale = parameters.GetOneFloat("LeScale", 1.f);
+    Float g = parameters.GetOneFloat("g", 0.f);
+    Float sigmaScale = parameters.GetOneFloat("scale", 1.f);
+
+    return alloc.new_object<RGBGridMedium>(Bounds3f(p0, p1), renderFromMedium, g,
+                                           std::move(sigma_aGrid), std::move(sigma_sGrid),
+                                           sigmaScale, std::move(LeGrid), LeScale, alloc);
+}
+
+std::string RGBGridMedium::ToString() const {
+    return StringPrintf("[ RGBGridMedium bounds: %s renderFromMedium: %s phase: %s "
+                        "sigmaScale: %f LeScale: %f (grids elided) ]",
+                        bounds, renderFromMedium, phase, sigmaScale, LeScale);
+}
+
+// CloudMedium Method Definitions
+CloudMedium *CloudMedium::Create(const ParameterDictionary &parameters,
+                                 const Transform &renderFromMedium, const FileLoc *loc,
+                                 Allocator alloc) {
     Float density = parameters.GetOneFloat("density", 1);
+    Float g = parameters.GetOneFloat("g", 0.);
     Float wispiness = parameters.GetOneFloat("wispiness", 1);
     Float frequency = parameters.GetOneFloat("frequency", 5);
+    Spectrum sigma_a =
+        parameters.GetOneSpectrum("sigma_a", nullptr, SpectrumType::Unbounded, alloc);
+    if (!sigma_a)
+        sigma_a = alloc.new_object<ConstantSpectrum>(1.f);
+    Spectrum sigma_s =
+        parameters.GetOneSpectrum("sigma_s", nullptr, SpectrumType::Unbounded, alloc);
+    if (!sigma_s)
+        sigma_s = alloc.new_object<ConstantSpectrum>(1.f);
 
     Point3f p0 = parameters.GetOnePoint3f("p0", Point3f(0.f, 0.f, 0.f));
     Point3f p1 = parameters.GetOnePoint3f("p1", Point3f(1.f, 1.f, 1.f));
 
-    return alloc.new_object<CloudMediumProvider>(Bounds3f(p0, p1), density, wispiness,
-                                                 frequency);
+    return alloc.new_object<CloudMedium>(Bounds3f(p0, p1), renderFromMedium, sigma_a,
+                                         sigma_s, g, density, wispiness, frequency,
+                                         alloc);
 }
 
-// NanoVDBMediumProvider Method Definitions
+// NanoVDBMedium Method Definitions
 template <typename Buffer>
 static nanovdb::GridHandle<Buffer> readGrid(const std::string &filename,
                                             const std::string &gridName,
@@ -379,8 +500,115 @@ static nanovdb::GridHandle<Buffer> readGrid(const std::string &filename,
     return grid;
 }
 
-NanoVDBMediumProvider *NanoVDBMediumProvider::Create(
-    const ParameterDictionary &parameters, const FileLoc *loc, Allocator alloc) {
+NanoVDBMedium::NanoVDBMedium(const Transform &renderFromMedium, Spectrum sigma_a,
+                             Spectrum sigma_s, Float sigmaScale, Float g,
+                             nanovdb::GridHandle<NanoVDBBuffer> dg,
+                             nanovdb::GridHandle<NanoVDBBuffer> tg, Float LeScale,
+                             Float temperatureCutoff, Float temperatureScale,
+                             Allocator alloc)
+    : renderFromMedium(renderFromMedium),
+      sigma_a_spec(sigma_a, alloc),
+      sigma_s_spec(sigma_s, alloc),
+      phase(g),
+      majorantGrid(Bounds3f(), {64, 64, 64}, alloc),
+      densityGrid(std::move(dg)),
+      temperatureGrid(std::move(tg)),
+      LeScale(LeScale),
+      temperatureCutoff(temperatureCutoff),
+      temperatureScale(temperatureScale) {
+    densityFloatGrid = densityGrid.grid<float>();
+
+    sigma_a_spec.Scale(sigmaScale);
+    sigma_s_spec.Scale(sigmaScale);
+
+    nanovdb::BBox<nanovdb::Vec3R> bbox = densityFloatGrid->worldBBox();
+    bounds = Bounds3f(Point3f(bbox.min()[0], bbox.min()[1], bbox.min()[2]),
+                      Point3f(bbox.max()[0], bbox.max()[1], bbox.max()[2]));
+
+    if (temperatureGrid) {
+        temperatureFloatGrid = temperatureGrid.grid<float>();
+        float minTemperature, maxTemperature;
+        temperatureFloatGrid->tree().extrema(minTemperature, maxTemperature);
+        LOG_VERBOSE("Max temperature: %f", maxTemperature);
+
+        nanovdb::BBox<nanovdb::Vec3R> bbox = temperatureFloatGrid->worldBBox();
+        bounds =
+            Union(bounds, Bounds3f(Point3f(bbox.min()[0], bbox.min()[1], bbox.min()[2]),
+                                   Point3f(bbox.max()[0], bbox.max()[1], bbox.max()[2])));
+    }
+
+    majorantGrid.bounds = bounds;
+
+    // Initialize majorantGrid
+#if 0
+    // For debugging: single, medium-wide majorant...
+    majorantGridRes = Point3i(1, 1, 1);
+    Float minDensity, maxDensity;
+    densityFloatGrid->tree().extrema(minDensity, maxDensity);
+    majorantGrid.push_back(maxDensity);
+#else
+    LOG_VERBOSE("Starting nanovdb grid GetMaxDensityGrid()");
+
+    int gridSize = majorantGrid.res.x * majorantGrid.res.y * majorantGrid.res.z;
+    ParallelFor(0, gridSize, [&](size_t index) {
+        // Indices into majorantGrid
+        int x = index % majorantGrid.res.x;
+        int y = (index / majorantGrid.res.x) % majorantGrid.res.y;
+        int z = index / (majorantGrid.res.x * majorantGrid.res.y);
+        CHECK_EQ(index, x + majorantGrid.res.x * (y + majorantGrid.res.y * z));
+
+        // World (aka medium) space bounds of this max grid cell
+        Bounds3f wb(bounds.Lerp(Point3f(Float(x) / majorantGrid.res.x,
+                                        Float(y) / majorantGrid.res.y,
+                                        Float(z) / majorantGrid.res.z)),
+                    bounds.Lerp(Point3f(Float(x + 1) / majorantGrid.res.x,
+                                        Float(y + 1) / majorantGrid.res.y,
+                                        Float(z + 1) / majorantGrid.res.z)));
+
+        // Compute corresponding NanoVDB index-space bounds in floating-point.
+        nanovdb::Vec3R i0 = densityFloatGrid->worldToIndexF(
+            nanovdb::Vec3R(wb.pMin.x, wb.pMin.y, wb.pMin.z));
+        nanovdb::Vec3R i1 = densityFloatGrid->worldToIndexF(
+            nanovdb::Vec3R(wb.pMax.x, wb.pMax.y, wb.pMax.z));
+
+        // Now find integer index-space bounds, accounting for both
+        // filtering and the overall index bounding box.
+        auto bbox = densityFloatGrid->indexBBox();
+        Float delta = 1.f;  // Filter slop
+        int nx0 = std::max(int(i0[0] - delta), bbox.min()[0]);
+        int nx1 = std::min(int(i1[0] + delta), bbox.max()[0]);
+        int ny0 = std::max(int(i0[1] - delta), bbox.min()[1]);
+        int ny1 = std::min(int(i1[1] + delta), bbox.max()[1]);
+        int nz0 = std::max(int(i0[2] - delta), bbox.min()[2]);
+        int nz1 = std::min(int(i1[2] + delta), bbox.max()[2]);
+
+        float maxValue = 0;
+        auto accessor = densityFloatGrid->getAccessor();
+        // Apparently nanovdb integer bounding boxes are inclusive on
+        // the upper end...
+        for (int nz = nz0; nz <= nz1; ++nz)
+            for (int ny = ny0; ny <= ny1; ++ny)
+                for (int nx = nx0; nx <= nx1; ++nx)
+                    maxValue = std::max(maxValue, accessor.getValue({nx, ny, nz}));
+
+        // Only write into maxGrid once when we're done to minimize
+        // cache thrashing..
+        majorantGrid.Set(x, y, z, maxValue);
+    });
+
+    LOG_VERBOSE("Finished nanovdb grid GetMaxDensityGrid()");
+#endif
+}
+
+std::string NanoVDBMedium::ToString() const {
+    return StringPrintf("[ NanoVDBMedium bounds: %s LeScale: %f "
+                        "temperatureCutoff: %f temperatureScale: %f (grids elided) ]",
+                        bounds, LeScale, temperatureCutoff, temperatureScale);
+}
+
+NanoVDBMedium *NanoVDBMedium::Create(const ParameterDictionary &parameters,
+                                     const Transform &renderFromMedium,
+                                     const FileLoc *loc, Allocator alloc) {
     std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
     if (filename.empty())
         ErrorExit(loc, "Must supply \"filename\" to \"nanovdb\" medium.");
@@ -397,9 +625,20 @@ NanoVDBMediumProvider *NanoVDBMediumProvider::Create(
     Float temperatureCutoff = parameters.GetOneFloat("temperaturecutoff", 0.f);
     Float temperatureScale = parameters.GetOneFloat("temperaturescale", 1.f);
 
-    return alloc.new_object<NanoVDBMediumProvider>(std::move(densityGrid),
-                                                   std::move(temperatureGrid), LeScale,
-                                                   temperatureCutoff, temperatureScale);
+    Float g = parameters.GetOneFloat("g", 0.);
+    Spectrum sigma_a =
+        parameters.GetOneSpectrum("sigma_a", nullptr, SpectrumType::Unbounded, alloc);
+    if (!sigma_a)
+        sigma_a = alloc.new_object<ConstantSpectrum>(1.f);
+    Spectrum sigma_s =
+        parameters.GetOneSpectrum("sigma_s", nullptr, SpectrumType::Unbounded, alloc);
+    if (!sigma_s)
+        sigma_s = alloc.new_object<ConstantSpectrum>(1.f);
+    Float sigmaScale = parameters.GetOneFloat("scale", 1.f);
+
+    return alloc.new_object<NanoVDBMedium>(
+        renderFromMedium, sigma_a, sigma_s, sigmaScale, g, std::move(densityGrid),
+        std::move(temperatureGrid), LeScale, temperatureCutoff, temperatureScale, alloc);
 }
 
 Medium Medium::Create(const std::string &name, const ParameterDictionary &parameters,
@@ -409,20 +648,13 @@ Medium Medium::Create(const std::string &name, const ParameterDictionary &parame
     if (name == "homogeneous")
         m = HomogeneousMedium::Create(parameters, loc, alloc);
     else if (name == "uniformgrid") {
-        UniformGridMediumProvider *provider =
-            UniformGridMediumProvider::Create(parameters, loc, alloc);
-        m = CuboidMedium<UniformGridMediumProvider>::Create(provider, parameters,
-                                                            renderFromMedium, loc, alloc);
+        m = GridMedium::Create(parameters, renderFromMedium, loc, alloc);
+    } else if (name == "rgbgrid") {
+        m = RGBGridMedium::Create(parameters, renderFromMedium, loc, alloc);
     } else if (name == "cloud") {
-        CloudMediumProvider *provider =
-            CloudMediumProvider::Create(parameters, loc, alloc);
-        m = CuboidMedium<CloudMediumProvider>::Create(provider, parameters,
-                                                      renderFromMedium, loc, alloc);
+        m = CloudMedium::Create(parameters, renderFromMedium, loc, alloc);
     } else if (name == "nanovdb") {
-        NanoVDBMediumProvider *provider =
-            NanoVDBMediumProvider::Create(parameters, loc, alloc);
-        m = CuboidMedium<NanoVDBMediumProvider>::Create(provider, parameters,
-                                                        renderFromMedium, loc, alloc);
+        m = NanoVDBMedium::Create(parameters, renderFromMedium, loc, alloc);
     } else
         ErrorExit(loc, "%s: medium unknown.", name);
 

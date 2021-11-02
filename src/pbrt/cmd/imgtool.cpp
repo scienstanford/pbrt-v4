@@ -136,7 +136,7 @@ static std::map<std::string, CommandUsage> commandUsage = {
                        e.g. imgtool convert --exr2bin 1:5 pbrt.exr
                        e.g. imgtool convert --exr2bin B,G,R,Radiance.C05 pbrt.exr
                        e.g. imgtool convert --exr2bin Radiance --outfile /path/to/dir/ pbrt.exr
-                       e.g. imgtool convert --exr2bin Radiance --outfile /path/to/dir/filename pbrt.exr    
+                       e.g. imgtool convert --exr2bin Radiance --outfile /path/to/dir/filename pbrt.exr
                        Default: all channels at the same directory with pbrt.exr
     --flipy            Flip the image along the y axis
     --gamma <v>        Apply a gamma curve with exponent v. (Default: 1 (none)).
@@ -1739,8 +1739,8 @@ int convert(std::vector<std::string> args) {
                     targetChannelNames =
                         SplitString((*iter), ',');
                 }
-            } 
-        } 
+            }
+        }
         else if ((*iter)[0] != '-' && inFile.empty()) {
             inFile = *iter;
         } else
@@ -1812,7 +1812,7 @@ int convert(std::vector<std::string> args) {
                 else
                     fileName = outDir + fileName;
             }
-            else 
+            else
                 fileName = inFile.substr(0, inFile.size() - 4);
             std::string binaryName = fileName + '_' +
                                      std::to_string(res.y) + '_' + std::to_string(res.x) +

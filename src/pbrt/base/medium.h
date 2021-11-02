@@ -43,31 +43,12 @@ class PhaseFunction : public TaggedPointer<HGPhaseFunction> {
 };
 
 class HomogeneousMedium;
-template <typename Provider>
-class CuboidMedium;
-class UniformGridMediumProvider;
-// UniformGridMedium Definition
-using UniformGridMedium = CuboidMedium<UniformGridMediumProvider>;
-
-class CloudMediumProvider;
-// CloudMedium Definition
-using CloudMedium = CuboidMedium<CloudMediumProvider>;
-
-class NanoVDBMediumProvider;
-// NanoVDBMedium Definition
-using NanoVDBMedium = CuboidMedium<NanoVDBMediumProvider>;
+class GridMedium;
+class RGBGridMedium;
+class CloudMedium;
+class NanoVDBMedium;
 
 struct MediumProperties;
-
-// MediumDensity Definition
-struct MediumDensity {
-    PBRT_CPU_GPU
-    MediumDensity(Float d) : sigma_a(d), sigma_s(d) {}
-    PBRT_CPU_GPU
-    MediumDensity(SampledSpectrum sigma_a, SampledSpectrum sigma_s)
-        : sigma_a(sigma_a), sigma_s(sigma_s) {}
-    SampledSpectrum sigma_a, sigma_s;
-};
 
 // RayMajorantSegment Definition
 struct RayMajorantSegment {
@@ -92,8 +73,11 @@ class RayMajorantIterator
 };
 
 // Medium Definition
-class Medium : public TaggedPointer<HomogeneousMedium, UniformGridMedium, CloudMedium,
-                                    NanoVDBMedium> {
+class Medium
+    : public TaggedPointer<  // Medium Types
+          HomogeneousMedium, CloudMedium, GridMedium, RGBGridMedium, NanoVDBMedium
+
+          > {
   public:
     // Medium Interface
     using TaggedPointer::TaggedPointer;

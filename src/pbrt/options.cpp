@@ -4,6 +4,9 @@
 
 #include <pbrt/options.h>
 
+#if defined(PBRT_BUILD_GPU_RENDERER)
+#include <pbrt/gpu/util.h>
+#endif  // PBRT_BUILD_GPU_RENDERER
 #include <pbrt/util/print.h>
 
 namespace pbrt {
@@ -12,6 +15,10 @@ PBRTOptions *Options;
 
 #if defined(PBRT_BUILD_GPU_RENDERER)
 __constant__ BasicPBRTOptions OptionsGPU;
+
+void CopyOptionsToGPU() {
+    CUDA_CHECK(cudaMemcpyToSymbol(OptionsGPU, Options, sizeof(OptionsGPU)));
+}
 #endif
 
 std::string ToString(const RenderingCoordinateSystem &r) {
@@ -28,18 +35,19 @@ std::string ToString(const RenderingCoordinateSystem &r) {
 std::string PBRTOptions::ToString() const {
     return StringPrintf(
         "[ PBRTOptions seed: %s quiet: %s disablePixelJitter: %s "
-        "disableWavelengthJitter: %s forceDiffuse: %s useGPU: %s wavefront: %s "
-        "renderingSpace: %s nThreads: %s logLevel: %s logFile: %s logUtilization: %s "
-        "writePartialImages: %s recordPixelStatistics: %s printStatistics: %s "
-        "pixelSamples: %s gpuDevice: %s quickRender: %s upgrade: %s imageFile: %s "
-        "mseReferenceImage: %s mseReferenceOutput: %s debugStart: %s displayServer: %s "
-        "cropWindow: %s pixelBounds: %s pixelMaterial: %s displacementEdgeScale: %f ]",
-        seed, quiet, disablePixelJitter, disableWavelengthJitter, forceDiffuse, useGPU,
-        wavefront, renderingSpace, nThreads, logLevel, logFile, logUtilization,
-        writePartialImages, recordPixelStatistics, printStatistics, pixelSamples,
-        gpuDevice, quickRender, upgrade, imageFile, mseReferenceImage, mseReferenceOutput,
-        debugStart, displayServer, cropWindow, pixelBounds, pixelMaterial,
-        displacementEdgeScale);
+        "disableWavelengthJitter: %s disableTextureFiltering: %s forceDiffuse: %s "
+        "useGPU: %s wavefront: %s renderingSpace: %s nThreads: %s logLevel: %s logFile: "
+        "%s logUtilization: %s writePartialImages: %s recordPixelStatistics: %s "
+        "printStatistics: %s pixelSamples: %s gpuDevice: %s quickRender: %s upgrade: %s "
+        "imageFile: %s mseReferenceImage: %s mseReferenceOutput: %s debugStart: %s "
+        "displayServer: %s cropWindow: %s pixelBounds: %s pixelMaterial: %s "
+        "displacementEdgeScale: %f ]",
+        seed, quiet, disablePixelJitter, disableWavelengthJitter, disableTextureFiltering,
+        forceDiffuse, useGPU, wavefront, renderingSpace, nThreads, logLevel, logFile,
+        logUtilization, writePartialImages, recordPixelStatistics, printStatistics,
+        pixelSamples, gpuDevice, quickRender, upgrade, imageFile, mseReferenceImage,
+        mseReferenceOutput, debugStart, displayServer, cropWindow, pixelBounds,
+        pixelMaterial, displacementEdgeScale);
 }
 
 }  // namespace pbrt

@@ -172,11 +172,13 @@ WavefrontPathIntegrator::WavefrontPathIntegrator(
     if (!haveLights)
         ErrorExit("No light sources specified");
 
+    LOG_VERBOSE("Starting to create light sampler");
     std::string lightSamplerName =
         scene.integrator.parameters.GetOneString("lightsampler", "bvh");
     if (allLights.size() == 1)
         lightSamplerName = "uniform";
     lightSampler = LightSampler::Create(lightSamplerName, allLights, alloc);
+    LOG_VERBOSE("Finished creating light sampler");
 
     if (scene.integrator.name != "path" && scene.integrator.name != "volpath")
         Warning(&scene.integrator.loc,
@@ -198,15 +200,15 @@ WavefrontPathIntegrator::WavefrontPathIntegrator(
 
     // Warn about unsupported stuff...
     if (Options->forceDiffuse)
-        Warning("The wavefront integrator does not support --force-diffuse.");
+        ErrorExit("The wavefront integrator does not support --force-diffuse.");
     if (Options->writePartialImages)
         Warning("The wavefront integrator does not support --write-partial-images.");
     if (Options->recordPixelStatistics)
-        Warning("The wavefront integrator does not support --pixelstats.");
+        ErrorExit("The wavefront integrator does not support --pixelstats.");
     if (!Options->mseReferenceImage.empty())
-        Warning("The wavefront integrator does not support --mse-reference-image.");
+        ErrorExit("The wavefront integrator does not support --mse-reference-image.");
     if (!Options->mseReferenceOutput.empty())
-        Warning("The wavefront integrator does not support --mse-reference-out.");
+        ErrorExit("The wavefront integrator does not support --mse-reference-out.");
 
         ///////////////////////////////////////////////////////////////////////////
         // Allocate storage for all of the queues/buffers...

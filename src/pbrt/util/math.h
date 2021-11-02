@@ -224,8 +224,7 @@ inline PBRT_CPU_GPU typename std::enable_if_t<std::is_integral<T>::value, T> FMA
 }
 
 PBRT_CPU_GPU inline Float Sinc(Float);
-PBRT_CPU_GPU
-inline Float WindowedSinc(Float x, Float radius, Float tau) {
+PBRT_CPU_GPU inline Float WindowedSinc(Float x, Float radius, Float tau) {
     if (std::abs(x) > radius)
         return 0;
     return Sinc(x) * Sinc(x / tau);
@@ -317,7 +316,8 @@ PBRT_CPU_GPU inline constexpr float Pow<0>(float v) {
 
 template <int n>
 PBRT_CPU_GPU inline constexpr double Pow(double v) {
-    static_assert(n > 0, "Power can't be negative");
+    if constexpr (n < 0)
+        return 1 / Pow<-n>(v);
     double n2 = Pow<n / 2>(v);
     return n2 * n2 * Pow<n & 1>(v);
 }
