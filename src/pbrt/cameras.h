@@ -583,6 +583,342 @@ class RealisticCamera : public CameraBase {
     pstd::vector<Bounds2f> exitPupilBounds;
 };
 
+// OmniCamera Definition
+class OmniCamera : public CameraBase {
+  public:
+    // OmniCamera Public Declarations
+    struct LensElementInterface {
+        LensElementInterface() {}
+        LensElementInterface(Float cRadius, Float aRadius,
+            Float thickness, Float ior) :
+            curvatureRadius(cRadius,cRadius),
+            apertureRadius(aRadius ,aRadius),
+            conicConstant((Float)0.0, (Float)0.0),
+            transform(Transform()),
+            thickness(thickness),
+            eta(ior) {}
+        Vector2f curvatureRadius;
+        Vector2f apertureRadius;
+        Vector2f conicConstant;
+        Transform transform;
+        Float thickness;
+        Float eta;
+        std::string ToString() const;
+    };
+    struct MicrolensData {
+        pstd::vector<LensElementInterface> elementInterfaces;
+        float offsetFromSensor;
+        std::vector<Vector2f> offsets;
+        Vector2i dimensions;
+    };
+
+    // OmniCamera Public Methods
+    OmniCamera(CameraBaseParameters baseParameters,
+                    pstd::vector<OmniCamera::LensElementInterface> &lensInterfaceData,
+                    Float focusDistance, Float filmDistance,
+                    bool caFlag, bool diffractionEnabled,
+                    pstd::vector<OmniCamera::LensElementInterface>& microlensData,
+                    Vector2i microlensDims, std::vector<Float> & microlensOffsets, Float microlensSensorOffset,
+                    Float apertureDiameter, Image apertureImage, Allocator alloc);
+
+    static OmniCamera *Create(const ParameterDictionary &parameters,
+                                   const CameraTransform &cameraTransform, Film film,
+                                   Medium medium, const FileLoc *loc,
+                                   Allocator alloc = {});
+
+    PBRT_CPU_GPU
+    pstd::optional<CameraRay> GenerateRay(CameraSample sample,
+                                          SampledWavelengths &lambda) const;
+
+    PBRT_CPU_GPU
+    pstd::optional<CameraRayDifferential> GenerateRayDifferential(
+        CameraSample sample, SampledWavelengths &lambda) const {
+        return CameraBase::GenerateRayDifferential(this, sample, lambda);
+    }
+
+    PBRT_CPU_GPU
+    SampledSpectrum We(const Ray &ray, SampledWavelengths &lambda,
+                       Point2f *pRaster2 = nullptr) const {
+        LOG_FATAL("We() unimplemented for OmniCamera");
+        return {};
+    }
+
+    PBRT_CPU_GPU
+    void PDF_We(const Ray &ray, Float *pdfPos, Float *pdfDir) const {
+        LOG_FATAL("PDF_We() unimplemented for OmniCamera");
+    }
+
+    PBRT_CPU_GPU
+    pstd::optional<CameraWiSample> SampleWi(const Interaction &ref, Point2f u,
+                                            SampledWavelengths &lambda) const {
+        LOG_FATAL("SampleWi() unimplemented for OmniCamera");
+        return {};
+    }
+
+    std::string ToString() const;
+
+  private:
+    // OmniCamera Private Declarations
+
+    // OmniCamera Private Methods
+    PBRT_CPU_GPU
+    Float LensRearZ() const { return elementInterfaces.back().thickness; }
+
+    PBRT_CPU_GPU
+    Float LensFrontZ() const {
+        Float zSum = 0;
+        for (const LensElementInterface &element : elementInterfaces)
+            zSum += element.thickness;
+        return zSum;
+    }
+
+    PBRT_CPU_GPU
+    Float RearElementRadius() const { return elementInterfaces.back().apertureRadius.x; }
+
+    PBRT_CPU_GPU
+    Float TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const;
+
+    PBRT_CPU_GPU
+    static bool IntersectSphericalElement(Float radius, Float zCenter, const Ray &ray,
+                                          Float *t, Normal3f *n) {
+        // Compute _t0_ and _t1_ for ray--element intersection
+        Point3f o = ray.o - Vector3f(0, 0, zCenter);
+        Float A = ray.d.x * ray.d.x + ray.d.y * ray.d.y + ray.d.z * ray.d.z;
+        Float B = 2 * (ray.d.x * o.x + ray.d.y * o.y + ray.d.z * o.z);
+        Float C = o.x * o.x + o.y * o.y + o.z * o.z - radius * radius;
+        Float t0, t1;
+        if (!Quadratic(A, B, C, &t0, &t1))
+            return false;
+
+        // Select intersection $t$ based on ray direction and element curvature
+        bool useCloserT = (ray.d.z > 0) ^ (radius < 0);
+        *t = useCloserT ? std::min(t0, t1) : std::max(t0, t1);
+        if (*t < 0)
+            return false;
+
+        // Compute surface normal of element at ray intersection point
+        *n = Normal3f(Vector3f(o + *t * ray.d));
+        *n = FaceForward(Normalize(*n), -ray.d);
+
+        return true;
+    }
+
+    PBRT_CPU_GPU
+    Float TraceLensesFromScene(const Ray &rCamera, Ray *rOut) const;
+
+    void DrawLensSystem() const;
+    void DrawRayPathFromFilm(const Ray &r, bool arrow, bool toOpticalIntercept) const;
+    void DrawRayPathFromScene(const Ray &r, bool arrow, bool toOpticalIntercept) const;
+
+    static void ComputeCardinalPoints(Ray rIn, Ray rOut, Float *p, Float *f);
+    void ComputeThickLensApproximation(Float pz[2], Float f[2]) const;
+    Float FocusThickLens(Float focusDistance);
+    Bounds2f BoundExitPupil(Float filmX0, Float filmX1) const;
+    void RenderExitPupil(Float sx, Float sy, const char *filename) const;
+
+    PBRT_CPU_GPU
+    pstd::optional<ExitPupilSample> SampleExitPupil(Point2f pFilm, Point2f uLens) const;
+    pstd::optional<ExitPupilSample> SampleMicrolensPupil(Point2f pFilm, Point2f uLens) const;
+
+    void TestExitPupilBounds() const;
+
+    // OmniCamera Private Members
+    Bounds2f physicalExtent;
+    pstd::vector<LensElementInterface> elementInterfaces;
+    Image apertureImage;
+    pstd::vector<Bounds2f> exitPupilBounds;
+    const bool caFlag;
+    const bool diffractionEnabled;
+    MicrolensData microlens;
+};
+
+// RTFCamera Definition
+class RTFCamera : public CameraBase {
+  public:
+    // RTFCamera Public Declarations
+    struct LensPolynomialTerm {
+        LensPolynomialTerm() {}
+        LensPolynomialTerm(std::string n, std::vector<Float> tr,
+                        std::vector<Float> tu, std::vector<Float> tv,
+                        std::vector<Float> coeff) :
+                        name(n), termr(tr), termu(tu),
+                        termv(tv), coeff(coeff) {}
+        std::string name;
+        std::vector<Float> termr;
+        std::vector<Float> termu;
+        std::vector<Float> termv;
+        std::vector<Float> coeff;
+    };
+
+    struct RTFPolynomialOutputs {
+            RTFPolynomialOutputs() {}
+            RTFPolynomialOutputs(pstd::vector<LensPolynomialTerm> position,pstd::vector<LensPolynomialTerm> direction ): position(position), direction(direction){}
+            pstd::vector<LensPolynomialTerm> position;
+            pstd::vector<LensPolynomialTerm> direction;
+    };
+
+    struct RTFVignettingTerms {
+        RTFVignettingTerms() {}
+        RTFVignettingTerms(Float circlePlaneZ,int exitpupilIndex, std::vector<Float> circleRadii,  std::vector<Float> circleSensitivities):
+        circlePlaneZ(circlePlaneZ), exitpupilIndex(exitpupilIndex), circleRadii(circleRadii),circleSensitivities(circleSensitivities) {}
+        Float circlePlaneZ;
+        int exitpupilIndex; // Index that indicates main exit pupil
+        std::vector<Float> circleRadii;
+        std::vector<Float> circleSensitivities;
+
+        // To accomidate nonlinear transformation of the circle corresponding to diaphragm
+        // Both vectors represent polynomial coefficients in ascending degree
+        // [a0 a1 a2 a3 a4 ...]  -->  a0 + a1*x + a2*x^2 +....
+
+        // RADIUS (unit independent polynomial)
+        // A polynomial that, when multiplied with the on-axis radius, gives the off-axis radius
+        /// newradius = radius_onaxis*poly(offaxis_distance)
+        // By construction circleRadiusPoly[0]=1
+        std::vector<Float> circleRadiusPoly;
+
+        // SENSITIVITY (JSON file:unit for for milimeters, converted to coefficients in meters when loaded in)
+        // A polynomial that, when multiplied with the off axi distance, gives the off-axis displacement of the circle
+        /// offset = poly(offaxis_distance)*offaxis_distance
+        // By construction circleRadiusPoly[0]=0
+        std::vector<Float> circleSensitivityPoly;
+    };
+
+    // RTFCamera Public Methods
+    RTFCamera(CameraBaseParameters baseParameters,
+                std::string bbmode,
+                Float filmDistance, bool caFlag, Float apertureDiameter,
+                Float planeOffsetInput, Float planeOffsetOutput, Float lensThickness,
+                pstd::vector<pstd::vector< RTFCamera::LensPolynomialTerm>> polynomialMaps,
+                pstd::vector<RTFCamera::RTFVignettingTerms> vignettingTerms,
+                pstd::vector<Float> polyWavelengths_nm,
+                Allocator alloc);
+
+    static RTFCamera *Create(const ParameterDictionary &parameters,
+                                   const CameraTransform &cameraTransform, Film film,
+                                   Medium medium, const FileLoc *loc,
+                                   Allocator alloc = {});
+
+    PBRT_CPU_GPU
+    pstd::optional<CameraRay> GenerateRay(CameraSample sample,
+                                          SampledWavelengths &lambda) const;
+
+    PBRT_CPU_GPU
+    pstd::optional<CameraRayDifferential> GenerateRayDifferential(
+        CameraSample sample, SampledWavelengths &lambda) const {
+        return CameraBase::GenerateRayDifferential(this, sample, lambda);
+    }
+
+    PBRT_CPU_GPU
+    SampledSpectrum We(const Ray &ray, SampledWavelengths &lambda,
+                       Point2f *pRaster2 = nullptr) const {
+        LOG_FATAL("We() unimplemented for RTFCamera");
+        return {};
+    }
+
+    PBRT_CPU_GPU
+    void PDF_We(const Ray &ray, Float *pdfPos, Float *pdfDir) const {
+        LOG_FATAL("PDF_We() unimplemented for RTFCamera");
+    }
+
+    PBRT_CPU_GPU
+    pstd::optional<CameraWiSample> SampleWi(const Interaction &ref, Point2f u,
+                                            SampledWavelengths &lambda) const {
+        LOG_FATAL("SampleWi() unimplemented for RTFCamera");
+        return {};
+    }
+
+    std::string ToString() const;
+
+  private:
+    // RTFCamera Private Declarations
+    enum IntersectResult {MISS,CULLED_BY_APERTURE,HIT};
+    const bool caFlag;
+    const Float filmDistance;
+    const Float planeOffsetInput;
+    const Float planeOffsetOutput;
+    const Float lensThickness;
+    pstd::vector<Bounds2f> exitPupilBounds;
+
+    // RTFCamera Private Methods
+    // PBRT_CPU_GPU
+    // Float LensRearZ() const { return elementInterfaces.back().thickness; }
+
+    // PBRT_CPU_GPU
+    // Float LensFrontZ() const {
+    //     Float zSum = 0;
+    //     for (const LensElementInterface &element : elementInterfaces)
+    //         zSum += element.thickness;
+    //     return zSum;
+    // }
+
+    // PBRT_CPU_GPU
+    // static bool IntersectSphericalElement(Float radius, Float zCenter, const Ray &ray,
+    //                                       Float *t, Normal3f *n) {
+    //     // Compute _t0_ and _t1_ for ray--element intersection
+    //     Point3f o = ray.o - Vector3f(0, 0, zCenter);
+    //     Float A = ray.d.x * ray.d.x + ray.d.y * ray.d.y + ray.d.z * ray.d.z;
+    //     Float B = 2 * (ray.d.x * o.x + ray.d.y * o.y + ray.d.z * o.z);
+    //     Float C = o.x * o.x + o.y * o.y + o.z * o.z - radius * radius;
+    //     Float t0, t1;
+    //     if (!Quadratic(A, B, C, &t0, &t1))
+    //         return false;
+
+    //     // Select intersection $t$ based on ray direction and element curvature
+    //     bool useCloserT = (ray.d.z > 0) ^ (radius < 0);
+    //     *t = useCloserT ? std::min(t0, t1) : std::max(t0, t1);
+    //     if (*t < 0)
+    //         return false;
+
+    //     // Compute surface normal of element at ray intersection point
+    //     *n = Normal3f(Vector3f(o + *t * ray.d));
+    //     *n = FaceForward(Normalize(*n), -ray.d);
+
+    //     return true;
+    // }
+
+    // PBRT_CPU_GPU
+    // Float TraceLensesFromScene(const Ray &rCamera, Ray *rOut) const;
+
+
+    int pupilIndex;
+    Ray ApplyPolynomial(Float rho, Vector3f dir, pstd::vector< RTFCamera::LensPolynomialTerm>  &polynomialMap) const;
+    inline Ray RotateRays(const Ray &thisRay, Float deg) const;
+    Float PolynomialCal(Float rho, Float dx, Float dy, LensPolynomialTerm &polyTerm) const;
+    inline Vector2f Pos2RadiusRotation(const Point3f pos) const;
+    bool IsValidRayCircles(const Ray &rotatedRay, RTFVignettingTerms &vignetting) const;
+    bool TraceLensesFromFilm(const Ray &ray, Ray *rOut,int wlIndex) const;
+    inline Float distanceCirclePlaneFromFilm() const;
+    // PBRT_CPU_GPU
+    // pstd::optional<ExitPupilSample> SampleExitPupil(Point2f pFilm, Point2f uLens) const;
+    // pstd::optional<ExitPupilSample> SampleMicrolensPupil(Point2f pFilm, Point2f uLens) const;
+    Point3f SampleExitPupil(const Point2f &pFilm, const Point2f &lensSample,
+                            Float *sampleBoundsArea) const;
+    Point3f SampleExitPupilVignetting(const Point2f &pFilm, const Point2f &lensSample,RTFVignettingTerms &vignettingTerms) const;
+    Point3f SampleMainCircle(const Point2f &pFilm, const Point2f &lensSample,RTFVignettingTerms &vignettingTerms, Float *sampleBoundsArea) const;
+
+    pstd::vector< RTFCamera::LensPolynomialTerm> poly;
+
+    // Wavelength dependent RTF : vectorized. Each element corresponds to a given wavelength
+    pstd::vector<Float> polyWavelengths_nm; // wavelengths read from file
+    pstd::vector<pstd::vector< RTFCamera::LensPolynomialTerm>> polynomialMaps; // Each element has corresponding wavelength
+    pstd::vector<RTFCamera::RTFVignettingTerms> vignettingTerms;
+
+    std::vector<Float> circleRadii;
+    std::vector<Float> circleSensitivities;
+    std::string bbmode;
+
+    Float getPupilPosition(RTFVignettingTerms vignetting, int circleIndex) const;
+    Float getPupilRadius(RTFVignettingTerms vignetting, int circleIndex) const;
+
+    void TestExitPupilBounds() const;
+
+    // RTFCamera Private Members
+    Bounds2f physicalExtent;
+    std::vector<Bounds2f> exitPupilBoundsRTF;
+    Bounds2f BoundExitPupilRTF(Float filmX0, Float filmX1) const;
+};
+
+
 inline pstd::optional<CameraRay> Camera::GenerateRay(CameraSample sample,
                                                      SampledWavelengths &lambda) const {
     auto generate = [&](auto ptr) { return ptr->GenerateRay(sample, lambda); };
