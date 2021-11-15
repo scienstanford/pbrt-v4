@@ -22,7 +22,7 @@
 #include <fstream> // zhenyi
 
 #include <algorithm>
-
+#include <iostream>
 #include <math.h>
 #include <cmath>
 #include <gsl/gsl_roots.h>
@@ -464,7 +464,7 @@ pstd::optional<CameraRayDifferential> PerspectiveCamera::GenerateRayDifferential
         correction_factor = kc[2]*r2 + kc[1]*r_d +kc[0];
         correction_factor += kc[5]*r4*r_d + kc[4]*r4 + kc[3]*r2*r_d;
         correction_factor += kc[8]*r4*r4 + kc[7]*r4*r2*r_d + kc[6]*r4*r2;
-        correction_factor += kc[9]*r4*r4*r_d;
+        correction_factor += kc[9]*r4*r4*r_d; 
         correction_factor /= r_d;
         pCamera.x*=std::abs(correction_factor);
         pCamera.y*=std::abs(correction_factor);
@@ -559,11 +559,11 @@ PerspectiveCamera *PerspectiveCamera::Create(const ParameterDictionary &paramete
     Float fov = parameters.GetOneFloat("fov", 90.);
     // read distortion json file -- zhenyi
     std::string distortionFile = parameters.GetOneString("distortionfile", "");
-    PerspectiveCamera::distortionPolynomials distortionPolynomials;
+    PerspectiveCamera::distortionPolynomials distortionPolynomials;  
     if (distortionFile != "")
     {
         std::ifstream i(distortionFile);
-        json j;
+        json j; 
         i >> j;
         for (auto& elem : j["kc"])
             distortionPolynomials.wavelength.push_back(elem["wavelength"]);
@@ -1488,7 +1488,7 @@ OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
                                  Float focusDistance, Float filmDistance,
                                  bool caFlag, bool diffractionEnabled,
                                  pstd::vector<OmniCamera::LensElementInterface>& microlensData,
-                                 Vector2i microlensDims, std::vector<Float> & microlensOffsets, Float microlensSensorOffset,
+                                 Vector2i microlensDims, std::vector<Float> & microlensOffsets, Float microlensSensorOffset,                                 
                                  Float setApertureDiameter, Image apertureImage,
                                  Allocator alloc)
     : CameraBase(baseParameters),
@@ -2441,7 +2441,7 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
     }
 
     return alloc.new_object<OmniCamera>(cameraBaseParameters, lensInterfaceData,
-                                             focusDistance, filmDistance,
+                                             focusDistance, filmDistance, 
                                              caFlag, diffractionEnabled,
                                              microlensData, microlensDims,
                                              microlensOffsets, microlensSensorOffset,
@@ -2450,7 +2450,7 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
 }
 
 // RTFCamera Method Definitions
-RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
+RTFCamera::RTFCamera(CameraBaseParameters baseParameters, 
                     std::string bbmode,
                     Float filmDistance, bool caFlag, Float apertureDiameter,
                     Float planeOffsetInput, Float planeOffsetOutput, Float lensThickness,
@@ -2460,8 +2460,8 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
                     Allocator alloc)
     : CameraBase(baseParameters),
       exitPupilBounds(alloc),
-      caFlag(caFlag),
-      filmDistance(filmDistance),
+      caFlag(caFlag), 
+      filmDistance(filmDistance), 
       planeOffsetInput(planeOffsetInput),planeOffsetOutput(planeOffsetOutput),
       lensThickness(lensThickness),
       polynomialMaps(polynomialMaps),
@@ -2480,7 +2480,7 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
 
     int nSamples = 64;
     exitPupilBoundsRTF.resize(nSamples);
-
+    
     ParallelFor(0, nSamples, [&](int64_t i) {
         Float r0 = (Float)i / nSamples * diagonal / 2;
         Float r1 = (Float)(i + 1) / nSamples * diagonal / 2;
@@ -2498,7 +2498,7 @@ inline Vector2f RTFCamera::Pos2RadiusRotation(const Point3f pos) const{
     Float deg = std::atan2(pos.y,pos.x);
 
     Vector2f res = Vector2f(radius, Degrees(deg));
-
+    
     return res;
 }
 
@@ -2527,15 +2527,15 @@ Float RTFCamera::PolynomialCal(Float rho, Float dx, Float dy, LensPolynomialTerm
 
 Ray RTFCamera::ApplyPolynomial(Float rho, Vector3f dir, pstd::vector< RTFCamera::LensPolynomialTerm>  &polynomialMap) const{
 
-
-    // Evaluate polynomials
+    
+    // Evaluate polynomials 
     /// Position on output plane
     Float x = PolynomialCal(rho,dir.x,dir.y,polynomialMap[0]) * 0.001f; //mm to meter
     Float y = PolynomialCal(rho,dir.x,dir.y,polynomialMap[1]) * 0.001f; // mm to meter
-
+    
 
     /// Direction vector first two components
-    /// The RTF generates only two components o the output direction vector, the other two can be deduced    Float dx = PolynomialCal(radiusAndDegree.x,dir.x,dir.y,polynomialMap[3]);
+    /// The RTF generates only two components o the output direction vector, the other two can be deduced    Float dx = PolynomialCal(radiusAndDegree.x,dir.x,dir.y,polynomialMap[3]); 
     // normalized direction vector needs no unit transformation
     Float dx = PolynomialCal(rho,dir.x,dir.y,polynomialMap[3]);
     Float dy = PolynomialCal(rho,dir.x,dir.y,polynomialMap[4]);
@@ -2544,10 +2544,10 @@ Ray RTFCamera::ApplyPolynomial(Float rho, Vector3f dir, pstd::vector< RTFCamera:
         Warning("Problemetic ray fitting.");
     }
 
-
-    // The outocming Ray starts at the output plane:
+   
+    // The outocming Ray starts at the output plane: 
     Float outputPlane_z = (filmDistance+lensThickness+planeOffsetOutput); /// Lens thickness: WIHOUT input plane
-
+  
     Ray rOut = Ray(Point3f(x, y, outputPlane_z), Vector3f(dx, dy, dz)); // Original
 
     return rOut;
@@ -2559,8 +2559,6 @@ inline Ray RTFCamera::RotateRays(const Ray &thisRay, Float deg) const{
     Ray rRot = rot(thisRay);
     return rRot;
 }
-
-
 
 // coefficients[i]*x^i
 Float evalPolynomial(std::vector<Float> coefficients,Float x){
@@ -2580,17 +2578,17 @@ bool RTFCamera::IsValidRayCircles(const Ray &rotatedRayOnInputplane,RTFCamera::R
 
      // To calculate the intersections with all circles we project the ray to the circle plane
      Float alpha = vignetting.circlePlaneZ / dir.z;  //  not needed
-     Point3f pointOnCirclePlane = rotatedRayOnInputplane.o + alpha * dir;
+     Point3f pointOnCirclePlane = rotatedRayOnInputplane.o + alpha * dir; 
      //std::cout << rotatedRayOnInputplane.o.z << "\n";
      Float pointOnCirclePlaneXsquared = pointOnCirclePlane.x * pointOnCirclePlane.x; // only compute once
      // Because it is rotated, this x coordinate should be zero. Maybe we can do this to improve performance
-
+     
      // The ray intersection with the input plane should be within all circles
      // If not, by construction the ray is vignetted (should not be traced)
          for (int i = 0; i < vignetting.circleRadii.size(); i++) {
             // Calculate the length
-
-
+            
+            
             Float radius;Float distanceFromCenterY;
 
             // This can be unified
@@ -2600,7 +2598,7 @@ bool RTFCamera::IsValidRayCircles(const Ray &rotatedRayOnInputplane,RTFCamera::R
                 // Apply nonlinear transform
                 radius=radius0*evalPolynomial(vignetting.circleRadiusPoly,offaxisDistanceInputplane);
                 distanceFromCenterY= pointOnCirclePlane.y-offaxisDistanceInputplane*evalPolynomial(vignetting.circleSensitivityPoly,offaxisDistanceInputplane);
-
+                
             }else{
                 // Apply linear transform
                 distanceFromCenterY = pointOnCirclePlane.y-offaxisDistanceInputplane*vignetting.circleSensitivities[i];
@@ -2612,7 +2610,7 @@ bool RTFCamera::IsValidRayCircles(const Ray &rotatedRayOnInputplane,RTFCamera::R
             if (std::sqrt(pointOnCirclePlaneXsquared+ distanceFromCenterY*distanceFromCenterY) >= radius) {
                 return false;
             }
-    }
+    } 
     return true;
 }
 
@@ -2620,7 +2618,7 @@ bool RTFCamera::IsValidRayCircles(const Ray &rotatedRayOnInputplane,RTFCamera::R
 bool RTFCamera::TraceLensesFromFilm(
     const Ray &rayOnInputPlane, Ray *rOut, int wlIndex) const {
 
-    // tic("");
+    // tic(""); 
     Ray rLens = (rayOnInputPlane);  // No need to flip it for rtf calculations ( compare with omni)
 
     // STEP 1. Rotating so that the origin of the ray lies on the y axis.
@@ -2645,7 +2643,7 @@ bool RTFCamera::TraceLensesFromFilm(
     // Select polynomial for given wavelength and apply it
     // tic("");
     pstd::vector<RTFCamera::LensPolynomialTerm> polynomialMap = polynomialMaps[wlIndex];
-    // toc("rtf-trace-4-selectpoly.txt");
+    // toc("rtf-trace-4-selectpoly.txt");     
     // tic("");
     rLens = ApplyPolynomial(radiusAndRotation.x, dir, polynomialMap);
     // toc("rtf-trace-4-applypoly.txt");
@@ -2657,7 +2655,7 @@ bool RTFCamera::TraceLensesFromFilm(
     rLens = RotateRays(rLens, radiusAndRotation.y - 90);
     // toc("rtf-trace-5-rotateback.txt");
     //std::cout << " rotated ray: " << rLens << "\n";
-
+  
     // Rotate rays back to camera space
     if ((rOut != nullptr)) {
         *rOut = (rLens);
@@ -2705,14 +2703,14 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
     /// Offset is the offset of the input plane from the rear element
     // Float circlePlaneZFromFilm = distanceCirclePlaneFromFilm();
 
-
+    
     Float pupilPlaneZFromFilm = (filmDistance-planeOffsetInput)+getPupilPosition(vignetting,vignetting.exitpupilIndex);
 
 
     // This is the default region. I make it twice as large in the hope that it will be enough to accomodate possible pupil walking
     // Make radius large enough so it covers 40   degrees half cone angle.
     Float scale = pupilPlaneZFromFilm *std::tan(40*Pi/180) / rearRadius;
-
+    
 
     //std::cout << "Scale " <<scale <<"\n";
     Bounds2f projRearBounds(Point2f(-scale * rearRadius, -scale * rearRadius),
@@ -2730,7 +2728,7 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
         Point3f pOnPupilPlane(
             Lerp(u[0], projRearBounds.pMin.x, projRearBounds.pMax.x),
             Lerp(u[1], projRearBounds.pMin.y, projRearBounds.pMax.y),   // set to zero
-            pupilPlaneZFromFilm);
+            pupilPlaneZFromFilm); 
 
         // Expand pupil bounds if ray makes it through the lens system
         // This ray should be continued to input plane
@@ -2739,7 +2737,7 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
             (filmDistance-planeOffsetInput) /
             direction.z;  // Scaling factor to project it to input plane
         Point3f poinOnInputPlane = pFilm + alpha * direction;
-
+        
 
     // temporary fix
         //poinOnInputPlane=-poinOnInputPlane;
@@ -2754,7 +2752,7 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
             IsValidRayCircles(rotatedRay, vignetting)) {
             //std::cout << "rotated on input " << rotatedRay << "\n";
 
-
+            
             if(std::abs(pOnPupilPlane.x)>14e-3){
                 //std::cout<< "Film pos     : " << pFilm << "\n";
                 //std::cout<< "pupilplane   :" << pOnPupilPlane << "\n";
@@ -2762,7 +2760,7 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
                 //std::cout<< "rotated ray  : " << rotatedRay << "\n";
                 bool check =IsValidRayCircles(rotatedRay, vignetting);
             }
-
+            
             pupilBounds =
                 Union(pupilBounds, Point2f(pOnPupilPlane.x, pOnPupilPlane.y));
             ++nExitingRays;
@@ -2775,25 +2773,25 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
         std::cout << "unable to find exit pupil \n";
         return projRearBounds;
     }
-
+    
     // Expand bounds to account for sample spacing
     pupilBounds = Expand(pupilBounds, 2 * Length(projRearBounds.Diagonal()) /
                                           std::sqrt(nSamples));
 
     std::cout << 1e3*pFilmX0 << ":" << 1e3*pupilBounds.pMin << " - "  <<1e3*pupilBounds.pMax  <<  "\n";
-
+    
     return pupilBounds;
 }
 
 // The function samples generates ray candidates based on the bounding boxes that
 // were estimated during the creation of the object
-//1. It generates a random sample in the box
+//1. It generates a random sample in the box 
 //2. Generates a corresponding ray
 //3. Rotates to the proper off axis angle (because boxes where estimated for a specific off axis direction)
 Point3f RTFCamera::SampleExitPupil(const Point2f &pFilm,
                                          const Point2f &lensSample,
                                          Float *sampleBoundsArea) const {
-
+    
     // Find exit pupil bound for sample distance from film center
     Float diagonal = film.Diagonal();
     Float rFilm = std::sqrt(pFilm.x * pFilm.x + pFilm.y * pFilm.y);
@@ -2811,7 +2809,7 @@ Point3f RTFCamera::SampleExitPupil(const Point2f &pFilm,
     Float pupilPlaneZFromFilm = (filmDistance-planeOffsetInput)+getPupilPosition(vignetting,vignetting.exitpupilIndex);
 
     // Return sample point rotated by angle of _pFilm_ with $+x$ axis
-    // THe exit pupil bounds were calculated for a single direction while the filmposition pFIlm
+    // THe exit pupil bounds were calculated for a single direction while the filmposition pFIlm 
     // can be be off axis in any direction. Therefore we first rotate the pupilplane position to the same off axis direction
     Float sinTheta = (rFilm != 0) ? pFilm.y / rFilm : 0;
     Float cosTheta = (rFilm != 0) ? pFilm.x / rFilm : 1;
@@ -2838,7 +2836,7 @@ Point3f RTFCamera::SampleExitPupil(const Point2f &pFilm,
 Point3f RTFCamera::SampleMainCircle(const Point2f &pFilm, const Point2f &lensSample, RTFCamera::RTFVignettingTerms &terms,Float *sampleBoundsArea) const {
 
 
-    // Off axis distance on Film
+    // Off axis distance on Film       
     Float rho = std::sqrt(pFilm.x*pFilm.x + pFilm.y*pFilm.y);
     Point2f offaxisDirection = pFilm/rho;
 
@@ -2850,11 +2848,11 @@ Point3f RTFCamera::SampleMainCircle(const Point2f &pFilm, const Point2f &lensSam
     int pupilIndex = terms.exitpupilIndex;
     Float circleRadius=terms.circleRadii[pupilIndex]*evalPolynomial(terms.circleRadiusPoly,rho);
     //Float circleRadius=terms.circleRadii[pupilIndex];
-
-
+    
+    
     Float circleSensitivity= evalPolynomial(terms.circleSensitivityPoly,rho);
     Point2f pSample = circleRadius * SampleUniformDiskConcentric(lensSample);
-
+    
     // Move circle according to its sensitivity
     pSample= pSample+circleSensitivity*pFilm;
 
@@ -2865,42 +2863,42 @@ Point3f RTFCamera::SampleMainCircle(const Point2f &pFilm, const Point2f &lensSam
     // To generate a valid input for the RTF, we project it back to the inputplane
     Float ratio = inputPlane_z / (inputPlane_z + terms.circlePlaneZ);
     Point2f pLens = Lerp(ratio, pFilm, pSample);
-
+    
     // Give back area for radiometric purposs calculations
     *sampleBoundsArea=circleRadius*circleRadius*Pi;
     //std::cout << "boundsarea "<< *sampleBoundsArea  << "Radius" <<circleRadius <<"\n";
-    // A point is made
+    // A point is made 
     return Point3f(pLens.x, pLens.y, inputPlane_z);
 }
 
 
 // This function needs to return a point on The INPUT plane of the RTF
 Point3f RTFCamera::SampleExitPupilVignetting(const Point2f &pFilm, const Point2f &lensSample, RTFCamera::RTFVignettingTerms &terms) const {
-    // lensSample comes from
+    // lensSample comes from 
     // Uniformly sample the exit pupil using PBRT function (TG)
     // Note ther eis also a function "UniformSampleDisk" but the PBRT book does not recommend
     // this because it distortes area (something related to the monte carlo stratified Sample )
     int pupilIndex = terms.exitpupilIndex;
     Float lensRadius=getPupilRadius(terms,pupilIndex);
     Point2f pSample = 2*lensRadius * SampleUniformDiskConcentric(lensSample);
-
+    
 
 
     Float inputPlane_z=filmDistance-planeOffsetInput;
 
-    // The Sample has been taken at the exit pupil, and now has to be projected back to the input plane
+    // The Sample has been taken at the exit pupil, and now has to be projected back to the input plane 
     // This done using the Lerp (linear interpolation) function. First the interpolation factor (ratio) is calculated:
     // "inputPlane_z + terms.pupilPos[pupilIndex]" is a sum because pupil positions are defined relative to inputplane position"
     // So we are dividing by the actual Z position of the pupil
-
+    
     Float ratio = inputPlane_z / (inputPlane_z + getPupilPosition(terms,pupilIndex));
    // Float ratio = (filmDistance) / ((filmDistance) + pupilPos[pupilIndex]); // original
    //  The interpolation is done:
-
+   
     Point2f pLens = Lerp(ratio, pFilm, pSample);
+     
 
-
-    // A point is made
+    // A point is made 
     return Point3f(pLens.x, pLens.y, inputPlane_z);
 }
 
@@ -2914,9 +2912,9 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
     Point3f pFilm(-pFilm2.x, pFilm2.y, 0);
 
         // We want to find the sample on the lens, this information is in sample.pLens. But how?
-    //
+    // 
     Point3f pOnInputPlane;
-
+        
     // Trace ray from _pFilm_ through RTF
     Float exitPupilBoundsArea; // Variable will be filled based on chosen sampling strategy below
 
@@ -2928,13 +2926,13 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
     // toc("rtf-step1-samplexitpupil.txt");
 
     // SAMPLING STRATEGY 2 : Use the position of the exit pupil (which remains always at the same position)
-    // The disadvantage is that the exit pupil might actually move
-    // To take this into account the radius of the pupil is assumed larger, because it doesnt matter we generate samples
+    // The disadvantage is that the exit pupil might actually move 
+    // To take this into account the radius of the pupil is assumed larger, because it doesnt matter we generate samples 
     // in a too broad region because the rays will be correctly discarded later. However, the more tight the boundaries of the sample generation
     // algorithm, the more passing rays you generate, the more effficient the simulation
    //pOnInputPlane = SampleExitPupilVignetting(Point2f(pFilm.x, pFilm.y), sample.pLens,vignetting);
    //Float pupilArea = vignetting.pupilRadii[vignetting.exitpupilIndex] * vignetting.pupilRadii[vignetting.exitpupilIndex] * Pi;
-
+    
     // SAMPLING STRATEGY 3 DEFECTIVE: Use the projected circle (corresponding to exit pupil). The problem with this approach, compared to exit pupil is that
     // the position of the circle varies with off axis distance. This was estimated for off axis distances on the input plane, but pbrt generates
     // samples which are initially on the FILM , which may or may nog be the input plane. Therefore it seems like a deadlock situation.
@@ -2944,25 +2942,25 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
      // Construct the ray coming from the film to the point on the input plane
     // tic("");
     Ray rFilm(pFilm, pOnInputPlane - pFilm);
-    Ray rOriginOnInputPlane = Ray(pOnInputPlane,pOnInputPlane - pFilm);
+    Ray rOriginOnInputPlane = Ray(pOnInputPlane, pOnInputPlane - pFilm);
     // toc("rtf-step2-constructray.txt");
 
     // CHoose which wavelength to use (and hence which polynomial)
     // The wavelengths provided by the lens file might not be equal to the wavelenth of the ray
     // The current strategy is to find the closest wavelength and use that for simulation.
-    //  This assumes that the list of wavelenghts (polyWavelenghts_nm is an ordered list)
+    //  This assumes that the list of wavelenghts (polyWavelenghts_nm is an ordered list)  
     Ray ray;
-
-    int wlIndex=0;
+    
+    int wlIndex=0; 
     Float minError=INFINITY;
     for (int i=0; i<polyWavelengths_nm.size();i++){
         Float error = std::abs(polyWavelengths_nm[i]-ray.wavelength);
-
+        
         if(error < minError){
             minError = error;
             wlIndex=i;
         }
-
+        
     }
     bool result = TraceLensesFromFilm(rFilm, &ray, wlIndex);
     if (result == 0)
@@ -2971,13 +2969,12 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
     ray.time = SampleTime(sample.time);
 
     ray.medium = medium;
-    // *ray = worldFromCamera(*ray);
     ray = RenderFromCamera(ray);
     ray.d = Normalize(ray.d);
 
 
 
-    // Select the vignetting terms corresponding to the chosen wavelength
+    // Select the vignetting terms corresponding to the chosen wavelength        
     RTFVignettingTerms vignetting = vignettingTerms[wlIndex];
 
     Float weight = 1;
@@ -2991,7 +2988,7 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
 
 
 Float RTFCamera::getPupilPosition(RTFVignettingTerms vignetting, int circleIndex) const{
-    Float pos = vignetting.circlePlaneZ/(1.0f-vignetting.circleSensitivities[circleIndex]);
+    Float pos = vignetting.circlePlaneZ/(1.0f-vignetting.circleSensitivities[circleIndex]);                    
     return pos;
 }
 
@@ -3248,7 +3245,7 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
             // Initialize map of polynomials
             // For each wavelength (outer vector), we have a vector of 6 polynomials (x,y,z,dx,dy,dz) (position and direciton vector)
             polynomialMaps = pstd::vector<pstd::vector<RTFCamera::LensPolynomialTerm>>(polynomials.size(), pstd::vector<RTFCamera::LensPolynomialTerm>(6));
-
+            
             if (polynomials.is_array() && polynomials.size() > 0)
             {
                 for (auto sp : polynomials)
@@ -3353,11 +3350,11 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
 
     std::string bbmode = parameters.GetOneString("bbmode", "polynomial");
 
-    return alloc.new_object<RTFCamera>(cameraBaseParameters,
-                                        bbmode,
+    return alloc.new_object<RTFCamera>(cameraBaseParameters, 
+                                        bbmode, 
                                         filmDistance, caFlag, apertureDiameter,
-                                        planeOffsetInput,planeOffsetOutput,lensThickness,
-                                        polynomialMaps,
+                                        planeOffsetInput,planeOffsetOutput,lensThickness, 
+                                        polynomialMaps, 
                                         vignettingTerms,
                                         polyWavelengths_nm,
                                         alloc);
