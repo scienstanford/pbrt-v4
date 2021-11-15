@@ -28,6 +28,7 @@ soa Ray {
     Point3f o;
     Vector3f d;
     Float time;
+    Float wavelength;
     Medium medium;
 };
 
@@ -50,6 +51,8 @@ soa VisibleSurface {
     Point2f uv;
     Float time;
     Vector3f dpdx, dpdy;
+    int materialId;
+    int instanceId; 
     SampledSpectrum albedo;
 };
 

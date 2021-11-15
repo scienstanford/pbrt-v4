@@ -21,6 +21,9 @@
 	path = src/ext/openvdb
 	url = https://github.com/AcademySoftwareFoundation/openvdb.git
 	branch = feature/nanovdb
+[submodule "src/ext/eigen"]
+	path = src/ext/eigen
+	url = https://gitlab.com/libeigen/eigen.git
 [submodule "src/ext/libdeflate"]
 	path = src/ext/libdeflate
 	url = https://github.com/mmp/libdeflate.git

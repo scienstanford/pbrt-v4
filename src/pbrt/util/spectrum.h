@@ -31,9 +31,9 @@
 namespace pbrt {
 
 // Spectrum Constants
-constexpr Float Lambda_min = 360, Lambda_max = 830;
+constexpr Float Lambda_min = 400, Lambda_max = 710;// 720 for 16 samples
 
-static constexpr int NSpectrumSamples = 4;
+static constexpr int NSpectrumSamples = 31;
 
 static constexpr Float CIE_Y_integral = 106.856895;
 
@@ -286,8 +286,9 @@ class SampledWavelengths {
                                             Float lambda_max = Lambda_max) {
         SampledWavelengths swl;
         // Sample first wavelength using _u_
-        swl.lambda[0] = Lerp(u, lambda_min, lambda_max);
-
+        //swl.lambda[0] = Lerp(u, lambda_min, lambda_max);
+        // force u to be 0, so we sample wavelength from lambda_min
+        swl.lambda[0] = Lerp(0, lambda_min, lambda_max);
         // Initialize _lambda_ for remaining wavelengths
         Float delta = (lambda_max - lambda_min) / NSpectrumSamples;
         for (int i = 1; i < NSpectrumSamples; ++i) {

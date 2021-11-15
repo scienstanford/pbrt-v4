@@ -671,6 +671,7 @@ Material Material::Create(const std::string &name,
 
     parameters.ReportUnused();
     ++nMaterialsCreated;
+    material.materialId = nMaterialsCreated; // zhenyi
     return material;
 }
 

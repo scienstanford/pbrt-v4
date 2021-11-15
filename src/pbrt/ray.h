@@ -35,6 +35,7 @@ class Ray {
     Point3f o;
     Vector3f d;
     Float time = 0;
+    Float wavelength; // zhenyi for ca
     Medium medium = nullptr;
 };
 

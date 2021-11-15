@@ -742,7 +742,6 @@ SampledSpectrum PathIntegrator::Li(RayDifferential ray, SampledWavelengths &lamb
         prevIntrCtx = si->intr;
 
         ray = isect.SpawnRay(ray, bsdf, bs->wi, bs->flags, bs->eta);
-
         // Possibly terminate the path with Russian roulette
         SampledSpectrum rrBeta = beta * etaScale;
         if (rrBeta.MaxComponentValue() < 1 && depth > 1) {

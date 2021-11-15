@@ -282,8 +282,9 @@ std::vector<TestIntegrator> GetIntegrators() {
             RGBFilm *film = new RGBFilm(fp, RGBColorSpace::sRGB);
             CameraBaseParameters cbp(CameraTransform(identity), film, nullptr, {},
                                      nullptr);
+            PerspectiveCamera::distortionPolynomials distpoly;
             PerspectiveCamera *camera = new PerspectiveCamera(
-                cbp, 45, Bounds2f(Point2f(-1, -1), Point2f(1, 1)), 0., 10.);
+                cbp, 45, Bounds2f(Point2f(-1, -1), Point2f(1, 1)), 0., 10., distpoly);
 
             const Film filmp = camera->GetFilm();
             Integrator *integrator = new PathIntegrator(8, camera, sampler.first,
@@ -323,8 +324,9 @@ std::vector<TestIntegrator> GetIntegrators() {
             RGBFilm *film = new RGBFilm(fp, RGBColorSpace::sRGB);
             CameraBaseParameters cbp(CameraTransform(identity), film, nullptr, {},
                                      nullptr);
+            PerspectiveCamera::distortionPolynomials distpoly;
             PerspectiveCamera *camera = new PerspectiveCamera(
-                cbp, 45, Bounds2f(Point2f(-1, -1), Point2f(1, 1)), 0., 10.);
+                cbp, 45, Bounds2f(Point2f(-1, -1), Point2f(1, 1)), 0., 10., distpoly);
             const Film filmp = camera->GetFilm();
 
             Integrator *integrator = new VolPathIntegrator(8, camera, sampler.first,
@@ -363,8 +365,9 @@ std::vector<TestIntegrator> GetIntegrators() {
             RGBFilm *film = new RGBFilm(fp, RGBColorSpace::sRGB);
             CameraBaseParameters cbp(CameraTransform(identity), film, nullptr, {},
                                      nullptr);
+            PerspectiveCamera::distortionPolynomials distpoly;
             PerspectiveCamera *camera = new PerspectiveCamera(
-                cbp, 45, Bounds2f(Point2f(-1, -1), Point2f(1, 1)), 0., 10.);
+                cbp, 45, Bounds2f(Point2f(-1, -1), Point2f(1, 1)), 0., 10., distpoly);
 
             const Film filmp = camera->GetFilm();
             Integrator *integrator = new SimplePathIntegrator(
@@ -384,8 +387,9 @@ std::vector<TestIntegrator> GetIntegrators() {
             RGBFilm *film = new RGBFilm(fp, RGBColorSpace::sRGB);
             CameraBaseParameters cbp(CameraTransform(identity), film, nullptr, {},
                                      nullptr);
+            PerspectiveCamera::distortionPolynomials distpoly;
             PerspectiveCamera *camera = new PerspectiveCamera(
-                cbp, 45, Bounds2f(Point2f(-1, -1), Point2f(1, 1)), 0., 10.);
+                cbp, 45, Bounds2f(Point2f(-1, -1), Point2f(1, 1)), 0., 10., distpoly);
             const Film filmp = camera->GetFilm();
 
             Integrator *integrator =
@@ -406,8 +410,9 @@ std::vector<TestIntegrator> GetIntegrators() {
             RGBFilm *film = new RGBFilm(fp, RGBColorSpace::sRGB);
             CameraBaseParameters cbp(CameraTransform(identity), film, nullptr, {},
                                      nullptr);
+            PerspectiveCamera::distortionPolynomials distpoly;
             PerspectiveCamera *camera = new PerspectiveCamera(
-                cbp, 45, Bounds2f(Point2f(-1, -1), Point2f(1, 1)), 0., 10.);
+                cbp, 45, Bounds2f(Point2f(-1, -1), Point2f(1, 1)), 0., 10., distpoly);
             const Film filmp = camera->GetFilm();
 
             Integrator *integrator =

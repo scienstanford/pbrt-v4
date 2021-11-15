@@ -22,8 +22,7 @@ std::string ToString(const RenderingCoordinateSystem &);
 struct BasicPBRTOptions {
     int seed = 0;
     bool quiet = false;
-    bool disablePixelJitter = false, disableWavelengthJitter = false;
-    bool disableTextureFiltering = false;
+    bool disablePixelJitter = false, disableWavelengthJitter = true; // zhenyi: change to true
     bool forceDiffuse = false;
     bool useGPU = false;
     bool wavefront = false;

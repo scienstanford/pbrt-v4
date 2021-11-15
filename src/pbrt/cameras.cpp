@@ -18,8 +18,17 @@
 #include <pbrt/util/parallel.h>
 #include <pbrt/util/print.h>
 #include <pbrt/util/stats.h>
+#include <ext/json.hpp> // zhenyi
+#include <fstream> // zhenyi
 
 #include <algorithm>
+
+#include <math.h>
+#include <cmath>
+#include <gsl/gsl_roots.h>
+#include <gsl/gsl_errno.h>
+
+using json = nlohmann::json;
 
 namespace pbrt {
 
@@ -432,6 +441,35 @@ pstd::optional<CameraRayDifferential> PerspectiveCamera::GenerateRayDifferential
     // Compute raster and camera sample positions
     Point3f pFilm = Point3f(sample.pFilm.x, sample.pFilm.y, 0);
     Point3f pCamera = cameraFromRaster(pFilm);
+
+    // tmp; no wavelength index now; modify after implement spectral path
+    // load polynomials and calculate distortion
+    int wavelength_index = 0;
+    float kc[10] = {};
+    // add distortion
+    if (distPolys.polynomials.size() != 0)
+    {
+        std::vector<float> kc_size = distPolys.polynomials[0];
+        for (int ii = 0; ii < kc_size.size(); ii++ ) {
+            kc[ii] = distPolys.polynomials[wavelength_index][ii];
+        }
+            // add distorion  --zhenyi
+        Float x_d = pCamera.x/pCamera.z;
+        Float y_d = pCamera.y/pCamera.z;
+        Float r_d = std::sqrt(x_d*x_d + y_d*y_d);
+        Float r2 = r_d * r_d;
+        Float r4 = r2 * r2;
+        Float correction_factor = 1;
+
+        correction_factor = kc[2]*r2 + kc[1]*r_d +kc[0];
+        correction_factor += kc[5]*r4*r_d + kc[4]*r4 + kc[3]*r2*r_d;
+        correction_factor += kc[8]*r4*r4 + kc[7]*r4*r2*r_d + kc[6]*r4*r2;
+        correction_factor += kc[9]*r4*r4*r_d;
+        correction_factor /= r_d;
+        pCamera.x*=std::abs(correction_factor);
+        pCamera.y*=std::abs(correction_factor);
+    }
+
     Vector3f dir = Normalize(Vector3f(pCamera.x, pCamera.y, pCamera.z));
     RayDifferential ray(Point3f(0, 0, 0), dir, SampleTime(sample.time), medium);
     // Modify ray for depth of field
@@ -519,8 +557,22 @@ PerspectiveCamera *PerspectiveCamera::Create(const ParameterDictionary &paramete
             Error(loc, "\"screenwindow\" should have four values");
     }
     Float fov = parameters.GetOneFloat("fov", 90.);
+    // read distortion json file -- zhenyi
+    std::string distortionFile = parameters.GetOneString("distortionfile", "");
+    PerspectiveCamera::distortionPolynomials distortionPolynomials;
+    if (distortionFile != "")
+    {
+        std::ifstream i(distortionFile);
+        json j;
+        i >> j;
+        for (auto& elem : j["kc"])
+            distortionPolynomials.wavelength.push_back(elem["wavelength"]);
+        for (auto& elem : j["kc"])
+            distortionPolynomials.polynomials.push_back(elem["polynomials"]);
+    }
+
     return alloc.new_object<PerspectiveCamera>(cameraBaseParameters, fov, screen,
-                                               lensradius, focaldistance);
+                                               lensradius, focaldistance, distortionPolynomials);
 }
 
 SampledSpectrum PerspectiveCamera::We(const Ray &ray, SampledWavelengths &lambda,
@@ -935,7 +987,6 @@ pstd::optional<CameraRay> RealisticCamera::GenerateRay(CameraSample sample,
     // Compute weighting for _RealisticCamera_ ray
     Float cosTheta = Normalize(rFilm.d).z;
     weight *= Pow<4>(cosTheta) / (eps->pdf * Sqr(LensRearZ()));
-
     return CameraRay{ray, SampledSpectrum(weight)};
 }
 

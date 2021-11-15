@@ -338,9 +338,15 @@ class OrthographicCamera : public ProjectiveCamera {
 // PerspectiveCamera Definition
 class PerspectiveCamera : public ProjectiveCamera {
   public:
+    // distortionpolynomials definition; --added by zhenyi
+    struct distortionPolynomials {
+        std::vector<float> wavelength;
+        std::vector<std::vector<float>> polynomials;
+    };
     // PerspectiveCamera Public Methods
     PerspectiveCamera(CameraBaseParameters baseParameters, Float fov,
-                      const Bounds2f &screenWindow, Float lensRadius, Float focalDistance)
+                      const Bounds2f &screenWindow, Float lensRadius,
+                      Float focalDistance, PerspectiveCamera::distortionPolynomials distortionPolynomials)
         : ProjectiveCamera(baseParameters, Perspective(fov, 1e-2f, 1000.f), screenWindow,
                            lensRadius, focalDistance) {
         // Compute differential changes in origin for perspective camera rays
@@ -363,7 +369,7 @@ class PerspectiveCamera : public ProjectiveCamera {
         pMin /= pMin.z;
         pMax /= pMax.z;
         A = std::abs((pMax.x - pMin.x) * (pMax.y - pMin.y));
-
+        distPolys = distortionPolynomials;
         // Compute minimum differentials for _PerspectiveCamera_
         FindMinimumDifferentials(this);
     }
@@ -399,6 +405,7 @@ class PerspectiveCamera : public ProjectiveCamera {
     Vector3f dxCamera, dyCamera;
     Float cosTotalWidth;
     Float A;
+    PerspectiveCamera::distortionPolynomials distPolys;
 };
 
 // SphericalCamera Definition

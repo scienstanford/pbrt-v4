@@ -152,6 +152,8 @@ class VisibleSurface {
     Float time = 0;
     Vector3f dpdx, dpdy;
     SampledSpectrum albedo;
+    int materialId; // zhenyi
+    int instanceId; // zhenyi
     bool set = false;
 };
 
@@ -210,7 +212,7 @@ class FilmBase {
 
     PBRT_CPU_GPU
     SampledWavelengths SampleWavelengths(Float u) const {
-        return SampledWavelengths::SampleVisible(u);
+        return SampledWavelengths::SampleUniform(u); // modified by zhenyi; it was SampleXYZ.
     }
 
     PBRT_CPU_GPU
@@ -252,6 +254,7 @@ class RGBFilm : public FilmBase {
         for (int c = 0; c < 3; ++c)
             pixel.rgbSum[c] += weight * rgb[c];
         pixel.weightSum += weight;
+
     }
 
     PBRT_CPU_GPU
@@ -320,6 +323,11 @@ class GBufferFilm : public FilmBase {
     GBufferFilm(FilmBaseParameters p, const AnimatedTransform &outputFromRender,
                 bool applyInverse, const RGBColorSpace *colorSpace,
                 Float maxComponentValue = Infinity, bool writeFP16 = true,
+                bool writeRadiance = true, bool writeBasis = true, int nbasis = 3,
+                bool writeAlbedo = true, bool writePosition = true,
+                bool writeDz = true, bool writeMaterial = true, bool writeInstance = true,
+                bool writeNormal = true, bool writeNs = true, bool writeVariance = true,
+                bool writeRelativeVariance = true,
                 Allocator alloc = {});
 
     static GBufferFilm *Create(const ParameterDictionary &parameters, Float exposureTime,
@@ -380,6 +388,9 @@ class GBufferFilm : public FilmBase {
         Point2f uvSum;
         double rgbAlbedoSum[3] = {0., 0., 0.};
         VarianceEstimator<Float> rgbVariance[3];
+        SampledSpectrum L;
+        float materialId; // zhenyi
+        float instanceId; // zhenyi
     };
 
     // GBufferFilm Private Members
@@ -389,6 +400,20 @@ class GBufferFilm : public FilmBase {
     const RGBColorSpace *colorSpace;
     Float maxComponentValue;
     bool writeFP16;
+    // zhenyi------
+    bool writeRadiance;
+    bool writeBasis;
+    int nbasis;
+    bool writeAlbedo;
+    bool writePosition;
+    bool writeDz;
+    bool writeMaterial;
+    bool writeInstance;
+    bool writeNormal;
+    bool writeNs;
+    bool writeVariance;
+    bool writeRelativeVariance;
+    // ------------------------
     Float filterIntegral;
     SquareMatrix<3> outputRGBFromSensorRGB;
 };

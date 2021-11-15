@@ -23,6 +23,11 @@
 
 #include <Ptexture.h>
 
+#include <ext/json.hpp>  // zhenyi
+#include <fstream>       // zhenyi
+
+using json = nlohmann::json;
+
 namespace pbrt {
 
 std::string TextureEvalContext::ToString() const {
@@ -360,23 +365,41 @@ SampledSpectrum SpectrumImageTexture::Evaluate(TextureEvalContext ctx,
     // Apply texture mapping and flip $t$ coordinate for image texture lookup
     TexCoord2D c = mapping.Map(ctx);
     c.st[1] = 1 - c.st[1];
-
-    // Lookup filtered RGB value in _MIPMap_
-    RGB rgb = scale * mipmap->Filter<RGB>(c.st, {c.dsdx, c.dtdx}, {c.dsdy, c.dtdy});
-    rgb = ClampZero(invert ? (RGB(1, 1, 1) - rgb) : rgb);
-
-    // Return _SampledSpectrum_ for RGB image texture value
-    if (const RGBColorSpace *cs = mipmap->GetRGBColorSpace(); cs) {
-        if (spectrumType == SpectrumType::Unbounded)
-            return RGBUnboundedSpectrum(*cs, rgb).Sample(lambda);
-        else if (spectrumType == SpectrumType::Albedo)
-            return RGBAlbedoSpectrum(*cs, Clamp(rgb, 0, 1)).Sample(lambda);
-        else
-            return RGBIlluminantSpectrum(*cs, rgb).Sample(lambda);
-    }
+    // check whether multi-spectral texture is used
+    if (size(basis) != 0) {
+        // get spectrum texture coef
+        SampledSpectrum rgb_spectrum =
+            scale * mipmap->Filter<SampledSpectrum>(c.st, {c.dsdx, c.dtdx}, {c.dsdy, c.dtdy});
+        SampledSpectrum s;
+        int nChannels = size(basis);
+        // last channel is offset
+        int offset = basis[nChannels - 1][0];
+        for (int c = 0; c < nChannels - 1; c++) {
+            auto basisChannel = basis[c];
+            SampledSpectrum basisSpectrum;
+            for (int nWave = 0; nWave < NSpectrumSamples; nWave++) {
+                basisSpectrum[nWave] = basisChannel[nWave];
+            }
+            s = basisSpectrum * (rgb_spectrum[c] - offset) + s;
+        }
+        return s;
+    } else {
+        // Lookup filtered RGB value in _MIPMap_
+        RGB rgb = scale * mipmap->Filter<RGB>(c.st, {c.dsdx, c.dtdx}, {c.dsdy, c.dtdy});
+        rgb = ClampZero(invert ? (RGB(1, 1, 1) - rgb) : rgb);
+        // Return _SampledSpectrum_ for RGB image texture value
+        if (const RGBColorSpace *cs = mipmap->GetRGBColorSpace(); cs) {
+            if (spectrumType == SpectrumType::Unbounded)
+                return RGBUnboundedSpectrum(*cs, rgb).Sample(lambda);
+            else if (spectrumType == SpectrumType::Albedo)
+                return RGBAlbedoSpectrum(*cs, Clamp(rgb, 0, 1)).Sample(lambda);
+            else
+                return RGBIlluminantSpectrum(*cs, rgb).Sample(lambda);
+        }
     // otherwise it better be a one-channel texture
     DCHECK(rgb[0] == rgb[1] && rgb[1] == rgb[2]);
     return SampledSpectrum(rgb[0]);
+    }
 
 #endif
 }
@@ -431,9 +454,22 @@ FloatImageTexture *FloatImageTexture::Create(const Transform &renderFromTexture,
     const char *defaultEncoding = HasExtension(filename, "png") ? "sRGB" : "linear";
     std::string encodingString = parameters.GetOneString("encoding", defaultEncoding);
     ColorEncoding encoding = ColorEncoding::Get(encodingString, alloc);
-
+    // read basis information from a json file --zhenyi
+    std::string basisFile = parameters.GetOneString("basisfilename", "");
+    std::vector<std::vector<float>> basis;
+    if (basisFile != "") {
+        std::ifstream i(basisFile);
+        json j;
+        i >> j;
+        for (auto &elem : j)
+            basis.push_back(elem["basis"]);
+        for (auto &elem : j) {
+            basis.push_back(elem["offset"]);
+            break;
+        }
+    }
     return alloc.new_object<FloatImageTexture>(map, filename, filterOptions, *wrapMode,
-                                               scale, invert, encoding, alloc);
+                                               scale, invert, encoding, basis, alloc);
 }
 
 SpectrumImageTexture *SpectrumImageTexture::Create(
@@ -465,10 +501,23 @@ SpectrumImageTexture *SpectrumImageTexture::Create(
     const char *defaultEncoding = HasExtension(filename, "png") ? "sRGB" : "linear";
     std::string encodingString = parameters.GetOneString("encoding", defaultEncoding);
     ColorEncoding encoding = ColorEncoding::Get(encodingString, alloc);
-
+    // read basis information from a json file --zhenyi
+    std::string basisFile = parameters.GetOneString("basisfilename", "");
+    std::vector<std::vector<float>> basis;
+    if (basisFile != "") {
+        std::ifstream i(basisFile);
+        json j;
+        i >> j;
+        for (auto &elem : j)
+            basis.push_back(elem["basis"]);
+        for (auto &elem : j) {
+            basis.push_back(elem["offset"]);
+            break;
+        }
+    }
     return alloc.new_object<SpectrumImageTexture>(map, filename, filterOptions, *wrapMode,
                                                   scale, invert, encoding, spectrumType,
-                                                  alloc);
+                                                  basis, alloc);
 }
 
 // MarbleTexture Method Definitions
@@ -1094,6 +1143,62 @@ GPUSpectrumImageTexture *GPUSpectrumImageTexture::Create(
     Float scale = parameters.GetOneFloat("scale", 1.f);
     bool invert = parameters.GetOneBool("invert", false);
     std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
+    // read basis information from a json file --zhenyi
+    std::string basisFile = parameters.GetOneString("basisfilename", "");
+    std::vector<float> basis;
+    if (basisFile != "") {
+        std::ifstream i(basisFile);
+        json j;
+        i >> j;
+        int channelSize = j.size();
+        int elemSize = 0;
+        int offset = 0;
+        for (auto &elem : j) {
+            elemSize = elem["basis"].size();
+            break;
+        }
+        for (auto &elem : j) {
+            offset = elem["offset"][0];
+            break;
+        }
+        basis.push_back(float(channelSize));
+        basis.push_back(float(elemSize));
+        basis.push_back(float(offset));
+
+        for (auto &elem : j) {
+            for (int numElem = 0; numElem < elemSize; numElem++)
+                basis.push_back(elem["basis"][numElem]);
+        }
+    } else{
+        basis.push_back(0);
+    }
+
+    // create a cuda texture --zhenyi
+    cudaArray_t basisArray;
+    int basis_width = size(basis);
+    int size = basis_width * sizeof(float);
+    cudaChannelFormatDesc channelDesc =
+        cudaCreateChannelDesc(32, 0, 0, 0, cudaChannelFormatKindFloat);
+    cudaMallocArray(&basisArray, &channelDesc, basis_width);
+    cudaMemcpyToArray(basisArray, 0, 0, basis.data(), basis_width * sizeof(float),
+                      cudaMemcpyHostToDevice);
+
+    cudaResourceDesc basisresDesc = {};
+    memset(&basisresDesc, 0, sizeof(cudaResourceDesc));
+    basisresDesc.resType = cudaResourceTypeArray;
+    basisresDesc.res.array.array = basisArray;
+
+    cudaTextureDesc basistexDesc = {};
+    memset(&basistexDesc, 0, sizeof(cudaResourceDesc));
+    basistexDesc.addressMode[0] = cudaAddressModeClamp;
+    basistexDesc.filterMode = cudaFilterModePoint;
+    basistexDesc.readMode = cudaReadModeElementType;
+    basistexDesc.normalizedCoords = 0;
+    basistexDesc.sRGB = 0;
+
+    cudaTextureObject_t texBasis;
+    cudaCreateTextureObject(&texBasis, &basisresDesc, &basistexDesc, NULL);
+    //-----------------------------------------------------------------------------
 
     const char *defaultEncoding = HasExtension(filename, "png") ? "sRGB" : "linear";
     std::string encodingString = parameters.GetOneString("encoding", defaultEncoding);
@@ -1140,7 +1245,51 @@ GPUSpectrumImageTexture *GPUSpectrumImageTexture::Create(
                 colorSpace = immeta.metadata.GetColorSpace();
 
                 ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
-                if (rgbDesc) {
+                // add multispectral texture -- zhenyi
+                std::vector<std::string> inFileChannelNames = image.ChannelNames();
+                ImageChannelDesc coeffDsecCheck = image.GetChannelDesc({"coef.1"});
+                if (coeffDsecCheck) {
+                    std::vector<std::string> inFileChannelNames = image.ChannelNames();
+                    ImageChannelDesc coeffDsec = image.GetChannelDesc(inFileChannelNames);
+                    image = image.SelectChannels(coeffDsec);
+                    MIPMap mipmap(image, colorSpace, WrapMode::Clamp /* TODO */,
+                                  Allocator(), filterOptions);
+                    nMIPMapLevels = mipmap.Levels();
+                    const Image &baseImage = mipmap.GetLevel(0);
+                    cudaChannelFormatDesc channelDesc =
+                        cudaCreateChannelDesc(32, 32, 32, 32, cudaChannelFormatKindFloat);
+
+                    cudaExtent extent = make_cudaExtent(baseImage.Resolution().x,
+                                                        baseImage.Resolution().y, 0);
+                    CUDA_CHECK(cudaMallocMipmappedArray(&mipArray, &channelDesc, extent,
+                                                        mipmap.Levels(), 0 /* flags */));
+
+                    for (int level = 0; level < mipmap.Levels(); ++level) {
+                        const Image &levelImage = mipmap.GetLevel(level);
+                        cudaArray_t levelArray;
+                        CUDA_CHECK(
+                            cudaGetMipmappedArrayLevel(&levelArray, mipArray, level));
+
+                        std::vector<float> rgba(4 * levelImage.Resolution().x *
+                                                levelImage.Resolution().y);
+
+                        size_t offset = 0;
+                        for (int y = 0; y < levelImage.Resolution().y; ++y)
+                            for (int x = 0; x < levelImage.Resolution().x; ++x) {
+                                for (int c = 0; c < 3; ++c)
+                                    rgba[offset++] = levelImage.GetChannel({x, y}, c);
+                                rgba[offset++] = 1.f;
+                            }
+
+                        int pitch = levelImage.Resolution().x * 4 * sizeof(float);
+                        gpuImageTextureBytes += pitch * levelImage.Resolution().y;
+
+                        CUDA_CHECK(cudaMemcpy2DToArray(
+                            levelArray,
+                            /* offset */ 0, 0, rgba.data(), pitch, pitch,
+                            levelImage.Resolution().y, cudaMemcpyHostToDevice));
+                    }
+                } else if (rgbDesc) {
                     image = image.SelectChannels(rgbDesc);
 
                     MIPMap mipmap(image, colorSpace, WrapMode::Clamp /* TODO */,
@@ -1314,7 +1463,7 @@ GPUSpectrumImageTexture *GPUSpectrumImageTexture::Create(
 
     return alloc.new_object<GPUSpectrumImageTexture>(filename, mapping, texObj, scale,
                                                      invert, isSingleChannel, colorSpace,
-                                                     spectrumType);
+                                                     texBasis, spectrumType);
 }
 
 std::string GPUSpectrumImageTexture::ToString() const {

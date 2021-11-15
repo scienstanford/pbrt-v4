@@ -90,7 +90,7 @@ BasicSceneBuilder::BasicSceneBuilder(BasicScene *scene)
     // Set scene defaults
     camera.name = SceneEntity::internedStrings.Lookup("perspective");
     sampler.name = SceneEntity::internedStrings.Lookup("zsobol");
-    filter.name = SceneEntity::internedStrings.Lookup("gaussian");
+    filter.name = SceneEntity::internedStrings.Lookup("box");
     integrator.name = SceneEntity::internedStrings.Lookup("volpath");
     accelerator.name = SceneEntity::internedStrings.Lookup("bvh");
 
@@ -1518,7 +1518,9 @@ Primitive BasicScene::CreateAggregate(
     this->instanceDefinitions.clear();
 
     // Instances
+    int InstancecCount = 0;
     for (const auto &inst : instances) {
+        InstancecCount++;
         auto iter = instanceDefinitions.find(inst.name);
         if (iter == instanceDefinitions.end())
             ErrorExit(&inst.loc, "%s: object instance not defined", inst.name);
@@ -1529,7 +1531,7 @@ Primitive BasicScene::CreateAggregate(
 
         if (inst.renderFromInstance)
             primitives.push_back(
-                new TransformedPrimitive(iter->second, inst.renderFromInstance));
+                new TransformedPrimitive(iter->second, inst.renderFromInstance, (uint32_t)InstancecCount));
         else {
             primitives.push_back(
                 new AnimatedPrimitive(iter->second, *inst.renderFromInstanceAnim));

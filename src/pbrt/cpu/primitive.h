@@ -83,8 +83,8 @@ class SimplePrimitive {
 class TransformedPrimitive {
   public:
     // TransformedPrimitive Public Methods
-    TransformedPrimitive(Primitive primitive, const Transform *renderFromPrimitive)
-        : primitive(primitive), renderFromPrimitive(renderFromPrimitive) {
+    TransformedPrimitive(Primitive primitive, const Transform *renderFromPrimitive, uint32_t instanceId)
+        : primitive(primitive), renderFromPrimitive(renderFromPrimitive), instanceId(instanceId) {
         primitiveMemory += sizeof(*this);
     }
 
@@ -97,6 +97,7 @@ class TransformedPrimitive {
     // TransformedPrimitive Private Members
     Primitive primitive;
     const Transform *renderFromPrimitive;
+    uint32_t instanceId;
 };
 
 // AnimatedPrimitive Definition

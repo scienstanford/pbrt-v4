@@ -66,6 +66,8 @@ class Material
     PBRT_CPU_GPU inline FloatTexture GetDisplacement() const;
 
     PBRT_CPU_GPU inline bool HasSubsurfaceScattering() const;
+        
+    uint32_t materialId; // zhenyi
 };
 
 }  // namespace pbrt
