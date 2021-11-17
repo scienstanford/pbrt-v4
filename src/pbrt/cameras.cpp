@@ -2459,7 +2459,7 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
                     Float filmDistance, bool caFlag, Float apertureDiameter,
                     Float planeOffsetInput, Float planeOffsetOutput, Float lensThickness,
                     pstd::vector<pstd::vector< RTFCamera::LensPolynomialTerm>> polynomialMaps,
-                    pstd::vector<RTFCamera::RTFVignettingTerms> vignettingTerms,
+                   pstd::vector<std::shared_ptr<PassNoPass>> passNoPassPerWavelength,
                     pstd::vector<Float> polyWavelengths_nm,
                     Allocator alloc)
     : CameraBase(baseParameters),
@@ -2470,8 +2470,9 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
       lensThickness(lensThickness),
       polynomialMaps(polynomialMaps),
       bbmode(bbmode),
-      vignettingTerms(vignettingTerms),
+      passNoPassPerWavelength(passNoPassPerWavelength),
       polyWavelengths_nm(polyWavelengths_nm) {
+    
    // Compute pupil bounding box to improve performance buy having a higher chance of finding a passing ray
 
     // std::cout << "Generate exit pupil bounds for performance" << "\n";
@@ -2632,8 +2633,10 @@ bool RTFCamera::TraceLensesFromFilm(
     //std::cout << " rotated ray: " << rotatedRay << "\n";
     // STEP 2. Determine whether the ray will be vignetted or not
     // tic("");
-    auto vignetting = vignettingTerms[wlIndex];
-    if (!IsValidRayCircles(rotatedRay, vignetting)) {
+    //auto vignetting = vignettingTerms[wlIndex];
+
+    auto passnopass = passNoPassPerWavelength[wlIndex];
+    if (!passnopass->isValidRay(rotatedRay)){
         return false;
     }
     // toc("rtf-trace-2-vignetting.txt");
@@ -2692,7 +2695,13 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
     // Take first wavelength (one can consider extending to full spectral
     // information)
     int wavelengthIndex = 0;
-    RTFVignettingTerms vignetting = vignettingTerms[wavelengthIndex];
+   // RTFVignettingTerms vignetting = vignettingTerms[wavelengthIndex];
+
+    auto passnopass = passNoPassPerWavelength[wavelengthIndex];
+    
+    
+       
+
 
     Bounds2f pupilBounds;
     // Sample a collection of points on the rear lens to find exit pupil
@@ -2700,7 +2709,9 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
     int nExitingRays = 0;
 
     // Compute bounding box of projection of rear element on sampling plane
-    Float rearRadius = getPupilRadius(vignetting,vignetting.exitpupilIndex);
+    //Float rearRadius = getPupilRadius(vignetting,vignetting.exitpupilIndex);
+
+    Float rearRadius = 10; // Fix rear readius obtaining
 
     // Film distance is measured from the actual rear element
     // CirclePlaneZ is measured from the input plane of the RTF
@@ -2708,8 +2719,8 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
     // Float circlePlaneZFromFilm = distanceCirclePlaneFromFilm();
 
     
-    Float pupilPlaneZFromFilm = (filmDistance-planeOffsetInput)+getPupilPosition(vignetting,vignetting.exitpupilIndex);
-
+    Float pupilPlaneZFromFilm = (filmDistance-planeOffsetInput)+passnopass->distanceInputToIntersectPlane();
+    
 
     // This is the default region. I make it twice as large in the hope that it will be enough to accomodate possible pupil walking
     // Make radius large enough so it covers 40   degrees half cone angle.
@@ -2753,10 +2764,10 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
         Ray rotatedRay = RotateRays(r, 90 - radiusRotation.y);
 
         if (Inside(Point2f(pOnPupilPlane.x, pOnPupilPlane.y), pupilBounds) ||
-            IsValidRayCircles(rotatedRay, vignetting)) {
+            passnopass->isValidRay(rotatedRay)) {
             //std::cout << "rotated on input " << rotatedRay << "\n";
 
-            
+           /* 
             if(std::abs(pOnPupilPlane.x)>14e-3){
                 //std::cout<< "Film pos     : " << pFilm << "\n";
                 //std::cout<< "pupilplane   :" << pOnPupilPlane << "\n";
@@ -2764,6 +2775,7 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
                 //std::cout<< "rotated ray  : " << rotatedRay << "\n";
                 bool check =IsValidRayCircles(rotatedRay, vignetting);
             }
+            */
             
             pupilBounds =
                 Union(pupilBounds, Point2f(pOnPupilPlane.x, pOnPupilPlane.y));
@@ -2808,9 +2820,10 @@ Point3f RTFCamera::SampleExitPupil(const Point2f &pFilm,
     Point2f pPupilPlane = pupilBounds.Lerp(lensSample);
     Float inputPlane_z=filmDistance-planeOffsetInput;
 
-    RTFVignettingTerms vignetting = vignettingTerms[0];
-
-    Float pupilPlaneZFromFilm = (filmDistance-planeOffsetInput)+getPupilPosition(vignetting,vignetting.exitpupilIndex);
+    //RTFVignettingTerms vignetting = vignettingTerms[0];
+    auto passnopass = passNoPassPerWavelength[0];
+    //Float pupilPlaneZFromFilm = (filmDistance-planeOffsetInput)+getPupilPosition(vignetting,vignetting.exitpupilIndex);
+    Float pupilPlaneZFromFilm = (filmDistance-planeOffsetInput)+passnopass->distanceInputToIntersectPlane();
 
     // Return sample point rotated by angle of _pFilm_ with $+x$ axis
     // THe exit pupil bounds were calculated for a single direction while the filmposition pFIlm 
@@ -3289,7 +3302,7 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
                     passNoPassPerWavelength[wlIndex] = passNoPass;
                     passNoPass->print();
                     // Read vignetting terms
-                    vignettingTerms[wlIndex] = toVignetTerms(sp);
+                    //vignettingTerms[wlIndex] = toVignetTerms(sp);
 
                     // TODO: Determine exix pupil
                     // pupilIndx
@@ -3390,7 +3403,7 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
                                         filmDistance, caFlag, apertureDiameter,
                                         planeOffsetInput,planeOffsetOutput,lensThickness, 
                                         polynomialMaps, 
-                                        vignettingTerms,
+                                        passNoPassPerWavelength,
                                         polyWavelengths_nm,
                                         alloc);
 }

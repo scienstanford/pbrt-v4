@@ -16,6 +16,8 @@
 #include <pbrt/util/image.h>
 #include <pbrt/util/scattering.h>
 
+#include <pbrt/rtf/passnopass.h>
+
 #include <algorithm>
 #include <memory>
 #include <string>
@@ -796,7 +798,7 @@ class RTFCamera : public CameraBase {
                 Float filmDistance, bool caFlag, Float apertureDiameter,
                 Float planeOffsetInput, Float planeOffsetOutput, Float lensThickness,
                 pstd::vector<pstd::vector< RTFCamera::LensPolynomialTerm>> polynomialMaps,
-                pstd::vector<RTFCamera::RTFVignettingTerms> vignettingTerms,
+                pstd::vector<std::shared_ptr<PassNoPass>> passNoPassPerWavelength,
                 pstd::vector<Float> polyWavelengths_nm,
                 Allocator alloc);
 
@@ -909,6 +911,7 @@ class RTFCamera : public CameraBase {
     pstd::vector<Float> polyWavelengths_nm; // wavelengths read from file
     pstd::vector<pstd::vector< RTFCamera::LensPolynomialTerm>> polynomialMaps; // Each element has corresponding wavelength
     pstd::vector<RTFCamera::RTFVignettingTerms> vignettingTerms;
+    pstd::vector<std::shared_ptr<PassNoPass>> passNoPassPerWavelength;
 
     std::vector<Float> circleRadii;
     std::vector<Float> circleSensitivities;
