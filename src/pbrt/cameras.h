@@ -745,16 +745,16 @@ class RTFCamera : public CameraBase {
     // RTFCamera Public Declarations
     struct LensPolynomialTerm {
         LensPolynomialTerm() {}
-        LensPolynomialTerm(std::string n, std::vector<Float> tr,
-                        std::vector<Float> tu, std::vector<Float> tv,
-                        std::vector<Float> coeff) :
+        LensPolynomialTerm(std::string n, pstd::vector<Float> tr,
+                        pstd::vector<Float> tu, pstd::vector<Float> tv,
+                        pstd::vector<Float> coeff) :
                         name(n), termr(tr), termu(tu),
                         termv(tv), coeff(coeff) {}
         std::string name;
-        std::vector<Float> termr;
-        std::vector<Float> termu;
-        std::vector<Float> termv;
-        std::vector<Float> coeff;
+        pstd::vector<Float> termr;
+        pstd::vector<Float> termu;
+        pstd::vector<Float> termv;
+        pstd::vector<Float> coeff;
     };
 
     struct RTFPolynomialOutputs {
@@ -766,12 +766,12 @@ class RTFCamera : public CameraBase {
 
     struct RTFVignettingTerms {
         RTFVignettingTerms() {}
-        RTFVignettingTerms(Float circlePlaneZ,int exitpupilIndex, std::vector<Float> circleRadii,  std::vector<Float> circleSensitivities):
+        RTFVignettingTerms(Float circlePlaneZ,int exitpupilIndex, pstd::vector<Float> circleRadii,  pstd::vector<Float> circleSensitivities):
         circlePlaneZ(circlePlaneZ), exitpupilIndex(exitpupilIndex), circleRadii(circleRadii),circleSensitivities(circleSensitivities) {}
         Float circlePlaneZ;
         int exitpupilIndex; // Index that indicates main exit pupil
-        std::vector<Float> circleRadii;
-        std::vector<Float> circleSensitivities;
+        pstd::vector<Float> circleRadii;
+        pstd::vector<Float> circleSensitivities;
 
         // To accomidate nonlinear transformation of the circle corresponding to diaphragm
         // Both vectors represent polynomial coefficients in ascending degree
@@ -781,13 +781,13 @@ class RTFCamera : public CameraBase {
         // A polynomial that, when multiplied with the on-axis radius, gives the off-axis radius
         /// newradius = radius_onaxis*poly(offaxis_distance)
         // By construction circleRadiusPoly[0]=1
-        std::vector<Float> circleRadiusPoly;
+        pstd::vector<Float> circleRadiusPoly;
 
         // SENSITIVITY (JSON file:unit for for milimeters, converted to coefficients in meters when loaded in)
         // A polynomial that, when multiplied with the off axi distance, gives the off-axis displacement of the circle
         /// offset = poly(offaxis_distance)*offaxis_distance
         // By construction circleRadiusPoly[0]=0
-        std::vector<Float> circleSensitivityPoly;
+        pstd::vector<Float> circleSensitivityPoly;
     };
 
     // RTFCamera Public Methods

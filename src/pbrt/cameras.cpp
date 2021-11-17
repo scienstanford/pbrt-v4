@@ -21,6 +21,10 @@
 #include <ext/json.hpp> // zhenyi
 #include <fstream> // zhenyi
 
+
+// RTF
+#include <pbrt/rtf/passnopass.h>
+
 #include <algorithm>
 #include <iostream>
 #include <math.h>
@@ -2561,7 +2565,7 @@ inline Ray RTFCamera::RotateRays(const Ray &thisRay, Float deg) const{
 }
 
 // coefficients[i]*x^i
-Float evalPolynomial(std::vector<Float> coefficients,Float x){
+Float evalPolynomial(pstd::vector<Float> coefficients,Float x){
              Float result=0;
              for (int i = 0; i < coefficients.size(); i++) {
                  result = result + coefficients[i]*powerLoop(x,i);
@@ -3033,6 +3037,7 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
     pstd::vector<Float> polyWavelengths_nm;                                   // wavelengths read from file
     pstd::vector<pstd::vector<RTFCamera::LensPolynomialTerm> > polynomialMaps; // Each element has corresponding wavelength
     pstd::vector<RTFCamera::RTFVignettingTerms> vignettingTerms;
+    pstd::vector<std::shared_ptr<PassNoPass>> passNoPassPerWavelength;
 
     int pupilIndex = -1;
 
@@ -3122,7 +3127,7 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
 
             auto toTerms = [](json jterms)
             {
-                std::vector<Float> res;
+                pstd::vector<Float> res;
                 if (jterms.is_null())
                 {
                     return res;
@@ -3161,7 +3166,33 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
                 result.coeff = toTerms(jp["coeff"]);
                 return result;
             };
+            
+            
 
+        auto toPassNoPassEllipse = [apertureDiameter, exitPupilBounds, pupilIndex, toTerms](json sp)
+            {
+
+                pstd::vector<Float> positions = toTerms(sp["positions"]);
+                pstd::vector<Float>  radiiX = toTerms(sp["radiiX"]);
+                pstd::vector<Float> radiiY = toTerms(sp["radiiY"]);
+                pstd::vector<Float> centersX = toTerms(sp["centersX"]);
+                pstd::vector<Float> centersY = toTerms(sp["centersY"]);
+                Float circlePlaneZ = (Float) sp["intersectPlaneDistance"];
+                
+                return std::make_shared<PassNoPassEllipse>(PassNoPassEllipse(positions,radiiX,radiiY,centersX,centersY,circlePlaneZ));
+            };
+
+          auto determinePassNoPass = [toPassNoPassEllipse,apertureDiameter, exitPupilBounds, pupilIndex, toTerms](json sp)
+            {
+
+                auto method = (std::string)sp["method"];
+                if(method == "minimalellipse"){
+                    return toPassNoPassEllipse(sp);
+                }
+                   return toPassNoPassEllipse(sp); //change 
+            };
+
+            
             auto toVignetTerms = [apertureDiameter, exitPupilBounds, pupilIndex, toTerms](json sp)
             {
                 RTFCamera::RTFVignettingTerms result;
@@ -3242,6 +3273,7 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
             polyWavelengths_nm = pstd::vector<Float>(polynomials.size());
             vignettingTerms = pstd::vector<RTFCamera::RTFVignettingTerms>(polynomials.size());
 
+            passNoPassPerWavelength = pstd::vector<std::shared_ptr<PassNoPass>>(polynomials.size());
             // Initialize map of polynomials
             // For each wavelength (outer vector), we have a vector of 6 polynomials (x,y,z,dx,dy,dz) (position and direciton vector)
             polynomialMaps = pstd::vector<pstd::vector<RTFCamera::LensPolynomialTerm>>(polynomials.size(), pstd::vector<RTFCamera::LensPolynomialTerm>(6));
@@ -3253,6 +3285,9 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
                     Float wavelength = (Float)sp["wavelength_nm"];
                     polyWavelengths_nm[wlIndex] = (Float)wavelength;
 
+                    std::shared_ptr<PassNoPass> passNoPass = determinePassNoPass(sp["passnopass"]);
+                    passNoPassPerWavelength[wlIndex] = passNoPass;
+                    passNoPass->print();
                     // Read vignetting terms
                     vignettingTerms[wlIndex] = toVignetTerms(sp);
 
