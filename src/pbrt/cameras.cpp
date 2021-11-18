@@ -2483,7 +2483,7 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
     Float y = aspect * x;
     physicalExtent = Bounds2f(Point2f(-x / 2, -y / 2), Point2f(x / 2, y / 2));
 
-    int nSamples = 64;
+    int nSamples = 64; 
     exitPupilBoundsRTF.resize(nSamples);
     
     ParallelFor(0, nSamples, [&](int64_t i) {
@@ -2993,7 +2993,7 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
 
 
     // Select the vignetting terms corresponding to the chosen wavelength        
-    RTFVignettingTerms vignetting = vignettingTerms[wlIndex];
+    // RTFVignettingTerms vignetting = vignettingTerms[wlIndex];
 
     Float weight = 1;
     // Compute weighting for _OmniCamera_ ray
@@ -3164,8 +3164,8 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
                 RTFCamera::LensPolynomialTerm result;
                 result.name = jp["outputname"].get<std::string>();
                 result.termr = toTerms(jp["termr"]);
-                result.termu = toTerms(jp["termu"]);
-                result.termv = toTerms(jp["termv"]);
+                result.termu = toTerms(jp["termdx"]);
+                result.termv = toTerms(jp["termdy"]);
                 result.coeff = toTerms(jp["coeff"]);
                 return result;
             };
@@ -3175,8 +3175,8 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
                 RTFCamera::LensPolynomialTerm result;
                 result.name = jp["outputname"].get<std::string>();
                 result.termr = toTerms(jp["termr"]);
-                result.termu = toTerms(jp["termu"]);
-                result.termv = toTerms(jp["termv"]);
+                result.termu = toTerms(jp["termdx"]);
+                result.termv = toTerms(jp["termdy"]);
                 result.coeff = toTerms(jp["coeff"]);
                 return result;
             };

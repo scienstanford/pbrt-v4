@@ -62,14 +62,16 @@ namespace pbrt {
             return -1;
          }
 
-         bool pointInEllipse(int ellipseIndex,int x, int y) const{
+         bool pointInEllipse(int ellipseIndex,Float x, Float y) const{
                Float radiusXSquared = radiiX[ellipseIndex]*radiiX[ellipseIndex];
                Float radiusYSquared = radiiY[ellipseIndex]*radiiY[ellipseIndex];
                Float distX = (x-centersX[ellipseIndex])*(x-centersX[ellipseIndex]);;
                Float distY = (y-centersY[ellipseIndex])*(y-centersY[ellipseIndex]);
 
                bool pass = (distX/radiusXSquared + distY/radiusYSquared) <= 1;
-            //if(!pass){ std::cout << "nopass";}
+      //      if(!pass){ 
+        //       std::cout << "nopass";
+         //      }
             return pass;
 
          }
