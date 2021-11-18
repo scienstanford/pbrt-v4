@@ -28,6 +28,7 @@ namespace pbrt {
          virtual bool isValidRay(const Ray &rotatedRayOnInputplane) const {return false;} ;
          virtual void print(){};
          virtual Float distanceInputToIntersectPlane()=0;
+         virtual Float getOnAxisRadiusEstimate()=0;
 
    
 
@@ -62,13 +63,14 @@ namespace pbrt {
          }
 
          bool pointInEllipse(int ellipseIndex,int x, int y) const{
-               int radiusXSquared = radiiX[ellipseIndex]*radiiX[ellipseIndex];
-               int radiusYSquared = radiiY[ellipseIndex]*radiiY[ellipseIndex];
-               int distX = x*x;
-               int distY = (y-centersY[ellipseIndex])*(y-centersY[ellipseIndex]);
+               Float radiusXSquared = radiiX[ellipseIndex]*radiiX[ellipseIndex];
+               Float radiusYSquared = radiiY[ellipseIndex]*radiiY[ellipseIndex];
+               Float distX = (x-centersX[ellipseIndex])*(x-centersX[ellipseIndex]);;
+               Float distY = (y-centersY[ellipseIndex])*(y-centersY[ellipseIndex]);
 
-
-            return (distX/radiusXSquared + distY/radiusYSquared) <= 1;
+               bool pass = (distX/radiusXSquared + distY/radiusYSquared) <= 1;
+            //if(!pass){ std::cout << "nopass";}
+            return pass;
 
          }
          public:
@@ -77,6 +79,9 @@ namespace pbrt {
            std::cout << "passnopass ellipse" << "\n";
         };
 
+         Float getOnAxisRadiusEstimate(){
+            return radiiX[0];
+         }
         bool isValidRay(const Ray &rotatedRayOnInputplane) const {
             Vector3f dir = (rotatedRayOnInputplane.d);
 
@@ -88,9 +93,6 @@ namespace pbrt {
             // circle plane
             Float alpha = circlePlaneZ / dir.z; 
             Point3f pointOnCirclePlane = rotatedRayOnInputplane.o + alpha * dir;
-            // std::cout << rotatedRayOnInputplane.o.z << "\n";
-            Float pointOnIntersectionPlaneXsquared = 0;  // only compute once
-            // Because it is rotated, this x coordinate should be zero. 
             
 
             // Choose closest ellipse
@@ -99,7 +101,9 @@ namespace pbrt {
             // Test whether the point projected onto intersection plane lies within the ellipse
             if(ellipseIndex>=0){
                return pointInEllipse(ellipseIndex,pointOnCirclePlane.x,pointOnCirclePlane.y);
-            }else{ return false;}
+            }else{ 
+               return false;
+            }
         }
 
         Float distanceInputToIntersectPlane() { return circlePlaneZ; }

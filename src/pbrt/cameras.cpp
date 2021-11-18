@@ -2711,7 +2711,7 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
     // Compute bounding box of projection of rear element on sampling plane
     //Float rearRadius = getPupilRadius(vignetting,vignetting.exitpupilIndex);
 
-    Float rearRadius = 10; // Fix rear readius obtaining
+    Float rearRadius = passnopass->getOnAxisRadiusEstimate(); // Fix rear readius obtaining
 
     // Film distance is measured from the actual rear element
     // CirclePlaneZ is measured from the input plane of the RTF
@@ -2719,11 +2719,14 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
     // Float circlePlaneZFromFilm = distanceCirclePlaneFromFilm();
 
     
+    // mm to meter
     Float pupilPlaneZFromFilm = (filmDistance-planeOffsetInput)+passnopass->distanceInputToIntersectPlane();
     
 
     // This is the default region. I make it twice as large in the hope that it will be enough to accomodate possible pupil walking
     // Make radius large enough so it covers 40   degrees half cone angle.
+    
+    // TG : Fix scale
     Float scale = pupilPlaneZFromFilm *std::tan(40*Pi/180) / rearRadius;
     
 
@@ -2751,16 +2754,14 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
         Float alpha =
             (filmDistance-planeOffsetInput) /
             direction.z;  // Scaling factor to project it to input plane
-        Point3f poinOnInputPlane = pFilm + alpha * direction;
+        Point3f pointOnInputPlane = pFilm + alpha * direction;
         
 
-    // temporary fix
-        //poinOnInputPlane=-poinOnInputPlane;
-
-        Ray r = Ray(poinOnInputPlane, direction);
 
 
-        auto radiusRotation = Pos2RadiusRotation(poinOnInputPlane);
+        // Rotate the ray to make it ready for evaluation by the PassNoPass function
+        Ray r = Ray(pointOnInputPlane, direction);
+        auto radiusRotation = Pos2RadiusRotation(pointOnInputPlane);
         Ray rotatedRay = RotateRays(r, 90 - radiusRotation.y);
 
         if (Inside(Point2f(pOnPupilPlane.x, pOnPupilPlane.y), pupilBounds) ||
@@ -3184,13 +3185,29 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
 
         auto toPassNoPassEllipse = [apertureDiameter, exitPupilBounds, pupilIndex, toTerms](json sp)
             {
+                Float mm_to_meter = 0.001f;
 
                 pstd::vector<Float> positions = toTerms(sp["positions"]);
-                pstd::vector<Float>  radiiX = toTerms(sp["radiiX"]);
+                pstd::vector<Float> radiiX = toTerms(sp["radiiX"]);
                 pstd::vector<Float> radiiY = toTerms(sp["radiiY"]);
                 pstd::vector<Float> centersX = toTerms(sp["centersX"]);
                 pstd::vector<Float> centersY = toTerms(sp["centersY"]);
-                Float circlePlaneZ = (Float) sp["intersectPlaneDistance"];
+                Float circlePlaneZ = mm_to_meter*((Float) sp["intersectPlaneDistance"]);
+
+
+
+                // Convert mm to meter
+                
+                for (int i = 0; i < positions.size(); i++)
+                {
+                    // Convert from mm to meter
+                    positions[i] = mm_to_meter * positions[i];
+                    radiiX[i] = mm_to_meter * radiiX[i];
+                    radiiY[i] = mm_to_meter * radiiY[i];
+                    centersX[i] = mm_to_meter * centersX[i];
+                    centersY[i] = mm_to_meter * centersY[i];
+                }
+
                 
                 return std::make_shared<PassNoPassEllipse>(PassNoPassEllipse(positions,radiiX,radiiY,centersX,centersY,circlePlaneZ));
             };
