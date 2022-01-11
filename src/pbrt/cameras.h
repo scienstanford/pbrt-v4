@@ -348,7 +348,7 @@ class PerspectiveCamera : public ProjectiveCamera {
                       Bounds2f screenWindow, Float lensRadius, 
                       Float focalDistance, PerspectiveCamera::distortionPolynomials distortionPolynomials)
         : ProjectiveCamera(baseParameters, Perspective(fov, 1e-2f, 1000.f), screenWindow,
-                           lensRadius, focalDist) {
+                           lensRadius, focalDistance) {
         // Compute differential changes in origin for perspective camera rays
         dxCamera =
             cameraFromRaster(Point3f(1, 0, 0)) - cameraFromRaster(Point3f(0, 0, 0));

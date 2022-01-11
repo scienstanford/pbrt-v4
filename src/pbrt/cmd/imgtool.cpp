@@ -1680,6 +1680,8 @@ int convert(std::vector<std::string> args) {
     std::string inFile, outFile;
     std::string colorspace;
     std::string channelNames;
+    std::vector<std::string> targetChannelNames;
+    std::vector<int> exr2mat_channels;
     std::array<int, 4> cropWindow = {-1, 0, -1, 0};
     Float clamp = Infinity;
 
@@ -1723,7 +1725,6 @@ int convert(std::vector<std::string> args) {
                           SplitString((*iter), ',');
                   }
               }
-          }
         } else if ((*iter)[0] != '-' && inFile.empty()) {
             inFile = *iter;
         } else
@@ -1736,7 +1737,7 @@ int convert(std::vector<std::string> args) {
         usage("convert", "--repeatpix value must be greater than zero");
     if (scale == 0)
         usage("convert", "--scale value must be non-zero");
-    if (outFile.empty())&&!exr2bin)
+    if (outFile.empty()&&!exr2bin)
         usage("convert", "--outfile filename must be specified");
     if (inFile.empty())
         usage("convert", "input filename not specified");
