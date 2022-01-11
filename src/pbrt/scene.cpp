@@ -372,14 +372,19 @@ void BasicSceneBuilder::ObjectInstance(const std::string &name, FileLoc loc) {
             RenderFromObject(0) * worldFromRender, graphicsState.transformStartTime,
             RenderFromObject(1) * worldFromRender, graphicsState.transformEndTime);
 
-        instanceUses.push_back(
-            InstanceSceneEntity(name, loc, animatedRenderFromInstance));
-    } else {
-        const class Transform *renderFromInstance =
-            transformCache.Lookup(RenderFromObject(0) * worldFromRender);
-
-        instanceUses.push_back(InstanceSceneEntity(name, loc, renderFromInstance));
+        // For very small changes, animatedRenderFromInstance may have both
+        // xforms equal even if CTMIsAnimated() has returned true. Fall
+        // through to create a regular non-animated instance in that case.
+        if (animatedRenderFromInstance.IsAnimated()) {
+            instanceUses.push_back(
+                InstanceSceneEntity(name, loc, animatedRenderFromInstance));
+            return;
+        }
     }
+
+    const class Transform *renderFromInstance =
+        transformCache.Lookup(RenderFromObject(0) * worldFromRender);
+    instanceUses.push_back(InstanceSceneEntity(name, loc, renderFromInstance));
 }
 
 void BasicSceneBuilder::EndOfFiles() {
@@ -489,6 +494,14 @@ void BasicSceneBuilder::Option(const std::string &name, const std::string &value
         else
             ErrorExitDeferred(&loc, "%s: expected \"true\" or \"false\" for option value",
                               value);
+    } else if (nName == "disabletexturefiltering") {
+        if (value == "true")
+            Options->disableTextureFiltering = true;
+        else if (value == "false")
+            Options->disableTextureFiltering = false;
+        else
+            ErrorExitDeferred(&loc, "%s: expected \"true\" or \"false\" for option value",
+                              value);
     } else if (nName == "disablewavelengthjitter") {
         if (value == "true")
             Options->disableWavelengthJitter = true;
@@ -497,6 +510,9 @@ void BasicSceneBuilder::Option(const std::string &name, const std::string &value
         else
             ErrorExitDeferred(&loc, "%s: expected \"true\" or \"false\" for option value",
                               value);
+    } else if (nName == "displacementedgescale") {
+        if (!Atof(value, &Options->displacementEdgeScale))
+            ErrorExitDeferred(&loc, "%s: expected floating-point option value", value);
     } else if (nName == "msereferenceimage") {
         if (value.size() < 3 || value.front() != '"' || value.back() != '"')
             ErrorExitDeferred(&loc, "%s: expected quoted string for option value", value);
@@ -505,6 +521,18 @@ void BasicSceneBuilder::Option(const std::string &name, const std::string &value
         if (value.size() < 3 || value.front() != '"' || value.back() != '"')
             ErrorExitDeferred(&loc, "%s: expected quoted string for option value", value);
         Options->mseReferenceOutput = value.substr(1, value.size() - 2);
+    } else if (nName == "rendercoordsys") {
+        if (value.size() < 3 || value.front() != '"' || value.back() != '"')
+            ErrorExitDeferred(&loc, "%s: expected quoted string for option value", value);
+        std::string renderCoordSys = value.substr(1, value.size() - 2);
+        if (renderCoordSys == "camera")
+            Options->renderingSpace = RenderingCoordinateSystem::Camera;
+        else if (renderCoordSys == "cameraworld")
+            Options->renderingSpace = RenderingCoordinateSystem::CameraWorld;
+        else if (renderCoordSys == "world")
+            Options->renderingSpace = RenderingCoordinateSystem::World;
+        else
+            ErrorExit("%s: unknown rendering coordinate system.", renderCoordSys);
     } else if (nName == "seed") {
         Options->seed = std::atoi(value.c_str());
     } else if (nName == "forcediffuse") {
@@ -533,6 +561,10 @@ void BasicSceneBuilder::Option(const std::string &name, const std::string &value
                               value);
     } else
         ErrorExitDeferred(&loc, "%s: unknown option", name);
+
+#ifdef PBRT_BUILD_GPU_RENDERER
+    CopyOptionsToGPU();
+#endif  // PBRT_BUILD_GPU_RENDERER
 }
 
 void BasicSceneBuilder::Transform(Float tr[16], FileLoc loc) {
@@ -720,7 +752,7 @@ void BasicScene::SetOptions(SceneEntity filter, SceneEntity film,
     LOG_VERBOSE("Finished creating filter and film");
 
     // Enqueue asynchronous job to create sampler
-    samplerFuture = RunAsync([sampler, this]() {
+    samplerJob = RunAsync([sampler, this]() {
         LOG_VERBOSE("Starting to create sampler");
         Allocator alloc = threadAllocators.Get();
         Point2i res = this->film.FullResolution();
@@ -729,7 +761,7 @@ void BasicScene::SetOptions(SceneEntity filter, SceneEntity film,
     });
 
     // Enqueue asynchronous job to create camera
-    cameraFuture = RunAsync([camera, this]() {
+    cameraJob = RunAsync([camera, this]() {
         LOG_VERBOSE("Starting to create camera");
         Allocator alloc = threadAllocators.Get();
         Medium cameraMedium = GetMedium(camera.medium, &camera.loc);
@@ -758,7 +790,7 @@ void BasicScene::AddMedium(MediumSceneEntity medium) {
     };
 
     std::lock_guard<std::mutex> lock(mediaMutex);
-    mediumFutures[medium.name] = RunAsync(create);
+    mediumJobs[medium.name] = RunAsync(create);
 }
 
 Medium BasicScene::GetMedium(const std::string &name, const FileLoc *loc) {
@@ -772,14 +804,14 @@ Medium BasicScene::GetMedium(const std::string &name, const FileLoc *loc) {
             mediaMutex.unlock();
             return m;
         } else {
-            auto fiter = mediumFutures.find(name);
-            if (fiter == mediumFutures.end())
+            auto fiter = mediumJobs.find(name);
+            if (fiter == mediumJobs.end())
                 ErrorExit(loc, "%s: medium is not defined.", name);
 
-            pstd::optional<Medium> m = fiter->second.TryGet(&mediaMutex);
+            pstd::optional<Medium> m = fiter->second->TryGetResult(&mediaMutex);
             if (m) {
                 mediaMap[name] = *m;
-                mediumFutures.erase(fiter);
+                mediumJobs.erase(fiter);
                 mediaMutex.unlock();
                 return *m;
             }
@@ -789,18 +821,18 @@ Medium BasicScene::GetMedium(const std::string &name, const FileLoc *loc) {
 
 std::map<std::string, Medium> BasicScene::CreateMedia() {
     mediaMutex.lock();
-    if (!mediumFutures.empty()) {
-        // Consume futures for asynchronously-created _Medium_ objects
+    if (!mediumJobs.empty()) {
+        // Consume results for asynchronously-created _Medium_ objects
         LOG_VERBOSE("Consume media futures start");
-        for (auto &m : mediumFutures) {
+        for (auto &m : mediumJobs) {
             while (mediaMap.find(m.first) == mediaMap.end()) {
-                pstd::optional<Medium> med = m.second.TryGet(&mediaMutex);
+                pstd::optional<Medium> med = m.second->TryGetResult(&mediaMutex);
                 if (med)
                     mediaMap[m.first] = *med;
             }
         }
         LOG_VERBOSE("Consume media futures finished");
-        mediumFutures.clear();
+        mediumJobs.clear();
     }
     mediaMutex.unlock();
     return mediaMap;
@@ -833,18 +865,18 @@ void BasicScene::AddNamedMaterial(std::string name, SceneEntity material) {
 
 int BasicScene::AddMaterial(SceneEntity material) {
     std::lock_guard<std::mutex> lock(materialMutex);
-    materials.push_back(std::move(material));
     startLoadingNormalMaps(material.parameters);
-    return materials.size() - 1;
+    materials.push_back(std::move(material));
+    return int(materials.size() - 1);
 }
 
 void BasicScene::startLoadingNormalMaps(const ParameterDictionary &parameters) {
-    std::string filename = parameters.GetOneString("normalmap", "");
+    std::string filename = ResolveFilename(parameters.GetOneString("normalmap", ""));
     if (filename.empty())
         return;
 
     // Overload materialMutex, which we already hold, for the futures...
-    if (normalMapFutures.find(filename) != normalMapFutures.end())
+    if (normalMapJobs.find(filename) != normalMapJobs.end())
         // It's already in flight.
         return;
 
@@ -861,7 +893,7 @@ void BasicScene::startLoadingNormalMaps(const ParameterDictionary &parameters) {
 
         return normalMap;
     };
-    normalMapFutures[filename] = RunAsync(create, filename);
+    normalMapJobs[filename] = RunAsync(create, filename);
 }
 
 void BasicScene::AddFloatTexture(std::string name, TextureSceneEntity texture) {
@@ -906,7 +938,7 @@ void BasicScene::AddFloatTexture(std::string name, TextureSceneEntity texture) {
         return FloatTexture::Create(texture.name, renderFromTexture, texDict,
                                     &texture.loc, alloc, Options->useGPU);
     };
-    floatTextureFutures[name] = RunAsync(create, texture);
+    floatTextureJobs[name] = RunAsync(create, texture);
 }
 
 void BasicScene::AddSpectrumTexture(std::string name, TextureSceneEntity texture) {
@@ -952,7 +984,7 @@ void BasicScene::AddSpectrumTexture(std::string name, TextureSceneEntity texture
                                        SpectrumType::Albedo, &texture.loc, alloc,
                                        Options->useGPU);
     };
-    spectrumTextureFutures[name] = RunAsync(create, texture);
+    spectrumTextureJobs[name] = RunAsync(create, texture);
 }
 
 void BasicScene::AddLight(LightSceneEntity light) {
@@ -969,7 +1001,7 @@ void BasicScene::AddLight(LightSceneEntity light) {
                              GetCamera().GetCameraTransform(), lightMedium, &light.loc,
                              threadAllocators.Get());
     };
-    lightFutures.push_back(RunAsync(create));
+    lightJobs.push_back(RunAsync(create));
 }
 
 int BasicScene::AddAreaLight(SceneEntity light) {
@@ -1065,12 +1097,13 @@ void BasicScene::Done() {
 void BasicScene::CreateMaterials(const NamedTextures &textures,
                                  std::map<std::string, pbrt::Material> *namedMaterialsOut,
                                  std::vector<pbrt::Material> *materialsOut) {
-    LOG_VERBOSE("Starting to consume normal map futures");
-    for (auto &fut : normalMapFutures) {
-        CHECK(normalMaps.find(fut.first) == normalMaps.end());
-        normalMaps[fut.first] = fut.second.Get();
+    LOG_VERBOSE("Starting to consume %d normal map futures", normalMapJobs.size());
+    std::lock_guard<std::mutex> lock(materialMutex);
+    for (auto &job : normalMapJobs) {
+        CHECK(normalMaps.find(job.first) == normalMaps.end());
+        normalMaps[job.first] = job.second->GetResult();
     }
-    normalMapFutures.clear();
+    normalMapJobs.clear();
     LOG_VERBOSE("Finished consuming normal map futures");
 
     // Named materials
@@ -1092,8 +1125,13 @@ void BasicScene::CreateMaterials(const NamedTextures &textures,
             continue;
         }
 
-        std::string fn = nm.second.parameters.GetOneString("normalmap", "");
-        Image *normalMap = !fn.empty() ? normalMaps[fn] : nullptr;
+        std::string fn =
+            ResolveFilename(nm.second.parameters.GetOneString("normalmap", ""));
+        Image *normalMap = nullptr;
+        if (!fn.empty()) {
+            CHECK(normalMaps.find(fn) != normalMaps.end());
+            normalMap = normalMaps[fn];
+        }
 
         TextureParameterDictionary texDict(&mtl.parameters, &textures);
         class Material m = Material::Create(type, texDict, normalMap, *namedMaterialsOut,
@@ -1105,8 +1143,12 @@ void BasicScene::CreateMaterials(const NamedTextures &textures,
     materialsOut->reserve(materials.size());
     for (const auto &mtl : materials) {
         Allocator alloc = threadAllocators.Get();
-        std::string fn = mtl.parameters.GetOneString("normalmap", "");
-        Image *normalMap = !fn.empty() ? normalMaps[fn] : nullptr;
+        std::string fn = ResolveFilename(mtl.parameters.GetOneString("normalmap", ""));
+        Image *normalMap = nullptr;
+        if (!fn.empty()) {
+            CHECK(normalMaps.find(fn) != normalMaps.end());
+            normalMap = normalMaps[fn];
+        }
 
         TextureParameterDictionary texDict(&mtl.parameters, &textures);
         class Material m = Material::Create(mtl.name, texDict, normalMap,
@@ -1123,10 +1165,17 @@ NamedTextures BasicScene::CreateTextures() {
 
     // Consume futures
     LOG_VERBOSE("Starting to consume texture futures");
-    for (auto &tex : floatTextureFutures)
-        textures.floatTextures[tex.first] = tex.second.Get();
-    for (auto &tex : spectrumTextureFutures)
-        textures.albedoSpectrumTextures[tex.first] = tex.second.Get();
+    // The lock shouldn't be necessary since only the main thread should be
+    // active when CreateTextures() is called, but valgrind doesn't know
+    // that...
+    textureMutex.lock();
+    for (auto &tex : floatTextureJobs)
+        textures.floatTextures[tex.first] = tex.second->GetResult();
+    floatTextureJobs.clear();
+    for (auto &tex : spectrumTextureJobs)
+        textures.albedoSpectrumTextures[tex.first] = tex.second->GetResult();
+    spectrumTextureJobs.clear();
+    textureMutex.unlock();
     LOG_VERBOSE("Finished consuming texture futures");
 
     LOG_VERBOSE("Starting to create remaining textures");
@@ -1279,8 +1328,9 @@ std::vector<Light> BasicScene::CreateLights(
     LOG_VERBOSE("Finished area lights");
 
     LOG_VERBOSE("Starting to consume non-area light futures");
-    for (auto &fut : lightFutures)
-        lights.push_back(fut.Get());
+    std::lock_guard<std::mutex> lock(lightMutex);
+    for (auto &job : lightJobs)
+        lights.push_back(job->GetResult());
     LOG_VERBOSE("Finished consuming non-area light futures");
 
     return lights;

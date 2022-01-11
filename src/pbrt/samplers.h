@@ -187,12 +187,15 @@ class PaddedSobolSampler {
         int dim = dimension;
         dimension += 2;
         // Return randomized 2D Sobol' sample
-        return {SampleDimension(0, index, uint32_t(hash)),
-                SampleDimension(1, index, hash >> 32)};
+        return Point2f(SampleDimension(0, index, uint32_t(hash)),
+                       SampleDimension(1, index, hash >> 32));
     }
 
     PBRT_CPU_GPU
     Point2f GetPixel2D() { return Get2D(); }
+
+    PBRT_CPU_GPU
+    RandomizeStrategy GetRandomizeStrategy() const { return randomize; }
 
     Sampler Clone(Allocator alloc);
     std::string ToString() const;
@@ -336,7 +339,7 @@ class ZSobolSampler {
             int digit = (mortonIndex >> digitShift) & 3;
             // Choose permutation _p_ to use for _digit_
             uint64_t higherDigits = mortonIndex >> (digitShift + 2);
-            int p = (MixBits(higherDigits ^ (0x55555555 * dimension)) >> 24) % 24;
+            int p = (MixBits(higherDigits ^ (0x55555555u * dimension)) >> 24) % 24;
 
             digit = permutations[p][digit];
             sampleIndex |= uint64_t(digit) << digitShift;
@@ -346,7 +349,7 @@ class ZSobolSampler {
         if (pow2Samples) {
             int digit = mortonIndex & 1;
             sampleIndex |=
-                digit ^ (MixBits((mortonIndex >> 1) ^ (0x55555555 * dimension)) & 1);
+                digit ^ (MixBits((mortonIndex >> 1) ^ (0x55555555u * dimension)) & 1);
         }
 
         return sampleIndex;
@@ -453,7 +456,7 @@ class IndependentSampler {
     PBRT_CPU_GPU
     void StartPixelSample(Point2i p, int sampleIndex, int dimension) {
         rng.SetSequence(Hash(p, seed));
-        rng.Advance(sampleIndex * 65536 + dimension);
+        rng.Advance(sampleIndex * 65536ull + dimension);
     }
 
     PBRT_CPU_GPU
@@ -585,7 +588,7 @@ class StratifiedSampler {
         sampleIndex = index;
         dimension = dim;
         rng.SetSequence(Hash(p, seed));
-        rng.Advance(sampleIndex * 65536 + dimension);
+        rng.Advance(sampleIndex * 65536ull + dimension);
     }
 
     PBRT_CPU_GPU
@@ -794,11 +797,6 @@ template <typename S>
 inline PBRT_CPU_GPU CameraSample GetCameraSample(S sampler, Point2i pPixel,
                                                  Filter filter) {
     FilterSample fs = filter.Sample(sampler.GetPixel2D());
-    if (GetOptions().disablePixelJitter) {
-        fs.p = Point2f(0, 0);
-        fs.weight = 1;
-    }
-
     CameraSample cs;
     // Initialize _CameraSample_ member variables
     cs.pFilm = pPixel + fs.p + Vector2f(0.5f, 0.5f);
@@ -806,6 +804,12 @@ inline PBRT_CPU_GPU CameraSample GetCameraSample(S sampler, Point2i pPixel,
     cs.pLens = sampler.Get2D();
     cs.filterWeight = fs.weight;
 
+    if (GetOptions().disablePixelJitter) {
+        cs.pFilm = pPixel + Vector2f(0.5f, 0.5f);
+        cs.time = 0.5f;
+        cs.pLens = Point2f(0.5f, 0.5f);
+        cs.filterWeight = 1;
+    }
     return cs;
 }
 

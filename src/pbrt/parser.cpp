@@ -230,7 +230,7 @@ Tokenizer::Tokenizer(std::string str, std::string filename,
     pos = contents.data();
     end = pos + contents.size();
     tokenizerMemory += contents.size();
-    CheckUTF(str.data(), str.size());
+    CheckUTF(contents.data(), contents.size());
 }
 
 #if defined(PBRT_HAVE_MMAP) || defined(PBRT_IS_WINDOWS)
@@ -603,7 +603,7 @@ void parse(ParserTarget *target, std::unique_ptr<Tokenizer> t) {
 
     static std::atomic<bool> warnedTransformBeginEndDeprecated{false};
 
-    std::vector<std::pair<Future<void>, BasicSceneBuilder *>> imports;
+    std::vector<std::pair<AsyncJob<int> *, BasicSceneBuilder *>> imports;
 
     LOG_VERBOSE("Started parsing %s",
                 std::string(t->loc.filename.begin(), t->loc.filename.end()));
@@ -796,9 +796,10 @@ void parse(ParserTarget *target, std::unique_ptr<Tokenizer> t) {
                                 parse(importBuilder, std::move(timport));
                             LOG_VERBOSE("Elapsed time to parse \"%s\": %.2fs", filename,
                                         timer.ElapsedSeconds());
+                            return 0;
                         };
-                        Future<void> jobFinished = RunAsync(job, filename);
-                        imports.push_back(std::make_pair(std::move(jobFinished), importBuilder));
+                        AsyncJob<int> *jobFinished = RunAsync(job, filename);
+                        imports.push_back(std::make_pair(jobFinished, importBuilder));
                     }
                 }
             } else if (tok->token == "Identity")
@@ -980,7 +981,7 @@ void parse(ParserTarget *target, std::unique_ptr<Tokenizer> t) {
     }
 
     for (auto &import : imports) {
-        import.first.Wait();
+        import.first->Wait();
 
         BasicSceneBuilder *builder = dynamic_cast<BasicSceneBuilder *>(target);
         CHECK(builder);
@@ -1036,10 +1037,7 @@ FormattingParserTarget::~FormattingParserTarget() {
 void FormattingParserTarget::Option(const std::string &name, const std::string &value,
                              FileLoc loc) {
     std::string nName = normalizeArg(name);
-    if (nName == "msereferenceimage" || nName == "msereferenceout")
-        Printf("%sOption \"%s\" \"%s\"\n", indent(), name, value);
-    else
-        Printf("%sOption \"%s\" %s\n", indent(), name, value);
+    Printf("%sOption \"%s\" %s\n", indent(), name, value);
 }
 
 void FormattingParserTarget::Identity(FileLoc loc) {

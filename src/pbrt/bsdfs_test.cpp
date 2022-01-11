@@ -564,17 +564,6 @@ TEST(BSDFEnergyConservation, LambertianReflection) {
         "LambertianReflection");
 }
 
-TEST(BSDFEnergyConservation, OrenNayar) {
-    TestEnergyConservation(
-        [](const SurfaceInteraction& si, Allocator alloc) -> BSDF* {
-            return alloc.new_object<BSDF>(
-                si.shading.n, si.shading.dpdu,
-                alloc.new_object<RoughDiffuseBxDF>(SampledSpectrum(1.f), SampledSpectrum(0.),
-                                                   20));
-        },
-        "Oren-Nayar sigma 20");
-}
-
 #if 0
 TEST(BSDFEnergyConservation,
      MicrofacetReflectionBxDFTrowbridgeReitz_alpha0_1_dielectric1_5) {
@@ -696,7 +685,7 @@ TEST(Hair, WhiteFurnace) {
 
             for (int i = 0; i < count; ++i) {
                 SampledWavelengths lambda =
-                    SampledWavelengths::SampleXYZ(RadicalInverse(0, i));
+                    SampledWavelengths::SampleVisible(RadicalInverse(0, i));
 
                 Float h = Clamp(-1 + 2. * RadicalInverse(1, i), -.999999, .999999);
                 SampledSpectrum sigma_a(0.f);
@@ -727,7 +716,6 @@ TEST(Hair, HOnTheEdge) {
 
 TEST(Hair, WhiteFurnaceSampled) {
     RNG rng;
-    SampledWavelengths lambda = SampledWavelengths::SampleXYZ(0.5);
     Vector3f wo = SampleUniformSphere({rng.Uniform<Float>(), rng.Uniform<Float>()});
     for (Float beta_m = .1; beta_m < 1; beta_m += .2) {
         for (Float beta_n = .1; beta_n < 1; beta_n += .2) {
@@ -736,7 +724,7 @@ TEST(Hair, WhiteFurnaceSampled) {
             int count = 10000;
             for (int i = 0; i < count; ++i) {
                 SampledWavelengths lambda =
-                    SampledWavelengths::SampleXYZ(RadicalInverse(0, i));
+                    SampledWavelengths::SampleVisible(RadicalInverse(0, i));
                 Float h = Clamp(-1 + 2. * RadicalInverse(1, i), -.999999, .999999);
 
                 SampledSpectrum sigma_a(0.f);
@@ -761,7 +749,6 @@ TEST(Hair, WhiteFurnaceSampled) {
 
 TEST(Hair, SamplingWeights) {
     RNG rng;
-    SampledWavelengths lambda = SampledWavelengths::SampleXYZ(0.5);
     for (Float beta_m = .1; beta_m < 1; beta_m += .2)
         for (Float beta_n = .4; beta_n < 1; beta_n += .2) {
             int count = 10000;
@@ -782,7 +769,7 @@ TEST(Hair, SamplingWeights) {
                     Float sum = 0;
                     int ny = 20;
                     for (Float u : Stratified1D(ny)) {
-                        SampledWavelengths lambda = SampledWavelengths::SampleXYZ(u);
+                        SampledWavelengths lambda = SampledWavelengths::SampleVisible(u);
                         sum += bs->f.y(lambda) * AbsCosTheta(bs->wi) / bs->pdf;
                     }
 
@@ -798,7 +785,7 @@ TEST(Hair, SamplingWeights) {
 
 TEST(Hair, SamplingConsistency) {
     RNG rng;
-    SampledWavelengths lambda = SampledWavelengths::SampleXYZ(0.5);
+    SampledWavelengths lambda = SampledWavelengths::SampleVisible(0.5);
     for (Float beta_m = .2; beta_m < 1; beta_m += .2)
         for (Float beta_n = .4; beta_n < 1; beta_n += .2) {
             // Declare variables for hair sampling test

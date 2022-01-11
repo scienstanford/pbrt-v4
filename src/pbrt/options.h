@@ -22,7 +22,8 @@ std::string ToString(const RenderingCoordinateSystem &);
 struct BasicPBRTOptions {
     int seed = 0;
     bool quiet = false;
-    bool disablePixelJitter = false, disableWavelengthJitter = true; // zhenyi: change to true 
+    bool disablePixelJitter = false, disableWavelengthJitter = false;
+    bool disableTextureFiltering = false;
     bool forceDiffuse = false;
     bool useGPU = false;
     bool wavefront = false;
@@ -57,9 +58,13 @@ struct PBRTOptions : BasicPBRTOptions {
 // Options Global Variable Declaration
 extern PBRTOptions *Options;
 
-#if defined(PBRT_BUILD_GPU_RENDERER) && defined(__CUDACC__)
+#if defined(PBRT_BUILD_GPU_RENDERER)
+#if defined(__CUDACC__)
 extern __constant__ BasicPBRTOptions OptionsGPU;
-#endif
+#endif  // __CUDACC__
+
+void CopyOptionsToGPU();
+#endif  // PBRT_BUILD_GPU_RENDERER
 
 // Options Inline Functions
 PBRT_CPU_GPU inline const BasicPBRTOptions &GetOptions();

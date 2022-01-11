@@ -50,6 +50,9 @@ namespace pbrt {
 namespace {
 
 float ElapsedSeconds() {
+    static std::mutex mutex;
+    std::lock_guard<std::mutex> lock(mutex);
+
     using clock = std::chrono::steady_clock;
     static clock::time_point start = clock::now();
 
@@ -379,7 +382,11 @@ void Log(LogLevel level, const char *file, int line, const char *s) {
 
 #ifdef __NVCC__
 // warning #1305-D: function declared with "noreturn" does return
-#pragma diag_suppress 1305
+#ifdef __NVCC_DIAG_PRAGMA_SUPPORT__
+  #pragma nv_diag_suppress 1305
+#else
+  #pragma diag_suppress 1305
+#endif
 #endif
 
 void LogFatal(LogLevel level, const char *file, int line, const char *s) {

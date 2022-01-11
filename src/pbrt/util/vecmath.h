@@ -881,7 +881,6 @@ template <typename T>
 template <typename U>
 Vector2<T>::Vector2(Point2<U> p) : Tuple2<pbrt::Vector2, T>(T(p.x), T(p.y)) {}
 
-// TODO: book discuss why Dot() and not e.g. a.Dot(b)
 template <typename T>
 PBRT_CPU_GPU inline auto Dot(Vector2<T> v1, Vector2<T> v2) ->
     typename TupleLength<T>::type {
@@ -968,7 +967,7 @@ PBRT_CPU_GPU inline T Dot(Vector3<T> v, Vector3<T> w) {
 }
 
 // Equivalent to std::acos(Dot(a, b)), but more numerically stable.
-// via http://www.plunk.org/~hatch/rightway.php
+// via http://www.plunk.org/~hatch/rightway.html
 template <typename T>
 PBRT_CPU_GPU inline Float AngleBetween(Vector3<T> v1, Vector3<T> v2) {
     if (Dot(v1, v2) < 0)
@@ -1143,7 +1142,7 @@ PBRT_CPU_GPU inline Float AngleBetween(Quaternion q1, Quaternion q2) {
         return 2 * SafeASin(Length(q2 - q1) / 2);
 }
 
-// http://www.plunk.org/~hatch/rightway.php
+// http://www.plunk.org/~hatch/rightway.html
 PBRT_CPU_GPU inline Quaternion Slerp(Float t, Quaternion q1, Quaternion q2) {
     Float theta = AngleBetween(q1, q2);
     Float sinThetaOverTheta = SinXOverX(theta);
@@ -1800,10 +1799,12 @@ class DirectionCone {
     // DirectionCone Public Methods
     DirectionCone() = default;
     PBRT_CPU_GPU
-    DirectionCone(Vector3f w, Float cosTheta)
-        : w(Normalize(w)), cosTheta(cosTheta), empty(false) {}
+    DirectionCone(Vector3f w, Float cosTheta) : w(Normalize(w)), cosTheta(cosTheta) {}
     PBRT_CPU_GPU
     explicit DirectionCone(Vector3f w) : DirectionCone(w, 1) {}
+
+    PBRT_CPU_GPU
+    bool IsEmpty() const { return cosTheta == Infinity; }
 
     PBRT_CPU_GPU
     static DirectionCone EntireSphere() { return DirectionCone(Vector3f(0, 0, 1), -1); }
@@ -1815,13 +1816,12 @@ class DirectionCone {
 
     // DirectionCone Public Members
     Vector3f w;
-    Float cosTheta;
-    bool empty = true;
+    Float cosTheta = Infinity;
 };
 
 // DirectionCone Inline Functions
 PBRT_CPU_GPU inline bool Inside(const DirectionCone &d, Vector3f w) {
-    return !d.empty && Dot(d.w, Normalize(w)) >= d.cosTheta;
+    return !d.IsEmpty() && Dot(d.w, Normalize(w)) >= d.cosTheta;
 }
 
 PBRT_CPU_GPU inline DirectionCone BoundSubtendedDirections(const Bounds3f &b, Point3f p) {
@@ -1829,7 +1829,7 @@ PBRT_CPU_GPU inline DirectionCone BoundSubtendedDirections(const Bounds3f &b, Po
     Float radius;
     Point3f pCenter;
     b.BoundingSphere(&pCenter, &radius);
-    if (DistanceSquared(p, pCenter) < radius * radius)
+    if (DistanceSquared(p, pCenter) < Sqr(radius))
         return DirectionCone::EntireSphere();
 
     // Compute and return _DirectionCone_ for bounding sphere
@@ -1841,7 +1841,7 @@ PBRT_CPU_GPU inline DirectionCone BoundSubtendedDirections(const Bounds3f &b, Po
 
 PBRT_CPU_GPU
 inline Vector3f DirectionCone::ClosestVectorInCone(Vector3f wp) const {
-    DCHECK(!empty);
+    DCHECK(!IsEmpty());
     wp = Normalize(wp);
     // Return provided vector if it is inside the cone
     if (Dot(wp, w) > cosTheta)

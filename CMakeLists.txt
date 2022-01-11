@@ -63,6 +63,7 @@ check_ext ("Ptex" "ptex/src" 4cd8e9a6db2b06e478dfbbd8c26eb6df97f84483)
 check_ext ("double-conversion" "double-conversion/cmake" cc1f75a114aca8d2af69f73a5a959aecbab0e87a)
 check_ext ("filesystem" "filesystem/filesystem" c5f9de30142453eb3c6fe991e82dfc2583373116)
 check_ext ("libdeflate" "libdeflate/common" 1fd0bea6ca2073c68493632dafc4b1ddda1bcbc3)
+check_ext ("lodepng" "lodepng/examples" 8c6a9e30576f07bf470ad6f09458a2dcd7a6a84a)
 check_ext ("stb" "stb/tools" af1a5bc352164740c1cc1354942b1c6b72eacb8a)
 check_ext ("zlib" "zlib/doc" 54d591eabf9fe0e84c725638f8d5d8d202a093fa)
 
@@ -395,7 +396,7 @@ int main() {
    fstat(fd, &s);
    size_t len = s.st_size;
    void *ptr = mmap(0, len, PROT_READ, MAP_FILE | MAP_SHARED, fd, 0);
-   munmap(ptr, len);   
+   munmap(ptr, len);
 }
 " HAVE_MMAP)
 
@@ -550,7 +551,7 @@ set (PBRT_SOURCE_HEADERS
   src/pbrt/scene.h
   src/pbrt/shapes.h
   src/pbrt/textures.h
-  )  
+  )
 
 SET (PBRT_CPU_SOURCE
   src/pbrt/cpu/aggregates.cpp
@@ -894,7 +895,7 @@ target_link_libraries (rgb2spec_opt PRIVATE ${CMAKE_THREAD_LIBS_INIT} pbrt_opt p
 
 if (NOT PBRT_USE_PREGENERATED_RGB_TO_SPECTRUM_TABLES)
   add_custom_command (OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_aces.cpp
-      COMMAND rgb2spec_opt 64 ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_aces.cpp ACES2065_1 
+      COMMAND rgb2spec_opt 64 ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_aces.cpp ACES2065_1
       DEPENDS rgb2spec_opt)
 
   add_custom_command (OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_dci_p3.cpp

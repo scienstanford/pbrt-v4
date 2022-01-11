@@ -16,7 +16,7 @@
 
 namespace pbrt {
 
-class MeasuredBRDF;
+struct MeasuredBxDFData;
 
 // BxDFReflTransFlags Definition
 enum class BxDFReflTransFlags {
@@ -148,11 +148,11 @@ struct BSDFSample {
     Float pdf = 0;
     BxDFFlags flags;
     Float eta = 1;
-    bool pdfIsProportional;
+    bool pdfIsProportional = false;
 };
 
 class DiffuseBxDF;
-class RoughDiffuseBxDF;
+class DiffuseTransmissionBxDF;
 class DielectricBxDF;
 class ThinDielectricBxDF;
 class HairBxDF;
@@ -164,7 +164,7 @@ class CoatedConductorBxDF;
 
 // BxDF Definition
 class BxDF
-    : public TaggedPointer<DiffuseBxDF, RoughDiffuseBxDF, CoatedDiffuseBxDF,
+    : public TaggedPointer<DiffuseTransmissionBxDF, DiffuseBxDF, CoatedDiffuseBxDF,
                            CoatedConductorBxDF, DielectricBxDF, ThinDielectricBxDF,
                            HairBxDF, MeasuredBxDF, ConductorBxDF, NormalizedFresnelBxDF> {
   public:

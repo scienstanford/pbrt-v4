@@ -25,6 +25,7 @@
 #include <ImfChromaticitiesAttribute.h>
 #include <ImfFloatAttribute.h>
 #include <ImfFrameBuffer.h>
+#include <ImfHeader.h>
 #include <ImfInputFile.h>
 #include <ImfIntAttribute.h>
 #include <ImfMatrixAttribute.h>
@@ -551,7 +552,7 @@ ImageChannelValues Image::MAE(const ImageChannelDesc &desc, const Image &ref,
             ImageChannelValues vref = ref.GetChannels({x, y}, refDesc);
 
             for (int c = 0; c < desc.size(); ++c) {
-                Float error = v[c] - vref[c];
+                double error = double(v[c]) - double(vref[c]);
                 if (IsInf(error))
                     continue;
                 sumError[c] += error;
@@ -585,7 +586,7 @@ ImageChannelValues Image::MSE(const ImageChannelDesc &desc, const Image &ref,
             ImageChannelValues vref = ref.GetChannels({x, y}, refDesc);
 
             for (int c = 0; c < desc.size(); ++c) {
-                Float se = Sqr(v[c] - vref[c]);
+                double se = Sqr(double(v[c]) - double(vref[c]));
                 if (IsInf(se))
                     continue;
                 sumSE[c] += se;
@@ -617,7 +618,7 @@ ImageChannelValues Image::MRSE(const ImageChannelDesc &desc, const Image &ref,
             ImageChannelValues vref = ref.GetChannels({x, y}, refDesc);
 
             for (int c = 0; c < desc.size(); ++c) {
-                Float rse = Sqr(v[c] - vref[c]) / Sqr(vref[c] + 0.01);
+                double rse = Sqr(double(v[c]) - double(vref[c])) / Sqr(vref[c] + 0.01);
                 if (IsInf(rse))
                     continue;
                 sumRSE[c] += rse;
@@ -918,46 +919,74 @@ bool Image::Write(std::string name, const ImageMetadata &metadata) const {
     if (HasExtension(name, "exr"))
         return WriteEXR(name, metadata);
 
-    if (NChannels() > 4) {
-        Error("%s: unable to write an %d channel image in this format.", name,
-              NChannels());
+    // This copy will sometimes be wasteful but simplifies logic below...
+    Image outImage = *this;
+
+    switch (NChannels()) {
+    case 1:
+        // all good; onward
+        break;
+    case 2:
+        Error("%s: unable to write a 2 channel image in this format.", name);
         return false;
-    }
-
-    const Image *image = this;
-    Image rgbImage;
-    if (NChannels() == 4) {
-        ImageChannelDesc desc = GetChannelDesc({"R", "G", "B", "A"});
-        if (desc) {
-            rgbImage = SelectChannels(GetChannelDesc({"R", "G", "B"}));
-            image = &rgbImage;
-        } else {
-            Error("%s: unable to write an 4 channel image that is not RGBA.", name);
-            return false;
-        }
-    }
-    if (NChannels() == 3 && *metadata.GetColorSpace() != *RGBColorSpace::sRGB)
-        Warning("%s: writing image with non-sRGB color space to a format that "
-                "doesn't store color spaces.",
-                name);
-
-    if (NChannels() == 3) {
-        // Order as RGB
-        ImageChannelDesc desc = GetChannelDesc({"R", "G", "B"});
+    case 3: {
+        ImageChannelDesc desc = outImage.GetChannelDesc({"R", "G", "B"});
         if (!desc)
-            Warning("%s: 3-channels but doesn't have R, G, and B. "
-                    "Image may be garbled.",
+            // Still go for it with 3 channels.
+            Warning("%s: image has 3 channels but they are not R, G, and B. Image may be "
+                    "garbled.",
                     name);
-        else {
-            rgbImage = SelectChannels(desc);
-            image = &rgbImage;
+        else
+            // Reorder them as RGB.
+            outImage = outImage.SelectChannels(desc);
+        break;
+    }
+    default: {
+        ImageChannelDesc desc = outImage.GetChannelDesc({"R", "G", "B"});
+        if (!desc) {
+            Error("%s: multi-channel image does not have R, G, and B. Unable to write to "
+                  "this format.",
+                  name);
+            return false;
+        } else {
+            std::string err = StringPrintf("%s: ignoring additional channels for this "
+                                           "image format: ",
+                                           name);
+            for (const auto &ch : outImage.ChannelNames())
+                if (ch != "R" && ch != "G" && ch != "B")
+                    err += StringPrintf("\"%s\" ", ch);
+            Error("%s", err);
+        }
+
+        outImage = outImage.SelectChannels(desc);
+        break;
+    }
+    }
+    CHECK(outImage.NChannels() == 1 || outImage.NChannels() == 3);
+
+    ImageMetadata outMetadata = metadata;
+    if (outImage.NChannels() == 3 && *metadata.GetColorSpace() != *RGBColorSpace::sRGB) {
+        Warning("%s: converting pixel colors to sRGB to match output image format.",
+                name);
+        SquareMatrix<3> m =
+            ConvertRGBColorSpace(*metadata.GetColorSpace(), *RGBColorSpace::sRGB);
+        ImageChannelDesc rgbDesc = outImage.GetChannelDesc({"R", "G", "B"});
+        // May not have RGB for weird non-RGB 3 channel images...
+        if (rgbDesc) {
+            for (int y = 0; y < outImage.Resolution().y; ++y)
+                for (int x = 0; x < outImage.Resolution().x; ++x) {
+                    ImageChannelValues channels = outImage.GetChannels({x, y}, rgbDesc);
+                    RGB rgb = Mul<RGB>(m, channels);
+                    outImage.SetChannels({x, y}, rgbDesc, {rgb.r, rgb.g, rgb.b});
+                }
+            outMetadata.colorSpace = RGBColorSpace::sRGB;
         }
     }
 
     if (HasExtension(name, "pfm"))
-        return image->WritePFM(name, metadata);
+        return outImage.WritePFM(name, outMetadata);
     else if (HasExtension(name, "png"))
-        return image->WritePNG(name, metadata);
+        return outImage.WritePNG(name, outMetadata);
     else {
         Error("%s: no support for writing images with this extension", name);
         return false;
@@ -1059,7 +1088,6 @@ static ImageAndMetadata ReadEXR(const std::string &name, Allocator alloc) {
         }
 
         // Figure out the color space
-        const RGBColorSpace *colorSpace = RGBColorSpace::sRGB;  // default
         const Imf::ChromaticitiesAttribute *chromaticitiesAttrib =
             file.header().findTypedAttribute<Imf::ChromaticitiesAttribute>(
                 "chromaticities");
@@ -1425,14 +1453,18 @@ bool Image::WritePNG(const std::string &filename, const ImageMetadata &metadata)
 
     if (error == 0) {
         std::string encodedPNG(png, png + pngSize);
-        if (!WriteFileContents(filename, encodedPNG))
+        if (!WriteFileContents(filename, encodedPNG)) {
             Error("%s: error writing PNG.", filename);
-    } else
+            return false;
+        }
+    } else {
         Error("%s: %s", filename, lodepng_error_text(error));
+        return false;
+    }
 
     free(png);
 
-    return error == 0;
+    return true;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1654,7 +1686,7 @@ bool Image::WritePFM(const std::string &filename, const ImageMetadata &metadata)
             }
         }
         if (fwrite(&scanline[0], sizeof(float), 3 * resolution.x, fp) <
-            (size_t)(3 * resolution.x))
+            (3 * resolution.x))
             goto fail;
     }
 

@@ -198,7 +198,9 @@ struct InstanceSceneEntity {
                         const AnimatedTransform &renderFromInstanceAnim)
         : name(SceneEntity::internedStrings.Lookup(n)),
           loc(loc),
-          renderFromInstanceAnim(new AnimatedTransform(renderFromInstanceAnim)) {}
+          renderFromInstanceAnim(new AnimatedTransform(renderFromInstanceAnim)) {
+        CHECK(this->renderFromInstanceAnim->IsAnimated());
+    }
     InstanceSceneEntity(const std::string &n, FileLoc loc,
                         const Transform *renderFromInstance)
         : name(SceneEntity::internedStrings.Lookup(n)),
@@ -219,11 +221,6 @@ struct InstanceSceneEntity {
     FileLoc loc;
     AnimatedTransform *renderFromInstanceAnim = nullptr;
     const Transform *renderFromInstance = nullptr;
-};
-
-// TransformHash Definition
-struct TransformHash {
-    size_t operator()(const Transform &t) const { return t.Hash(); }
 };
 
 // MaxTransforms Definition
@@ -283,24 +280,24 @@ class BasicScene {
     void Done();
 
     Camera GetCamera() {
-        cameraFutureMutex.lock();
+        cameraJobMutex.lock();
         while (!camera) {
-            pstd::optional<Camera> c = cameraFuture.TryGet(&cameraFutureMutex);
+            pstd::optional<Camera> c = cameraJob->TryGetResult(&cameraJobMutex);
             if (c)
                 camera = *c;
         }
-        cameraFutureMutex.unlock();
+        cameraJobMutex.unlock();
         return camera;
     }
 
     Sampler GetSampler() {
-        samplerFutureMutex.lock();
+        samplerJobMutex.lock();
         while (!sampler) {
-            pstd::optional<Sampler> s = samplerFuture.TryGet(&samplerFutureMutex);
+            pstd::optional<Sampler> s = samplerJob->TryGetResult(&samplerJobMutex);
             if (s)
                 sampler = *s;
         }
-        samplerFutureMutex.unlock();
+        samplerJobMutex.unlock();
         return sampler;
     }
 
@@ -342,26 +339,26 @@ class BasicScene {
     void startLoadingNormalMaps(const ParameterDictionary &parameters);
 
     // BasicScene Private Members
-    Future<Sampler> samplerFuture;
+    AsyncJob<Sampler> *samplerJob = nullptr;
     mutable ThreadLocal<Allocator> threadAllocators;
     Camera camera;
     Film film;
-    std::mutex cameraFutureMutex;
-    Future<Camera> cameraFuture;
-    std::mutex samplerFutureMutex;
+    std::mutex cameraJobMutex;
+    AsyncJob<Camera> *cameraJob = nullptr;
+    std::mutex samplerJobMutex;
     Sampler sampler;
     std::mutex mediaMutex;
-    std::map<std::string, Future<Medium>> mediumFutures;
+    std::map<std::string, AsyncJob<Medium> *> mediumJobs;
     std::map<std::string, Medium> mediaMap;
     std::mutex materialMutex;
-    std::map<std::string, Future<Image *>> normalMapFutures;
+    std::map<std::string, AsyncJob<Image *> *> normalMapJobs;
     std::map<std::string, Image *> normalMaps;
 
     std::vector<std::pair<std::string, SceneEntity>> namedMaterials;
     std::vector<SceneEntity> materials;
 
     std::mutex lightMutex;
-    std::vector<Future<Light>> lightFutures;
+    std::vector<AsyncJob<Light> *> lightJobs;
 
     std::mutex areaLightMutex;
     std::vector<SceneEntity> areaLights;
@@ -371,8 +368,8 @@ class BasicScene {
     std::vector<std::pair<std::string, TextureSceneEntity>> serialSpectrumTextures;
     std::vector<std::pair<std::string, TextureSceneEntity>> asyncSpectrumTextures;
     std::set<std::string> loadingTextureFilenames;
-    std::map<std::string, Future<FloatTexture>> floatTextureFutures;
-    std::map<std::string, Future<SpectrumTexture>> spectrumTextureFutures;
+    std::map<std::string, AsyncJob<FloatTexture> *> floatTextureJobs;
+    std::map<std::string, AsyncJob<SpectrumTexture> *> spectrumTextureJobs;
     int nMissingTextures = 0;
 
     std::mutex shapeMutex, animatedShapeMutex;
@@ -494,7 +491,7 @@ class BasicSceneBuilder : public ParserTarget {
     static constexpr int AllTransformsBits = (1 << MaxTransforms) - 1;
     std::map<std::string, TransformSet> namedCoordinateSystems;
     class Transform renderFromWorld;
-    InternCache<class Transform, TransformHash> transformCache;
+    InternCache<class Transform> transformCache;
     std::vector<GraphicsState> pushedGraphicsStates;
     std::vector<std::pair<char, FileLoc>> pushStack;  // 'a': attribute, 'o': object
     struct ActiveInstanceDefinition {

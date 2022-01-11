@@ -78,8 +78,11 @@ inline T &ThreadLocal<T>::Get() {
             return threadLocal;
         } else if (!hashTable[hash]) {
             mutex.unlock_shared();
-            T newItem = create();
+
+            // Get reader-writer lock before calling the callback so that the user
+            // doesn't have to worry about writing a thread-safe callback.
             mutex.lock();
+            T newItem = create();
 
             if (hashTable[hash]) {
                 // someone else got there first--keep looking, but now
@@ -290,8 +293,6 @@ class ParallelJob {
 
     virtual std::string ToString() const = 0;
 
-    virtual void Cleanup() {}
-
     // ParallelJob Public Members
     static ThreadPool *threadPool;
 
@@ -346,53 +347,12 @@ class ThreadPool {
 
 bool DoParallelWork();
 
-// Future Definition
-template <typename T>
-class Future {
-  public:
-    // Future Public Methods
-    Future() = default;
-    Future(std::future<T> &&f) : fut(std::move(f)) {}
-    Future &operator=(std::future<T> &&f) {
-        fut = std::move(f);
-        return *this;
-    }
-
-    T Get() {
-        Wait();
-        return fut.get();
-    }
-
-    pstd::optional<T> TryGet(std::mutex *mutex) {
-        if (IsReady())
-            return Get();
-
-        mutex->unlock();
-        DoParallelWork();
-        mutex->lock();
-        return {};
-    }
-
-    void Wait() {
-        while (!IsReady() && DoParallelWork())
-            ;
-        fut.wait();
-    }
-
-    bool IsReady() const {
-        return fut.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
-    }
-
-  private:
-    std::future<T> fut;
-};
-
 // AsyncJob Definition
 template <typename T>
 class AsyncJob : public ParallelJob {
   public:
     // AsyncJob Public Methods
-    AsyncJob(std::function<T(void)> w) : work(std::move(w)) {}
+    AsyncJob(std::function<T(void)> w) : func(std::move(w)) {}
 
     bool HaveWork() const { return !started; }
 
@@ -400,21 +360,64 @@ class AsyncJob : public ParallelJob {
         threadPool->RemoveFromJobList(this);
         started = true;
         lock->unlock();
-        work();
+        // Execute asynchronous work and notify waiting threads of its completion
+        T r = func();
+        std::unique_lock<std::mutex> ul(mutex);
+        result = r;
+        cv.notify_all();
     }
 
-    void DoWork() { work(); }
-    void Cleanup() { delete this; }
+    bool IsReady() const {
+        std::lock_guard<std::mutex> lock(mutex);
+        return result.has_value();
+    }
 
-    Future<T> GetFuture() { return work.get_future(); }
+    T GetResult() {
+        Wait();
+        std::lock_guard<std::mutex> lock(mutex);
+        return *result;
+    }
+
+    pstd::optional<T> TryGetResult(std::mutex *extMutex) {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (result)
+                return result;
+        }
+
+        extMutex->unlock();
+        DoParallelWork();
+        extMutex->lock();
+        return {};
+    }
+
+    void Wait() {
+        while (!IsReady() && DoParallelWork())
+            ;
+        std::unique_lock<std::mutex> lock(mutex);
+        if (!result.has_value())
+            cv.wait(lock, [this]() { return result.has_value(); });
+    }
+
+    void DoWork() {
+        T r = func();
+        std::unique_lock<std::mutex> l(mutex);
+        CHECK(!result.has_value());
+        result = r;
+        cv.notify_all();
+    }
 
     std::string ToString() const {
         return StringPrintf("[ AsyncJob started: %s ]", started);
     }
 
   private:
+    // AsyncJob Private Members
+    std::function<T(void)> func;
     bool started = false;
-    std::packaged_task<T(void)> work;
+    pstd::optional<T> result;
+    mutable std::mutex mutex;
+    std::condition_variable cv;
 };
 
 void ForEachThread(std::function<void(void)> func);
@@ -437,7 +440,7 @@ inline auto RunAsync(F func, Args &&...args) {
     else
         lock = ParallelJob::threadPool->AddToJobList(job);
 
-    return job->GetFuture();
+    return job;
 }
 
 }  // namespace pbrt

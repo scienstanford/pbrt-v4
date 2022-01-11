@@ -252,7 +252,7 @@ class ProjectiveCamera : public CameraBase {
     std::string BaseToString() const;
 
     ProjectiveCamera(CameraBaseParameters baseParameters,
-                     const Transform &screenFromCamera, const Bounds2f &screenWindow,
+                     const Transform &screenFromCamera, Bounds2f screenWindow,
                      Float lensRadius, Float focalDistance)
         : CameraBase(baseParameters),
           screenFromCamera(screenFromCamera),
@@ -282,10 +282,10 @@ class ProjectiveCamera : public CameraBase {
 class OrthographicCamera : public ProjectiveCamera {
   public:
     // OrthographicCamera Public Methods
-    OrthographicCamera(CameraBaseParameters baseParameters, const Bounds2f &screenWindow,
-                       Float lensRadius, Float focalDistance)
+    OrthographicCamera(CameraBaseParameters baseParameters, Bounds2f screenWindow,
+                       Float lensRadius, Float focalDist)
         : ProjectiveCamera(baseParameters, Orthographic(0, 1), screenWindow, lensRadius,
-                           focalDistance) {
+                           focalDist) {
         // Compute differential changes in origin for orthographic camera rays
         dxCamera = cameraFromRaster(Vector3f(1, 0, 0));
         dyCamera = cameraFromRaster(Vector3f(0, 1, 0));
@@ -345,10 +345,10 @@ class PerspectiveCamera : public ProjectiveCamera {
     };
     // PerspectiveCamera Public Methods
     PerspectiveCamera(CameraBaseParameters baseParameters, Float fov,
-                      const Bounds2f &screenWindow, Float lensRadius, 
+                      Bounds2f screenWindow, Float lensRadius, 
                       Float focalDistance, PerspectiveCamera::distortionPolynomials distortionPolynomials)
         : ProjectiveCamera(baseParameters, Perspective(fov, 1e-2f, 1000.f), screenWindow,
-                           lensRadius, focalDistance) {
+                           lensRadius, focalDist) {
         // Compute differential changes in origin for perspective camera rays
         dxCamera =
             cameraFromRaster(Point3f(1, 0, 0)) - cameraFromRaster(Point3f(0, 0, 0));
@@ -373,7 +373,7 @@ class PerspectiveCamera : public ProjectiveCamera {
         // Compute minimum differentials for _PerspectiveCamera_
         FindMinimumDifferentials(this);
     }
-    
+
     PerspectiveCamera() = default;
 
     static PerspectiveCamera *Create(const ParameterDictionary &parameters,
@@ -618,7 +618,7 @@ class OmniCamera : public CameraBase {
         std::vector<Vector2f> offsets;
         Vector2i dimensions;
     };
-   
+
     // OmniCamera Public Methods
     OmniCamera(CameraBaseParameters baseParameters,
                     pstd::vector<OmniCamera::LensElementInterface> &lensInterfaceData,

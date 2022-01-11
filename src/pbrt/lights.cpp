@@ -9,11 +9,15 @@
 #include <pbrt/lights.h>
 
 #include <pbrt/cameras.h>
+#ifdef PBRT_BUILD_GPU_RENDERER
+#include <pbrt/gpu/memory.h>
+#endif  // PBRT_BUILD_GPU_RENDERER
 #include <pbrt/paramdict.h>
 #include <pbrt/samplers.h>
 #include <pbrt/shapes.h>
 #include <pbrt/util/color.h>
 #include <pbrt/util/colorspace.h>
+#include <pbrt/util/containers.h>
 #include <pbrt/util/error.h>
 #include <pbrt/util/file.h>
 #include <pbrt/util/float.h>
@@ -26,6 +30,7 @@
 #include <pbrt/util/stats.h>
 
 #include <algorithm>
+#include <mutex>
 
 namespace pbrt {
 
@@ -59,6 +64,7 @@ std::string ToString(LightType lf) {
     }
 }
 
+// LightBase Method Definitions
 LightBase::LightBase(LightType type, const Transform &renderFromLight,
                      const MediumInterface &mediumInterface)
     : type(type), mediumInterface(mediumInterface), renderFromLight(renderFromLight) {
@@ -70,6 +76,27 @@ std::string LightBase::BaseToString() const {
                         mediumInterface, renderFromLight);
 }
 
+InternCache<DenselySampledSpectrum> *LightBase::spectrumCache;
+
+const DenselySampledSpectrum *LightBase::LookupSpectrum(Spectrum s) {
+    // Initialize _spectrumCache_ on first call
+    static std::mutex mutex;
+    mutex.lock();
+    if (!spectrumCache)
+        spectrumCache = new InternCache<DenselySampledSpectrum>(
+#ifdef PBRT_BUILD_GPU_RENDERER
+            Options->useGPU ? Allocator(&CUDATrackedMemoryResource::singleton) :
+#endif
+                            Allocator{});
+    mutex.unlock();
+
+    // Return unique _DenselySampledSpectrum_ from intern cache for _s_
+    auto create = [](Allocator alloc, const DenselySampledSpectrum &s) {
+        return alloc.new_object<DenselySampledSpectrum>(s, alloc);
+    };
+    return spectrumCache->Lookup(DenselySampledSpectrum(s), create);
+}
+
 std::string LightBounds::ToString() const {
     return StringPrintf("[ LightBounds bounds: %s w: %s phi: %f "
                         "cosTheta_o: %f cosTheta_e: %f twoSided: %s ]",
@@ -77,24 +104,6 @@ std::string LightBounds::ToString() const {
 }
 
 // LightBounds Method Definitions
-LightBounds Union(const LightBounds &a, const LightBounds &b) {
-    // If one _LightBounds_ has zero power, return the other
-    if (a.phi == 0)
-        return b;
-    if (b.phi == 0)
-        return a;
-
-    // Find average direction and updated angles for _LightBounds_
-    DirectionCone cone =
-        Union(DirectionCone(a.w, a.cosTheta_o), DirectionCone(b.w, b.cosTheta_o));
-    Float cosTheta_o = cone.cosTheta;
-    Float cosTheta_e = std::min(a.cosTheta_e, b.cosTheta_e);
-
-    // Return final _LightBounds_ union
-    return LightBounds(Union(a.bounds, b.bounds), cone.w, a.phi + b.phi, cosTheta_o,
-                       cosTheta_e, a.twoSided | b.twoSided);
-}
-
 Float LightBounds::Importance(Point3f p, Normal3f n) const {
     // Return importance for light bounds at reference point
     // Compute clamped squared distance to reference point
@@ -153,12 +162,12 @@ Float LightBounds::Importance(Point3f p, Normal3f n) const {
 
 // PointLight Method Definitions
 SampledSpectrum PointLight::Phi(SampledWavelengths lambda) const {
-    return 4 * Pi * scale * I.Sample(lambda);
+    return 4 * Pi * scale * I->Sample(lambda);
 }
 
 pstd::optional<LightBounds> PointLight::Bounds() const {
     Point3f p = renderFromLight(Point3f(0, 0, 0));
-    Float phi = 4 * Pi * scale * I.MaxValue();
+    Float phi = 4 * Pi * scale * I->MaxValue();
     return LightBounds(Bounds3f(p, p), Vector3f(0, 0, 1), phi, std::cos(Pi),
                        std::cos(Pi / 2), false);
 }
@@ -168,7 +177,7 @@ pstd::optional<LightLeSample> PointLight::SampleLe(Point2f u1, Point2f u2,
                                                    Float time) const {
     Point3f p = renderFromLight(Point3f(0, 0, 0));
     Ray ray(p, SampleUniformSphere(u1), time, mediumInterface.outside);
-    return LightLeSample(scale * I.Sample(lambda), ray, 1, UniformSpherePDF());
+    return LightLeSample(scale * I->Sample(lambda), ray, 1, UniformSpherePDF());
 }
 
 void PointLight::PDF_Le(const Ray &, Float *pdfPos, Float *pdfDir) const {
@@ -200,12 +209,12 @@ PointLight *PointLight::Create(const Transform &renderFromLight, Medium medium,
     Transform tf = Translate(Vector3f(from.x, from.y, from.z));
     Transform finalRenderFromLight(renderFromLight * tf);
 
-    return alloc.new_object<PointLight>(finalRenderFromLight, medium, I, sc, alloc);
+    return alloc.new_object<PointLight>(finalRenderFromLight, medium, I, sc);
 }
 
 // DistantLight Method Definitions
 SampledSpectrum DistantLight::Phi(SampledWavelengths lambda) const {
-    return scale * Lemit.Sample(lambda) * Pi * Sqr(sceneRadius);
+    return scale * Lemit->Sample(lambda) * Pi * Sqr(sceneRadius);
 }
 
 pstd::optional<LightLeSample> DistantLight::SampleLe(Point2f u1, Point2f u2,
@@ -220,7 +229,7 @@ pstd::optional<LightLeSample> DistantLight::SampleLe(Point2f u1, Point2f u2,
     // Compute _DistantLight_ light ray
     Ray ray(pDisk + sceneRadius * w, -w, time);
 
-    return LightLeSample(scale * Lemit.Sample(lambda), ray, 1 / (Pi * Sqr(sceneRadius)),
+    return LightLeSample(scale * Lemit->Sample(lambda), ray, 1 / (Pi * Sqr(sceneRadius)),
                          1);
 }
 
@@ -260,12 +269,10 @@ DistantLight *DistantLight::Create(const Transform &renderFromLight,
     // Like for IBLs we measure illuminance as incident on an upward-facing
     // patch.
     Float E_v = parameters.GetOneFloat("illuminance", -1);
-    if (E_v > 0) {
-        Float k_e = -w.y;
-        sc *= E_v / k_e;
-    }
+    if (E_v > 0)
+        sc *= E_v;
 
-    return alloc.new_object<DistantLight>(finalRenderFromLight, L, sc, alloc);
+    return alloc.new_object<DistantLight>(finalRenderFromLight, L, sc);
 }
 
 STAT_MEMORY_COUNTER("Memory/Light image and distributions", imageBytes);
@@ -292,7 +299,7 @@ ProjectionLight::ProjectionLight(Transform renderFromLight,
 
     // Compute projection image area _A_
     Float opposite = std::tan(Radians(fov) / 2);
-    A = 4 * Sqr(opposite) * (aspect > 1 ? aspect : 1 / aspect);
+    A = 4 * Sqr(opposite) * (aspect > 1 ? aspect : (1 / aspect));
 
     // Compute sampling distribution for _ProjectionLight_
     ImageChannelDesc channelDesc = image.GetChannelDesc({"R", "G", "B"});
@@ -485,7 +492,7 @@ ProjectionLight *ProjectionLight::Create(const Transform &renderFromLight, Mediu
 
         // Compute projection image area _A_
         Float opposite = std::tan(Radians(fov) / 2);
-        A = 4 * Sqr(opposite) * (aspect > 1 ? aspect : 1 / aspect);
+        A = 4 * Sqr(opposite) * (aspect > 1 ? aspect : (1 / aspect));
 
         Float sum = 0;
         RGB luminance = colorSpace->LuminanceVector();
@@ -515,7 +522,7 @@ GoniometricLight::GoniometricLight(const Transform &renderFromLight,
                                    const MediumInterface &mediumInterface, Spectrum Iemit,
                                    Float scale, Image im, Allocator alloc)
     : LightBase(LightType::DeltaPosition, renderFromLight, mediumInterface),
-      Iemit(Iemit, alloc),
+      Iemit(LookupSpectrum(Iemit)),
       scale(scale),
       image(std::move(im)),
       distrib(alloc) {
@@ -549,7 +556,7 @@ SampledSpectrum GoniometricLight::Phi(SampledWavelengths lambda) const {
     for (int y = 0; y < image.Resolution().y; ++y)
         for (int x = 0; x < image.Resolution().x; ++x)
             sumY += image.GetChannel({x, y}, 0);
-    return scale * Iemit.Sample(lambda) * 4 * Pi * sumY /
+    return scale * Iemit->Sample(lambda) * 4 * Pi * sumY /
            (image.Resolution().x * image.Resolution().y);
 }
 
@@ -558,7 +565,7 @@ pstd::optional<LightBounds> GoniometricLight::Bounds() const {
     for (int y = 0; y < image.Resolution().y; ++y)
         for (int x = 0; x < image.Resolution().x; ++x)
             sumY += image.GetChannel({x, y}, 0);
-    Float phi = scale * Iemit.MaxValue() * 4 * Pi * sumY /
+    Float phi = scale * Iemit->MaxValue() * 4 * Pi * sumY /
                 (image.Resolution().x * image.Resolution().y);
 
     Point3f p = renderFromLight(Point3f(0, 0, 0));
@@ -678,7 +685,7 @@ DiffuseAreaLight::DiffuseAreaLight(const Transform &renderFromLight,
                                    const MediumInterface &mediumInterface, Spectrum Le,
                                    Float scale, const Shape shape, FloatTexture alpha,
                                    Image im, const RGBColorSpace *imageColorSpace,
-                                   bool twoSided, Allocator alloc)
+                                   bool twoSided)
     : LightBase(
           [](FloatTexture alpha) {
               // Special case handling for area lights with constant zero-valued alpha
@@ -702,7 +709,7 @@ DiffuseAreaLight::DiffuseAreaLight(const Transform &renderFromLight,
       alpha(type == LightType::Area ? alpha : nullptr),
       area(shape.Area()),
       twoSided(twoSided),
-      Lemit(Le, alloc),
+      Lemit(LookupSpectrum(Le)),
       scale(scale),
       image(std::move(im)),
       imageColorSpace(imageColorSpace) {
@@ -774,7 +781,7 @@ SampledSpectrum DiffuseAreaLight::Phi(SampledWavelengths lambda) const {
         L *= scale / (image.Resolution().x * image.Resolution().y);
 
     } else
-        L = Lemit.Sample(lambda) * scale;
+        L = Lemit->Sample(lambda) * scale;
     return Pi * (twoSided ? 2 : 1) * area * L;
 }
 
@@ -791,7 +798,7 @@ pstd::optional<LightBounds> DiffuseAreaLight::Bounds() const {
         phi /= 3 * image.Resolution().x * image.Resolution().y;
 
     } else
-        phi = Lemit.MaxValue();
+        phi = Lemit->MaxValue();
     phi *= scale * area * Pi;
 
     DirectionCone nb = shape.NormalBounds();
@@ -839,8 +846,8 @@ pstd::optional<LightLeSample> DiffuseAreaLight::SampleLe(Point2f u1, Point2f u2,
     const Interaction &intr = ss->intr;
     Frame nFrame = Frame::FromZ(intr.n);
     w = nFrame.FromLocal(w);
-    return LightLeSample(L(intr.p(), intr.n, intr.uv, w, lambda), intr.SpawnRay(w), intr,
-                         ss->pdf, pdfDir);
+    SampledSpectrum Le = L(intr.p(), intr.n, intr.uv, w, lambda);
+    return LightLeSample(Le, intr.SpawnRay(w), intr, ss->pdf, pdfDir);
 }
 
 void DiffuseAreaLight::PDF_Le(const Interaction &intr, Vector3f w, Float *pdfPos,
@@ -908,7 +915,7 @@ DiffuseAreaLight *DiffuseAreaLight::Create(const Transform &renderFromLight,
         // distribution and texture and is used to normalize the emitted
         // radiance such that the user-defined power will be the actual power
         // emitted by the light.
-        Float k_e;
+        Float k_e = 1;
         // Get the appropriate luminance vector from the image colour space
         RGB lum = imageColorSpace->LuminanceVector();
         // we need to know which channels correspond to R, G and B
@@ -934,19 +941,19 @@ DiffuseAreaLight *DiffuseAreaLight::Create(const Transform &renderFromLight,
 
     return alloc.new_object<DiffuseAreaLight>(renderFromLight, medium, L, scale, shape,
                                               alphaTex, std::move(image), imageColorSpace,
-                                              twoSided, alloc);
+                                              twoSided);
 }
 
 // UniformInfiniteLight Method Definitions
 UniformInfiniteLight::UniformInfiniteLight(const Transform &renderFromLight,
-                                           Spectrum Lemit, Float scale, Allocator alloc)
+                                           Spectrum Lemit, Float scale)
     : LightBase(LightType::Infinite, renderFromLight, MediumInterface()),
-      Lemit(Lemit, alloc),
+      Lemit(LookupSpectrum(Lemit)),
       scale(scale) {}
 
 SampledSpectrum UniformInfiniteLight::Le(const Ray &ray,
                                          const SampledWavelengths &lambda) const {
-    return scale * Lemit.Sample(lambda);
+    return scale * Lemit->Sample(lambda);
 }
 
 pstd::optional<LightLiSample> UniformInfiniteLight::SampleLi(
@@ -957,7 +964,7 @@ pstd::optional<LightLiSample> UniformInfiniteLight::SampleLi(
     // Return uniform spherical sample for uniform infinite light
     Vector3f wi = SampleUniformSphere(u);
     Float pdf = UniformSpherePDF();
-    return LightLiSample(scale * Lemit.Sample(lambda), wi, pdf,
+    return LightLiSample(scale * Lemit->Sample(lambda), wi, pdf,
                          Interaction(ctx.p() + wi * (2 * sceneRadius), &mediumInterface));
 }
 
@@ -969,7 +976,7 @@ Float UniformInfiniteLight::PDF_Li(LightSampleContext ctx, Vector3f w,
 }
 
 SampledSpectrum UniformInfiniteLight::Phi(SampledWavelengths lambda) const {
-    return 4 * Pi * Pi * Sqr(sceneRadius) * scale * Lemit.Sample(lambda);
+    return 4 * Pi * Pi * Sqr(sceneRadius) * scale * Lemit->Sample(lambda);
 }
 
 pstd::optional<LightLeSample> UniformInfiniteLight::SampleLe(Point2f u1, Point2f u2,
@@ -988,7 +995,7 @@ pstd::optional<LightLeSample> UniformInfiniteLight::SampleLe(Point2f u1, Point2f
     Float pdfPos = 1 / (Pi * Sqr(sceneRadius));
     Float pdfDir = UniformSpherePDF();
 
-    return LightLeSample(scale * Lemit.Sample(lambda), ray, pdfPos, pdfDir);
+    return LightLeSample(scale * Lemit->Sample(lambda), ray, pdfPos, pdfDir);
 }
 
 void UniformInfiniteLight::PDF_Le(const Ray &ray, Float *pdfPos, Float *pdfDir) const {
@@ -1341,9 +1348,9 @@ std::string PortalImageInfiniteLight::ToString() const {
 // SpotLight Method Definitions
 SpotLight::SpotLight(const Transform &renderFromLight,
                      const MediumInterface &mediumInterface, Spectrum Iemit, Float scale,
-                     Float totalWidth, Float falloffStart, Allocator alloc)
+                     Float totalWidth, Float falloffStart)
     : LightBase(LightType::DeltaPosition, renderFromLight, mediumInterface),
-      Iemit(Iemit, alloc),
+      Iemit(LookupSpectrum(Iemit)),
       scale(scale),
       cosFalloffEnd(std::cos(Radians(totalWidth))),
       cosFalloffStart(std::cos(Radians(falloffStart))) {
@@ -1356,18 +1363,18 @@ Float SpotLight::PDF_Li(LightSampleContext, Vector3f, bool allowIncompletePDF) c
 
 SampledSpectrum SpotLight::I(Vector3f w, SampledWavelengths lambda) const {
     return SmoothStep(CosTheta(w), cosFalloffEnd, cosFalloffStart) * scale *
-           Iemit.Sample(lambda);
+           Iemit->Sample(lambda);
 }
 
 SampledSpectrum SpotLight::Phi(SampledWavelengths lambda) const {
-    return scale * Iemit.Sample(lambda) * 2 * Pi *
+    return scale * Iemit->Sample(lambda) * 2 * Pi *
            ((1 - cosFalloffStart) + (cosFalloffStart - cosFalloffEnd) / 2);
 }
 
 pstd::optional<LightBounds> SpotLight::Bounds() const {
     Point3f p = renderFromLight(Point3f(0, 0, 0));
     Vector3f w = Normalize(renderFromLight(Vector3f(0, 0, 1)));
-    Float phi = scale * Iemit.MaxValue() * 4 * Pi;
+    Float phi = scale * Iemit->MaxValue() * 4 * Pi;
     Float cosTheta_e = std::cos(std::acos(cosFalloffEnd) - std::acos(cosFalloffStart));
     // Allow a little slop here to deal with fp round-off error in the computation of
     // cosTheta_p in the importance function.
@@ -1457,7 +1464,7 @@ SpotLight *SpotLight::Create(const Transform &renderFromLight, Medium medium,
     }
 
     return alloc.new_object<SpotLight>(finalRenderFromLight, medium, I, sc, coneangle,
-                                       coneangle - conedelta, alloc);
+                                       coneangle - conedelta);
 }
 
 SampledSpectrum Light::Phi(SampledWavelengths lambda) const {
@@ -1543,7 +1550,7 @@ Light Light::Create(const std::string &name, const ParameterDictionary &paramete
 
             // Default: color space's std illuminant
             light = alloc.new_object<UniformInfiniteLight>(
-                renderFromLight, &colorSpace->illuminant, scale, alloc);
+                renderFromLight, &colorSpace->illuminant, scale);
         } else if (!L.empty() && portal.empty()) {
             if (!filename.empty())
                 ErrorExit(loc, "Can't specify both emission \"L\" and "
@@ -1560,8 +1567,7 @@ Light Light::Create(const std::string &name, const ParameterDictionary &paramete
                 scale *= E_v / k_e;
             }
 
-            light = alloc.new_object<UniformInfiniteLight>(renderFromLight, L[0], scale,
-                                                           alloc);
+            light = alloc.new_object<UniformInfiniteLight>(renderFromLight, L[0], scale);
         } else {
             // Either an image was provided or it's "L" with a portal.
             ImageAndMetadata imageAndMetadata;

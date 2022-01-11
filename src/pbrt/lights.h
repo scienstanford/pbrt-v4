@@ -25,6 +25,7 @@
 #include <pbrt/util/transform.h>
 #include <pbrt/util/vecmath.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -133,7 +134,23 @@ inline LightBounds::LightBounds(const Bounds3f &b, Vector3f w, Float phi,
       cosTheta_e(cosTheta_e),
       twoSided(twoSided) {}
 
-LightBounds Union(const LightBounds &a, const LightBounds &b);
+inline LightBounds Union(const LightBounds &a, const LightBounds &b) {
+    // If one _LightBounds_ has zero power, return the other
+    if (a.phi == 0)
+        return b;
+    if (b.phi == 0)
+        return a;
+
+    // Find average direction and updated angles for _LightBounds_
+    DirectionCone cone =
+        Union(DirectionCone(a.w, a.cosTheta_o), DirectionCone(b.w, b.cosTheta_o));
+    Float cosTheta_o = cone.cosTheta;
+    Float cosTheta_e = std::min(a.cosTheta_e, b.cosTheta_e);
+
+    // Return final _LightBounds_ union
+    return LightBounds(Union(a.bounds, b.bounds), cone.w, a.phi + b.phi, cosTheta_o,
+                       cosTheta_e, a.twoSided | b.twoSided);
+}
 
 // LightBase Definition
 class LightBase {
@@ -157,11 +174,15 @@ class LightBase {
     }
 
   protected:
+    // LightBase Protected Methods
+    static const DenselySampledSpectrum *LookupSpectrum(Spectrum s);
+
     std::string BaseToString() const;
     // LightBase Protected Members
     LightType type;
     Transform renderFromLight;
     MediumInterface mediumInterface;
+    static InternCache<DenselySampledSpectrum> *spectrumCache;
 };
 
 // PointLight Definition
@@ -169,9 +190,9 @@ class PointLight : public LightBase {
   public:
     // PointLight Public Methods
     PointLight(Transform renderFromLight, MediumInterface mediumInterface, Spectrum I,
-               Float scale, Allocator alloc)
+               Float scale)
         : LightBase(LightType::DeltaPosition, renderFromLight, mediumInterface),
-          I(I, alloc),
+          I(LookupSpectrum(I)),
           scale(scale) {}
 
     static PointLight *Create(const Transform &renderFromLight, Medium medium,
@@ -202,7 +223,7 @@ class PointLight : public LightBase {
                                            bool allowIncompletePDF) const {
         Point3f p = renderFromLight(Point3f(0, 0, 0));
         Vector3f wi = Normalize(p - ctx.p());
-        SampledSpectrum Li = scale * I.Sample(lambda) / DistanceSquared(p, ctx.p());
+        SampledSpectrum Li = scale * I->Sample(lambda) / DistanceSquared(p, ctx.p());
         return LightLiSample(Li, wi, 1, Interaction(p, &mediumInterface));
     }
 
@@ -213,7 +234,7 @@ class PointLight : public LightBase {
 
   private:
     // PointLight Private Members
-    DenselySampledSpectrum I;
+    const DenselySampledSpectrum *I;
     Float scale;
 };
 
@@ -221,10 +242,9 @@ class PointLight : public LightBase {
 class DistantLight : public LightBase {
   public:
     // DistantLight Public Methods
-    DistantLight(const Transform &renderFromLight, Spectrum Lemit, Float scale,
-                 Allocator alloc)
+    DistantLight(const Transform &renderFromLight, Spectrum Lemit, Float scale)
         : LightBase(LightType::DeltaDirection, renderFromLight, {}),
-          Lemit(Lemit, alloc),
+          Lemit(LookupSpectrum(Lemit)),
           scale(scale) {}
 
     static DistantLight *Create(const Transform &renderFromLight,
@@ -264,13 +284,13 @@ class DistantLight : public LightBase {
                                            bool allowIncompletePDF) const {
         Vector3f wi = Normalize(renderFromLight(Vector3f(0, 0, 1)));
         Point3f pOutside = ctx.p() + wi * (2 * sceneRadius);
-        return LightLiSample(scale * Lemit.Sample(lambda), wi, 1,
+        return LightLiSample(scale * Lemit->Sample(lambda), wi, 1,
                              Interaction(pOutside, nullptr));
     }
 
   private:
     // DistantLight Private Members
-    DenselySampledSpectrum Lemit;
+    const DenselySampledSpectrum *Lemit;
     Float scale;
     Point3f sceneCenter;
     Float sceneRadius;
@@ -372,12 +392,12 @@ class GoniometricLight : public LightBase {
     PBRT_CPU_GPU
     SampledSpectrum I(Vector3f w, const SampledWavelengths &lambda) const {
         Point2f uv = EqualAreaSphereToSquare(w);
-        return scale * Iemit.Sample(lambda) * image.LookupNearestChannel(uv, 0);
+        return scale * Iemit->Sample(lambda) * image.LookupNearestChannel(uv, 0);
     }
 
   private:
     // GoniometricLight Private Members
-    DenselySampledSpectrum Iemit;
+    const DenselySampledSpectrum *Iemit;
     Float scale;
     Image image;
     PiecewiseConstant2D distrib;
@@ -390,8 +410,7 @@ class DiffuseAreaLight : public LightBase {
     DiffuseAreaLight(const Transform &renderFromLight,
                      const MediumInterface &mediumInterface, Spectrum Le, Float scale,
                      const Shape shape, FloatTexture alpha, Image image,
-                     const RGBColorSpace *imageColorSpace, bool twoSided,
-                     Allocator alloc);
+                     const RGBColorSpace *imageColorSpace, bool twoSided);
 
     static DiffuseAreaLight *Create(const Transform &renderFromLight, Medium medium,
                                     const ParameterDictionary &parameters,
@@ -437,7 +456,7 @@ class DiffuseAreaLight : public LightBase {
             return scale * spec.Sample(lambda);
 
         } else
-            return scale * Lemit.Sample(lambda);
+            return scale * Lemit->Sample(lambda);
     }
 
     PBRT_CPU_GPU
@@ -454,7 +473,7 @@ class DiffuseAreaLight : public LightBase {
     FloatTexture alpha;
     Float area;
     bool twoSided;
-    DenselySampledSpectrum Lemit;
+    const DenselySampledSpectrum *Lemit;
     Float scale;
     Image image;
     const RGBColorSpace *imageColorSpace;
@@ -481,8 +500,7 @@ class DiffuseAreaLight : public LightBase {
 class UniformInfiniteLight : public LightBase {
   public:
     // UniformInfiniteLight Public Methods
-    UniformInfiniteLight(const Transform &renderFromLight, Spectrum Lemit, Float scale,
-                         Allocator alloc);
+    UniformInfiniteLight(const Transform &renderFromLight, Spectrum Lemit, Float scale);
 
     void Preprocess(const Bounds3f &sceneBounds) {
         sceneBounds.BoundingSphere(&sceneCenter, &sceneRadius);
@@ -516,7 +534,7 @@ class UniformInfiniteLight : public LightBase {
 
   private:
     // UniformInfiniteLight Private Members
-    DenselySampledSpectrum Lemit;
+    const DenselySampledSpectrum *Lemit;
     Float scale;
     Point3f sceneCenter;
     Float sceneRadius;
@@ -717,7 +735,7 @@ class SpotLight : public LightBase {
   public:
     // SpotLight Public Methods
     SpotLight(const Transform &renderFromLight, const MediumInterface &m, Spectrum I,
-              Float scale, Float totalWidth, Float falloffStart, Allocator alloc);
+              Float scale, Float totalWidth, Float falloffStart);
 
     static SpotLight *Create(const Transform &renderFromLight, Medium medium,
                              const ParameterDictionary &parameters,
@@ -766,7 +784,7 @@ class SpotLight : public LightBase {
 
   private:
     // SpotLight Private Members
-    DenselySampledSpectrum Iemit;
+    const DenselySampledSpectrum *Iemit;
     Float scale, cosFalloffStart, cosFalloffEnd;
 };
 
@@ -803,5 +821,17 @@ inline LightType Light::Type() const {
 }
 
 }  // namespace pbrt
+
+namespace std {
+
+template <>
+struct hash<pbrt::Light> {
+    PBRT_CPU_GPU
+    size_t operator()(pbrt::Light light) const noexcept {
+        return pbrt::Hash(light.ptr());
+    }
+};
+
+}  // namespace std
 
 #endif  // PBRT_LIGHTS_H

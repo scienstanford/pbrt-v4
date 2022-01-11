@@ -448,7 +448,6 @@ TEST(Triangle, BadCases) {
     EXPECT_FALSE(tris[0].Intersect(ray).has_value());
 }
 
-#if 0
 TEST(BilinearPatch, Offset) {
     RNG rng;
     for (int i = 0; i < 100; ++i) {
@@ -463,7 +462,7 @@ TEST(BilinearPatch, Offset) {
 
         BilinearPatchMesh mesh(Transform(), false, indices, p,
                                std::vector<Normal3f>(), std::vector<Point2f>(),
-                               std::vector<int>(), nullptr);
+                               std::vector<int>(), nullptr, Allocator());
         for (int j = 0; j < 100; ++j) {
             Point3f o(-20 + 40 * rng.Uniform<Float>(),
                       -20 + 40 * rng.Uniform<Float>(),
@@ -476,10 +475,9 @@ TEST(BilinearPatch, Offset) {
                               uv[0] * uv[1] * p[3]);
             Ray r(o, pPatch - o);
             auto isect = IntersectBilinearPatch(r, Infinity, p[0], p[1], p[2], p[3]);
-            if (!isect) {
-                printf("wow\n");
+            if (!isect)
+                // Hmm...
                 continue;
-            }
 
             SurfaceInteraction intr =
                 BilinearPatch::InteractionFromIntersection(&mesh, 0, isect->uv,
@@ -488,10 +486,7 @@ TEST(BilinearPatch, Offset) {
             Ray spawned = intr.SpawnRay(r.d);
             auto spawnedIsect = IntersectBilinearPatch(spawned, Infinity,
                                                        p[0], p[1], p[2], p[3]);
-            if (spawnedIsect)
-                printf("doh!\n");
             EXPECT_FALSE(spawnedIsect.has_value());
         }
     }
 }
-#endif

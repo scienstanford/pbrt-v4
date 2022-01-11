@@ -258,8 +258,8 @@ class Sphere {
         Vector3f d2Pdvv = -Sqr(thetaZMax - thetaZMin) * Vector3f(pHit.x, pHit.y, pHit.z);
         // Compute coefficients for fundamental forms
         Float E = Dot(dpdu, dpdu), F = Dot(dpdu, dpdv), G = Dot(dpdv, dpdv);
-        Vector3f N = Normalize(Cross(dpdu, dpdv));
-        Float e = Dot(N, d2Pduu), f = Dot(N, d2Pduv), g = Dot(N, d2Pdvv);
+        Vector3f n = Normalize(Cross(dpdu, dpdv));
+        Float e = Dot(n, d2Pduu), f = Dot(n, d2Pduv), g = Dot(n, d2Pdvv);
 
         // Compute $\dndu$ and $\dndv$ from fundamental form coefficients
         Float EGF2 = DifferenceOfProducts(E, G, F, F);
@@ -480,7 +480,7 @@ class Disk {
         Float phi = isect.phi;
         // Find parametric representation of disk hit
         Float u = phi / phiMax;
-        Float rHit = std::sqrt(pHit.x * pHit.x + pHit.y * pHit.y);
+        Float rHit = std::sqrt(Sqr(pHit.x) + Sqr(pHit.y));
         Float v = (radius - rHit) / (radius - innerRadius);
         Vector3f dpdu(-phiMax * pHit.y, phiMax * pHit.x, 0);
         Vector3f dpdv = Vector3f(pHit.x, pHit.y, 0) * (innerRadius - radius) / rHit;
@@ -683,7 +683,7 @@ class Cylinder {
         }
 
         // Return _QuadricIntersection_ for cylinder intersection
-        return QuadricIntersection{(Float)tShapeHit, pHit, phi};
+        return QuadricIntersection{Float(tShapeHit), pHit, phi};
     }
 
     PBRT_CPU_GPU
@@ -708,8 +708,8 @@ class Cylinder {
         Vector3f d2Pduv(0, 0, 0), d2Pdvv(0, 0, 0);
         // Compute coefficients for fundamental forms
         Float E = Dot(dpdu, dpdu), F = Dot(dpdu, dpdv), G = Dot(dpdv, dpdv);
-        Vector3f N = Normalize(Cross(dpdu, dpdv));
-        Float e = Dot(N, d2Pduu), f = Dot(N, d2Pduv), g = Dot(N, d2Pdvv);
+        Vector3f n = Normalize(Cross(dpdu, dpdv));
+        Float e = Dot(n, d2Pduu), f = Dot(n, d2Pduv), g = Dot(n, d2Pdvv);
 
         // Compute $\dndu$ and $\dndv$ from fundamental form coefficients
         Float EGF2 = DifferenceOfProducts(E, G, F, F);
@@ -1186,7 +1186,7 @@ class Triangle {
     // Triangle Private Members
     int meshIndex = -1, triIndex = -1;
     static pstd::vector<const TriangleMesh *> *allMeshes;
-    static constexpr Float MinSphericalSampleArea = 2e-4;
+    static constexpr Float MinSphericalSampleArea = 3e-4;
     static constexpr Float MaxSphericalSampleArea = 6.22;
 };
 
@@ -1287,6 +1287,12 @@ PBRT_CPU_GPU inline pstd::optional<BilinearIntersection> IntersectBilinearPatch(
     if (!Quadratic(a, b, c, &u1, &u2))
         return {};
 
+    // Find epsilon _eps_ to ensure that candidate $t$ is greater than zero
+    Float eps =
+        gamma(10) * (MaxComponentValue(Abs(ray.o)) + MaxComponentValue(Abs(ray.d)) +
+                     MaxComponentValue(Abs(p00)) + MaxComponentValue(Abs(p10)) +
+                     MaxComponentValue(Abs(p01)) + MaxComponentValue(Abs(p11)));
+
     // Compute $v$ and $t$ for the first $u$ intersection
     Float t = tMax, u, v;
     if (0 <= u1 && u1 <= 1) {
@@ -1305,7 +1311,7 @@ PBRT_CPU_GPU inline pstd::optional<BilinearIntersection> IntersectBilinearPatch(
                                                perp.y, deltao.z, ud.z, perp.z));
 
         // Set _u_, _v_, and _t_ if intersection is valid
-        if (t1 > 0 && 0 <= v1 && v1 <= p2) {
+        if (t1 > p2 * eps && 0 <= v1 && v1 <= p2) {
             u = u1;
             v = v1 / p2;
             t = t1 / p2;
@@ -1325,7 +1331,7 @@ PBRT_CPU_GPU inline pstd::optional<BilinearIntersection> IntersectBilinearPatch(
         Float t2 = Determinant(SquareMatrix<3>(deltao.x, ud.x, perp.x, deltao.y, ud.y,
                                                perp.y, deltao.z, ud.z, perp.z));
         t2 /= p2;
-        if (0 <= v2 && v2 <= p2 && t > t2 && t2 > 0) {
+        if (0 <= v2 && v2 <= p2 && t > t2 && t2 > eps) {
             t = t2;
             u = u2;
             v = v2 / p2;
@@ -1437,8 +1443,8 @@ class BilinearPatch {
         Vector3f d2Pduv = (p00 - p01) + (p11 - p10);
         // Compute coefficients for fundamental forms
         Float E = Dot(dpdu, dpdu), F = Dot(dpdu, dpdv), G = Dot(dpdv, dpdv);
-        Vector3f N = Normalize(Cross(dpdu, dpdv));
-        Float e = Dot(N, d2Pduu), f = Dot(N, d2Pduv), g = Dot(N, d2Pdvv);
+        Vector3f n = Normalize(Cross(dpdu, dpdv));
+        Float e = Dot(n, d2Pduu), f = Dot(n, d2Pduv), g = Dot(n, d2Pdvv);
 
         // Compute $\dndu$ and $\dndv$ from fundamental form coefficients
         Float EGF2 = DifferenceOfProducts(E, G, F, F);

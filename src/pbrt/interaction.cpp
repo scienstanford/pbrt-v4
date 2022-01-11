@@ -40,16 +40,21 @@ std::string MediumInteraction::ToString() const {
 // SurfaceInteraction Method Definitions
 void SurfaceInteraction::ComputeDifferentials(const RayDifferential &ray, Camera camera,
                                               int samplesPerPixel) {
+    if (GetOptions().disableTextureFiltering) {
+        dudx = dudy = dvdx = dvdy = 0;
+        dpdx = dpdy = Vector3f(0, 0, 0);
+        return;
+    }
     if (ray.hasDifferentials && Dot(n, ray.rxDirection) != 0 &&
         Dot(n, ray.ryDirection) != 0) {
         // Estimate screen-space change in $\pt{}$ using ray differentials
         // Compute auxiliary intersection points with plane, _px_ and _py_
         Float d = -Dot(n, Vector3f(p()));
         Float tx = (-Dot(n, Vector3f(ray.rxOrigin)) - d) / Dot(n, ray.rxDirection);
-        CHECK(!IsInf(tx) && !IsNaN(tx));
+        DCHECK(!IsInf(tx) && !IsNaN(tx));
         Point3f px = ray.rxOrigin + tx * ray.rxDirection;
         Float ty = (-Dot(n, Vector3f(ray.ryOrigin)) - d) / Dot(n, ray.ryDirection);
-        CHECK(!IsInf(ty) && !IsNaN(ty));
+        DCHECK(!IsInf(ty) && !IsNaN(ty));
         Point3f py = ray.ryOrigin + ty * ray.ryDirection;
 
         dpdx = px - p();
@@ -174,7 +179,7 @@ BSDF SurfaceInteraction::GetBSDF(const RayDifferential &ray, SampledWavelengths 
         // Get shading $\dpdu$ and $\dpdv$ using normal or bump map
         Vector3f dpdu, dpdv;
         if (normalMap)
-            NormalMap(normalMap, *this, &dpdu, &dpdv);
+            NormalMap(*normalMap, *this, &dpdu, &dpdv);
         else
             BumpMap(UniversalTextureEvaluator(), displacement, *this, &dpdu, &dpdv);
 

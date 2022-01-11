@@ -32,7 +32,7 @@ class DiffuseBxDF {
     // DiffuseBxDF Public Methods
     DiffuseBxDF() = default;
     PBRT_CPU_GPU
-    DiffuseBxDF(const SampledSpectrum &R) : R(R) {}
+    DiffuseBxDF(SampledSpectrum R) : R(R) {}
 
     PBRT_CPU_GPU
     SampledSpectrum f(Vector3f wo, Vector3f wi, TransportMode mode) const {
@@ -81,44 +81,17 @@ class DiffuseBxDF {
     SampledSpectrum R;
 };
 
-// RoughDiffuseBxDF Definition
-class RoughDiffuseBxDF {
+// DiffuseTransmissionBxDF Definition
+class DiffuseTransmissionBxDF {
   public:
-    // RoughDiffuseBxDF Public Methods
-    RoughDiffuseBxDF() = default;
+    // DiffuseTransmissionBxDF Public Methods
+    DiffuseTransmissionBxDF() = default;
     PBRT_CPU_GPU
-    RoughDiffuseBxDF(SampledSpectrum R, SampledSpectrum T, Float sigma) : R(R), T(T) {
-        Float sigma2 = Sqr(Radians(sigma));
-        A = 1 - sigma2 / (2 * (sigma2 + 0.33f));
-        B = 0.45f * sigma2 / (sigma2 + 0.09f);
-    }
+    DiffuseTransmissionBxDF(SampledSpectrum R, SampledSpectrum T) : R(R), T(T) {}
 
     PBRT_CPU_GPU
     SampledSpectrum f(Vector3f wo, Vector3f wi, TransportMode mode) const {
-        // Return Lambertian BRDF for zero-roughness Oren--Nayar BRDF
-        if (B == 0)
-            return SameHemisphere(wo, wi) ? (R * InvPi) : (T * InvPi);
-
-        if ((SameHemisphere(wo, wi) && !R) || (!SameHemisphere(wo, wi) && !T))
-            return SampledSpectrum(0.f);
-        // Evaluate Oren--Nayar BRDF for given directions
-        Float sinTheta_i = SinTheta(wi), sinTheta_o = SinTheta(wo);
-        Float maxCos = std::max<Float>(0, CosDPhi(wi, wo));
-        // Compute $\sin \alpha$ and $\tan \beta$ terms of Oren--Nayar model
-        Float sinAlpha, tanBeta;
-        if (AbsCosTheta(wi) > AbsCosTheta(wo)) {
-            sinAlpha = sinTheta_o;
-            tanBeta = sinTheta_i / AbsCosTheta(wi);
-        } else {
-            sinAlpha = sinTheta_i;
-            tanBeta = sinTheta_o / AbsCosTheta(wo);
-        }
-
-        // Return final Oren--Nayar BSDF value
-        if (SameHemisphere(wo, wi))
-            return R * InvPi * (A + B * maxCos * sinAlpha * tanBeta);
-        else
-            return T * InvPi * (A + B * maxCos * sinAlpha * tanBeta);
+        return SameHemisphere(wo, wi) ? (R * InvPi) : (T * InvPi);
     }
 
     PBRT_CPU_GPU
@@ -172,7 +145,7 @@ class RoughDiffuseBxDF {
     }
 
     PBRT_CPU_GPU
-    static constexpr const char *Name() { return "RoughDiffuseBxDF"; }
+    static constexpr const char *Name() { return "DiffuseTransmissionBxDF"; }
 
     std::string ToString() const;
 
@@ -186,9 +159,8 @@ class RoughDiffuseBxDF {
     }
 
   private:
-    // RoughDiffuseBxDF Private Members
+    // DiffuseTransmissionBxDF Private Members
     SampledSpectrum R, T;
-    Float A, B;
 };
 
 // DielectricBxDF Definition
@@ -197,17 +169,15 @@ class DielectricBxDF {
     // DielectricBxDF Public Methods
     DielectricBxDF() = default;
     PBRT_CPU_GPU
-    DielectricBxDF(Float eta, const TrowbridgeReitzDistribution &mfDistrib)
+    DielectricBxDF(Float eta, TrowbridgeReitzDistribution mfDistrib)
         : eta(eta), mfDistrib(mfDistrib) {}
 
     PBRT_CPU_GPU
     BxDFFlags Flags() const {
-        if (eta == 1)
-            return BxDFFlags::Transmission;
-        else
-            return BxDFFlags::Reflection | BxDFFlags::Transmission |
-                   (mfDistrib.EffectivelySmooth() ? BxDFFlags::Specular
-                                                  : BxDFFlags::Glossy);
+        BxDFFlags flags = (eta == 1) ? BxDFFlags::Transmission
+                                     : (BxDFFlags::Reflection | BxDFFlags::Transmission);
+        return flags |
+               (mfDistrib.EffectivelySmooth() ? BxDFFlags::Specular : BxDFFlags::Glossy);
     }
 
     PBRT_CPU_GPU
@@ -252,10 +222,10 @@ class ThinDielectricBxDF {
     pstd::optional<BSDFSample> Sample_f(Vector3f wo, Float uc, Point2f u,
                                         TransportMode mode,
                                         BxDFReflTransFlags sampleFlags) const {
-        Float R = FrDielectric(CosTheta(wo), eta), T = 1 - R;
+        Float R = FrDielectric(AbsCosTheta(wo), eta), T = 1 - R;
         // Compute _R_ and _T_ accounting for scattering between interfaces
         if (R < 1) {
-            R += T * T * R / (1 - R * R);
+            R += Sqr(T) * R / (1 - Sqr(R));
             T = 1 - R;
         }
 
@@ -269,7 +239,7 @@ class ThinDielectricBxDF {
             return {};
 
         if (uc < pr / (pr + pt)) {
-            // Sample perfect specular reflection at thin dielectric interface
+            // Sample perfect specular dielectric BRDF
             Vector3f wi(-wo.x, -wo.y, wo.z);
             SampledSpectrum fr(R / AbsCosTheta(wi));
             return BSDFSample(fr, wi, pr / (pr + pt), BxDFFlags::SpecularReflection);
@@ -312,8 +282,8 @@ class ConductorBxDF {
     // ConductorBxDF Public Methods
     ConductorBxDF() = default;
     PBRT_CPU_GPU
-    ConductorBxDF(const TrowbridgeReitzDistribution &mfDistrib,
-                  const SampledSpectrum &eta, const SampledSpectrum &k)
+    ConductorBxDF(const TrowbridgeReitzDistribution &mfDistrib, SampledSpectrum eta,
+                  SampledSpectrum k)
         : mfDistrib(mfDistrib), eta(eta), k(k) {}
 
     PBRT_CPU_GPU
@@ -353,7 +323,7 @@ class ConductorBxDF {
         SampledSpectrum F = FrComplex(AbsDot(wo, wm), eta, k);
 
         SampledSpectrum f =
-            mfDistrib.D(wm) * mfDistrib.G(wo, wi) * F / (4 * cosTheta_i * cosTheta_o);
+            mfDistrib.D(wm) * F * mfDistrib.G(wo, wi) / (4 * cosTheta_i * cosTheta_o);
         return BSDFSample(f, wi, pdf, BxDFFlags::GlossyReflection);
     }
 
@@ -369,14 +339,14 @@ class ConductorBxDF {
         if (cosTheta_i == 0 || cosTheta_o == 0)
             return {};
         Vector3f wm = wi + wo;
-        if (wm.x == 0 && wm.y == 0 && wm.z == 0)
+        if (LengthSquared(wm) == 0)
             return {};
         wm = Normalize(wm);
 
         // Evaluate Fresnel factor _F_ for conductor BRDF
         SampledSpectrum F = FrComplex(AbsDot(wo, wm), eta, k);
 
-        return mfDistrib.D(wm) * mfDistrib.G(wo, wi) * F / (4 * cosTheta_i * cosTheta_o);
+        return mfDistrib.D(wm) * F * mfDistrib.G(wo, wi) / (4 * cosTheta_i * cosTheta_o);
     }
 
     PBRT_CPU_GPU
@@ -447,12 +417,6 @@ class TopOrBottomBxDF {
               BxDFReflTransFlags sampleFlags = BxDFReflTransFlags::All) const {
         return top ? top->PDF(wo, wi, mode, sampleFlags)
                    : bottom->PDF(wo, wi, mode, sampleFlags);
-    }
-
-    PBRT_CPU_GPU
-    bool IsNonSpecular() const {
-        BxDFFlags flags = top ? top->Flags() : bottom->Flags();
-        return (flags & (BxDFFlags::Diffuse | BxDFFlags::Glossy));
     }
 
     PBRT_CPU_GPU
@@ -709,6 +673,7 @@ class LayeredBxDF {
         if (bs->IsReflection()) {
             if (flipWi)
                 bs->wi = -bs->wi;
+            bs->pdfIsProportional = true;
             return bs;
         }
         Vector3f w = bs->wi;
@@ -851,14 +816,14 @@ class LayeredBxDF {
 
                 // Update _pdfSum_ accounting for TRT scattering events
                 if (wos && wos->f && wos->pdf > 0 && wis && wis->f && wis->pdf > 0) {
-                    if (!tInterface.IsNonSpecular())
+                    if (!IsNonSpecular(tInterface.Flags()))
                         pdfSum += rInterface.PDF(-wos->wi, -wis->wi, mode);
                     else {
                         // Use multiple importance sampling to estimate PDF product
                         pstd::optional<BSDFSample> rs =
                             rInterface.Sample_f(-wos->wi, r(), {r(), r()}, mode);
                         if (rs && rs->f && rs->pdf > 0) {
-                            if (!rInterface.IsNonSpecular())
+                            if (!IsNonSpecular(rInterface.Flags()))
                                 pdfSum += tInterface.PDF(-rs->wi, wi, mode);
                             else {
                                 // Compute MIS-weighted estimate of Equation
@@ -896,7 +861,7 @@ class LayeredBxDF {
                 uc = r();
                 u = Point2f(r(), r());
                 pstd::optional<BSDFSample> wis = tiInterface.Sample_f(wi, uc, u, !mode);
-                if (!wis || !wos->f || wos->pdf == 0 || wos->wi.z == 0 ||
+                if (!wis || !wis->f || wis->pdf == 0 || wis->wi.z == 0 ||
                     wis->IsReflection())
                     continue;
 
@@ -988,24 +953,22 @@ class HairBxDF {
     static constexpr int pMax = 3;
 
     // HairBxDF Private Methods
-    PBRT_CPU_GPU
-    static Float Mp(Float cosTheta_i, Float cosTheta_o, Float sinTheta_i,
-                    Float sinTheta_o, Float v) {
-        Float a = cosTheta_i * cosTheta_o / v;
-        Float b = sinTheta_i * sinTheta_o / v;
+    PBRT_CPU_GPU static Float Mp(Float cosTheta_i, Float cosTheta_o, Float sinTheta_i,
+                                 Float sinTheta_o, Float v) {
+        Float a = cosTheta_i * cosTheta_o / v, b = sinTheta_i * sinTheta_o / v;
         Float mp = (v <= .1)
                        ? (FastExp(LogI0(a) - b - 1 / v + 0.6931f + std::log(1 / (2 * v))))
                        : (FastExp(-b) * I0(a)) / (std::sinh(1 / v) * 2 * v);
-        CHECK(!IsInf(mp) && !IsNaN(mp));
+        DCHECK(!IsInf(mp) && !IsNaN(mp));
         return mp;
     }
 
-    PBRT_CPU_GPU
-    static pstd::array<SampledSpectrum, pMax + 1> Ap(Float cosTheta_o, Float eta, Float h,
-                                                     const SampledSpectrum &T) {
+    PBRT_CPU_GPU static pstd::array<SampledSpectrum, pMax + 1> Ap(Float cosTheta_o,
+                                                                  Float eta, Float h,
+                                                                  SampledSpectrum T) {
         pstd::array<SampledSpectrum, pMax + 1> ap;
         // Compute $p=0$ attenuation at initial cylinder intersection
-        Float cosGamma_o = SafeSqrt(1 - h * h);
+        Float cosGamma_o = SafeSqrt(1 - Sqr(h));
         Float cosTheta = cosTheta_o * cosGamma_o;
         Float f = FrDielectric(cosTheta, eta);
         ap[0] = SampledSpectrum(f);
@@ -1018,19 +981,18 @@ class HairBxDF {
             ap[p] = ap[p - 1] * T * f;
 
         // Compute attenuation term accounting for remaining orders of scattering
-        if (1.f - T * f)
-            ap[pMax] = ap[pMax - 1] * f * T / (1.f - T * f);
+        if (1 - T * f)
+            ap[pMax] = ap[pMax - 1] * f * T / (1 - T * f);
 
         return ap;
     }
 
-    PBRT_CPU_GPU
-    static inline Float Phi(int p, Float gamma_o, Float gamma_t) {
+    PBRT_CPU_GPU static inline Float Phi(int p, Float gamma_o, Float gamma_t) {
         return 2 * p * gamma_t - 2 * gamma_o + p * Pi;
     }
 
-    PBRT_CPU_GPU
-    static inline Float Np(Float phi, int p, Float s, Float gamma_o, Float gamma_t) {
+    PBRT_CPU_GPU static inline Float Np(Float phi, int p, Float s, Float gamma_o,
+                                        Float gamma_t) {
         Float dphi = phi - Phi(p, gamma_o, gamma_t);
         // Remap _dphi_ to $[-\pi,\pi]$
         while (dphi > Pi)
@@ -1042,15 +1004,15 @@ class HairBxDF {
     }
 
     PBRT_CPU_GPU
-    pstd::array<Float, pMax + 1> ComputeApPDF(Float cosThetaO) const;
+    pstd::array<Float, pMax + 1> ApPDF(Float cosTheta_o) const;
 
     // HairBxDF Private Members
-    Float h, gamma_o, eta;
+    Float h, eta;
     SampledSpectrum sigma_a;
     Float beta_m, beta_n;
     Float v[pMax + 1];
     Float s;
-    Float sin2kAlpha[3], cos2kAlpha[3];
+    Float sin2kAlpha[pMax], cos2kAlpha[pMax];
 };
 
 // MeasuredBxDF Definition
@@ -1059,10 +1021,11 @@ class MeasuredBxDF {
     // MeasuredBxDF Public Methods
     MeasuredBxDF() = default;
     PBRT_CPU_GPU
-    MeasuredBxDF(const MeasuredBRDF *brdf, const SampledWavelengths &lambda)
+    MeasuredBxDF(const MeasuredBxDFData *brdf, const SampledWavelengths &lambda)
         : brdf(brdf), lambda(lambda) {}
 
-    static MeasuredBRDF *BRDFDataFromFile(const std::string &filename, Allocator alloc);
+    static MeasuredBxDFData *BRDFDataFromFile(const std::string &filename,
+                                              Allocator alloc);
 
     PBRT_CPU_GPU
     SampledSpectrum f(Vector3f wo, Vector3f wi, TransportMode mode) const;
@@ -1089,16 +1052,17 @@ class MeasuredBxDF {
   private:
     // MeasuredBxDF Private Methods
     PBRT_CPU_GPU
+    static Float theta2u(Float theta) { return std::sqrt(theta * (2 / Pi)); }
+    PBRT_CPU_GPU
+    static Float phi2u(Float phi) { return phi * (1 / (2 * Pi)) + .5f; }
+
+    PBRT_CPU_GPU
     static Float u2theta(Float u) { return Sqr(u) * (Pi / 2.f); }
     PBRT_CPU_GPU
     static Float u2phi(Float u) { return (2.f * u - 1.f) * Pi; }
-    PBRT_CPU_GPU
-    static Float theta2u(Float theta) { return std::sqrt(theta * (2.f / Pi)); }
-    PBRT_CPU_GPU
-    static Float phi2u(Float phi) { return (phi + Pi) / (2.f * Pi); }
 
     // MeasuredBxDF Private Members
-    const MeasuredBRDF *brdf;
+    const MeasuredBxDFData *brdf;
     SampledWavelengths lambda;
 };
 

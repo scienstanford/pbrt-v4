@@ -30,7 +30,13 @@
 #include <optix_stubs.h>
 
 #ifdef NVTX
+#ifdef UNICODE
+#undef UNICODE
+#endif // UNICODE
 #include <nvtx3/nvToolsExt.h>
+#ifdef RGB
+#undef RGB
+#endif // RGB
 #endif
 
 #define OPTIX_CHECK(EXPR)                                                           \
@@ -1038,7 +1044,11 @@ OptixModule OptiXAggregate::createOptiXModule(OptixDeviceContext optixContext,
     moduleCompileOptions.maxRegisterCount = OPTIX_COMPILE_DEFAULT_MAX_REGISTER_COUNT;
 #ifndef NDEBUG
     moduleCompileOptions.optLevel = OPTIX_COMPILE_OPTIMIZATION_LEVEL_0;
+#if (OPTIX_VERSION >= 70400)
+    moduleCompileOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_MODERATE;
+#else
     moduleCompileOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_LINEINFO;
+#endif // OPTIX_VERSION
 #else
     moduleCompileOptions.optLevel = OPTIX_COMPILE_OPTIMIZATION_DEFAULT;
     moduleCompileOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_NONE;
@@ -1337,7 +1347,7 @@ OptiXAggregate::OptiXAggregate(
         BVH bvh;
         int sbtOffset;
     };
-    Future<GAS> triFuture = RunAsync([&]() {
+    AsyncJob<GAS> *triJob = RunAsync([&]() {
         BVH triangleBVH = buildBVHForTriangles(
             scene.shapes, plyMeshes, optixContext, hitPGTriangle, anyhitPGShadowTriangle,
             hitPGRandomHitTriangle, textures.floatTextures, namedMaterials, materials, media,
@@ -1346,7 +1356,7 @@ OptiXAggregate::OptiXAggregate(
         return GAS{triangleBVH, sbtOffset};
     });
 
-    Future<GAS> blpFuture = RunAsync([&]() {
+    AsyncJob<GAS> *blpJob = RunAsync([&]() {
         BVH blpBVH = buildBVHForBLPs(
             scene.shapes, optixContext, hitPGBilinearPatch, anyhitPGShadowBilinearPatch,
             hitPGRandomHitBilinearPatch, textures.floatTextures, namedMaterials, materials,
@@ -1355,7 +1365,7 @@ OptiXAggregate::OptiXAggregate(
         return GAS{blpBVH, bilinearSBTOffset};
     });
 
-    Future<GAS> quadricFuture = RunAsync([&]() {
+    AsyncJob<GAS> *quadricJob = RunAsync([&]() {
         BVH quadricBVH = buildBVHForQuadrics(
             scene.shapes, optixContext, hitPGQuadric, anyhitPGShadowQuadric,
             hitPGRandomHitQuadric, textures.floatTextures, namedMaterials, materials, media,
@@ -1480,8 +1490,8 @@ OptiXAggregate::OptiXAggregate(
     gasInstance.flags =
         OPTIX_INSTANCE_FLAG_NONE;  // TODO: OPTIX_INSTANCE_FLAG_DISABLE_ANYHIT
     LOG_VERBOSE("Starting to consume top-level GAS futures");
-    for (Future<GAS> *fut : {&triFuture, &blpFuture, &quadricFuture}) {
-        GAS gas = fut->Get();
+    for (AsyncJob<GAS> *job : {triJob, blpJob, quadricJob}) {
+        GAS gas = job->GetResult();
         if (gas.bvh.traversableHandle) {
             gasInstance.traversableHandle = gas.bvh.traversableHandle;
             gasInstance.sbtOffset = gas.sbtOffset;

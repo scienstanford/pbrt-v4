@@ -119,38 +119,6 @@ struct MapType<M, TypePack<T, Ts...>> {
     using type = typename Prepend<M<T>, typename MapType<M, TypePack<Ts...>>::type>::type;
 };
 
-template <template <typename> class Pred, typename... Ts>
-struct FilterTypes;
-
-namespace internal {
-
-template <typename T, bool>
-struct FilterTypesHelper;
-
-template <typename T>
-struct FilterTypesHelper<T, true> {
-    using type = T;
-};
-template <typename T>
-struct FilterTypesHelper<T, false> {
-    using type = void;
-};
-
-};  // namespace internal
-
-template <template <typename> class Pred, typename T>
-struct FilterTypes<Pred, TypePack<T>> {
-    using type = typename TypePack<
-        typename internal::FilterTypesHelper<T, Pred<T>::value>::type>::type;
-};
-
-template <template <typename> class Pred, typename T, typename... Ts>
-struct FilterTypes<Pred, TypePack<T, Ts...>> {
-    using type =
-        typename Prepend<typename internal::FilterTypesHelper<T, Pred<T>::value>::type,
-                         TypePack<Ts...>>::type;
-};
-
 template <typename Base, typename... Ts>
 inline constexpr bool AllInheritFrom(TypePack<Ts...>);
 
@@ -188,7 +156,7 @@ class Array2D {
     // Array2D Public Methods
     Array2D(allocator_type allocator = {}) : Array2D({{0, 0}, {0, 0}}, allocator) {}
 
-    Array2D(const Bounds2i &extent, Allocator allocator = {})
+    Array2D(Bounds2i extent, Allocator allocator = {})
         : extent(extent), allocator(allocator) {
         int n = extent.Area();
         values = allocator.allocate_object<T>(n);
@@ -196,7 +164,7 @@ class Array2D {
             allocator.construct(values + i);
     }
 
-    Array2D(const Bounds2i &extent, T def, allocator_type allocator = {})
+    Array2D(Bounds2i extent, T def, allocator_type allocator = {})
         : Array2D(extent, allocator) {
         std::fill(begin(), end(), def);
     }
@@ -559,7 +527,7 @@ class InlinedVector {
     iterator insert(const_iterator pos, InputIt first, InputIt last) {
         if (pos == end()) {
             reserve(size() + (last - first));
-            iterator pos = end(), startPos = end();
+            iterator pos = end();
             for (auto iter = first; iter != last; ++iter, ++pos)
                 alloc.template construct<T>(pos, *iter);
             nStored += last - first;
@@ -653,7 +621,7 @@ class InlinedVector {
 };
 
 // HashMap Definition
-template <typename Key, typename Value, typename Hash,
+template <typename Key, typename Value, typename Hash = std::hash<Key>,
           typename Allocator =
               pstd::pmr::polymorphic_allocator<pstd::optional<std::pair<Key, Value>>>>
 class HashMap {
@@ -910,7 +878,8 @@ class InternCache {
           bufferResource(alloc.resource()),
           itemAlloc(&bufferResource) {}
 
-    const T *Lookup(const T &item) {
+    template <typename F>
+    const T *Lookup(const T &item, F create) {
         size_t offset = Hash()(item) % hashTable.size();
         int step = 1;
         mutex.lock_shared();
@@ -953,7 +922,7 @@ class InternCache {
 
                 // Allocate new hash table entry and add it to the hash table
                 ++nEntries;
-                T *newPtr = itemAlloc.new_object<T>(item);
+                T *newPtr = create(itemAlloc, item);
                 Insert(newPtr, &hashTable);
                 mutex.unlock();
                 return newPtr;
@@ -971,6 +940,12 @@ class InternCache {
                 offset %= hashTable.size();
             }
         }
+    }
+
+    const T *Lookup(const T &item) {
+        return Lookup(item, [](Allocator alloc, const T &item) {
+            return alloc.new_object<T>(item);
+        });
     }
 
     size_t size() const { return nEntries; }

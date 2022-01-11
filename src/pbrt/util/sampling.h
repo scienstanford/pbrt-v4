@@ -22,6 +22,7 @@
 #include <functional>
 #include <ostream>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace pbrt {
@@ -70,6 +71,8 @@ PBRT_CPU_GPU inline Float BalanceHeuristic(int nf, Float fPdf, int ng, Float gPd
 
 PBRT_CPU_GPU inline Float PowerHeuristic(int nf, Float fPdf, int ng, Float gPdf) {
     Float f = nf * fPdf, g = ng * gPdf;
+    if (IsInf(Sqr(f)))
+        return 1;
     return Sqr(f) / (Sqr(f) + Sqr(g));
 }
 
@@ -157,13 +160,13 @@ PBRT_CPU_GPU inline Point2f InvertBilinearSample(Point2f p, pstd::span<const Flo
             InvertLinearSample(p.y, w[0] + w[1], w[2] + w[3])};
 }
 
-PBRT_CPU_GPU inline Float XYZMatchingPDF(Float lambda) {
+PBRT_CPU_GPU inline Float VisibleWavelengthsPDF(Float lambda) {
     if (lambda < 360 || lambda > 830)
         return 0;
     return 0.0039398042f / Sqr(std::cosh(0.0072f * (lambda - 538)));
 }
 
-PBRT_CPU_GPU inline Float SampleXYZMatching(Float u) {
+PBRT_CPU_GPU inline Float SampleVisibleWavelengths(Float u) {
     return 538 - 138.888889f * std::atanh(0.85691062f - 1.82750197f * u);
 }
 
@@ -590,7 +593,7 @@ class WeightedReservoirSampler {
     RNG rng;
     Float weightSum = 0;
     Float reservoirWeight = 0;
-    T reservoir;
+    T reservoir{};
 };
 
 // PiecewiseConstant1D Definition
@@ -1284,6 +1287,11 @@ Image WarpedStrataVisualization(const W &warp, int xs = 16, int ys = 16) {
  * distribution is discretized. Linear interpolation is used when sampling or
  * evaluating the distribution for in-between parameter values.
  */
+struct PLSample {
+    Point2f p;
+    Float pdf;
+};
+
 template <size_t Dimension = 0>
 class PiecewiseLinear2D {
   private:
@@ -1426,19 +1434,20 @@ class PiecewiseLinear2D {
         }
     }
 
-    struct PLSample {
-        Vector2f p;
-        Float pdf;
-    };
-
     /**
      * \brief Given a uniformly distributed 2D sample, draw a sample from the
      * distribution (parameterized by \c param if applicable)
      *
      * Returns the warped sample and associated probability density.
      */
-    PBRT_CPU_GPU
-    PLSample Sample(Vector2f sample, const Float *param = nullptr) const {
+    template <typename... Ts>
+    PBRT_CPU_GPU PLSample Sample(Point2f sample, Ts... params) const {
+        static_assert((std::is_arithmetic_v<Ts> && ...),
+                      "Additional parameters must be numeric values");
+        static_assert(sizeof...(Ts) == Dimension,
+                      "Incorrect number of additional parameters passed");
+        pstd::array<Float, Dimension> param = {params...};
+
         /* Avoid degeneracies at the extrema */
         sample[0] = Clamp(sample[0], 1 - OneMinusEpsilon, OneMinusEpsilon);
         sample[1] = Clamp(sample[1], 1 - OneMinusEpsilon, OneMinusEpsilon);
@@ -1530,14 +1539,20 @@ class PiecewiseLinear2D {
                             : (c0 - SafeSqrt(c0 * c0 - 2.f * sample.x * (c0 - c1)));
         sample.x /= is_const ? (c0 + c1) : (c0 - c1);
 
-        return {Vector2f((col + sample.x) * m_patch_size.x,
-                         (row + sample.y) * m_patch_size.y),
-                ((1.f - sample.x) * c0 + sample.x * c1) * HProd(m_inv_patch_size)};
+        return {
+            Point2f((col + sample.x) * m_patch_size.x, (row + sample.y) * m_patch_size.y),
+            ((1.f - sample.x) * c0 + sample.x * c1) * HProd(m_inv_patch_size)};
     }
 
     /// Inverse of the mapping implemented in \c Sample()
-    PBRT_CPU_GPU
-    PLSample Invert(Vector2f sample, const Float *param = nullptr) const {
+    template <typename... Ts>
+    PBRT_CPU_GPU PLSample Invert(Point2f sample, Ts... params) const {
+        static_assert((std::is_arithmetic_v<Ts> && ...),
+                      "Additional parameters must be numeric values");
+        static_assert(sizeof...(Ts) == Dimension,
+                      "Incorrect number of additional parameters passed");
+        pstd::array<Float, Dimension> param = {params...};
+
         /* Look up parameter-related indices and weights (if Dimension != 0) */
         float param_weight[2 * ArraySize];
         uint32_t slice_offset = 0u;
@@ -1580,7 +1595,7 @@ class PiecewiseLinear2D {
               v11 = lookup<Dimension>(m_data.data() + m_size.x + 1, offset, slice_size,
                                       param_weight);
 
-        Vector2f w1 = sample, w0 = Vector2f(1, 1) - w1;
+        Vector2f w1 = Vector2f(sample), w0 = Vector2f(1, 1) - w1;
 
         Float c0 = FMA(w0.y, v00, w1.y * v01), c1 = FMA(w0.y, v10, w1.y * v11),
               pdf = FMA(w0.x, c0, w1.x * c1);
@@ -1623,8 +1638,14 @@ class PiecewiseLinear2D {
      * \brief Evaluate the density at position \c pos. The distribution is
      * parameterized by \c param if applicable.
      */
-    PBRT_CPU_GPU
-    float Evaluate(Vector2f pos, const Float *param = nullptr) const {
+    template <typename... Ts>
+    PBRT_CPU_GPU float Evaluate(Point2f pos, Ts... params) const {
+        static_assert((std::is_arithmetic_v<Ts> && ...),
+                      "Additional parameters must be numeric values");
+        static_assert(sizeof...(Ts) == Dimension,
+                      "Incorrect number of additional parameters passed");
+        pstd::array<Float, Dimension> param = {params...};
+
         /* Look up parameter-related indices and weights (if Dimension != 0) */
         float param_weight[2 * ArraySize];
         uint32_t slice_offset = 0u;
@@ -1653,7 +1674,8 @@ class PiecewiseLinear2D {
         pos.y *= m_inv_patch_size.y;
         Vector2i offset = Min(Vector2i(pos), m_size - Vector2i(2, 2));
 
-        Vector2f w1 = pos - Vector2f(Vector2i(offset)), w0 = Vector2f(1, 1) - w1;
+        Vector2f w1 = Vector2f(pos) - Vector2f(Vector2i(offset)),
+                 w0 = Vector2f(1, 1) - w1;
 
         uint32_t index = offset.x + offset.y * m_size.x;
 
