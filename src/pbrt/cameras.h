@@ -590,6 +590,12 @@ class RealisticCamera : public CameraBase {
     pstd::vector<Bounds2f> exitPupilBounds;
 };
 
+// Initial commit to building sceneEye camera
+// class SceneEyeCamera : public CameraBase {
+//
+//};
+
+
 // OmniCamera Definition
 class OmniCamera : public CameraBase {
   public:
