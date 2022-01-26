@@ -264,6 +264,9 @@ Camera Camera::Create(const std::string &name, const ParameterDictionary &parame
     else if (name == "omni")
         camera = OmniCamera::Create(parameters, cameraTransform, film, medium, loc,
                                          alloc);
+    else if (name == "humaneye")
+        camera = HumanEyeCamera::Create(parameters, cameraTransform, film, medium, loc,
+                                         alloc);
     else if (name == "spherical")
         camera = SphericalCamera::Create(parameters, cameraTransform, film, medium, loc,
                                          alloc);
@@ -1478,6 +1481,139 @@ RealisticCamera *RealisticCamera::Create(const ParameterDictionary &parameters,
                                              focusDistance, apertureDiameter,
                                              std::move(apertureImage), alloc);
 }
+
+// HumanEyeCamera Method Definitions
+HumanEyeCamera::HumanEyeCamera(CameraBaseParameters baseParameters,
+                    bool simpleWeighting,
+                    bool noWeighting,
+                    std::string specfile,
+                    Float pupilDiameter,
+                    Float retinaDistance,
+                    Float retinaRadius,
+                    Float retinaSemiDiam,
+                    pstd::vector<Spectrum> iorSpectra,
+                    bool flipRad,
+                    bool mmUnits,
+                    bool diffractionEnabled)
+    : CameraBase(baseParameters), 
+      simpleWeighting(simpleWeighting),
+      noWeighting(noWeighting),
+      specfile(specfile),
+      pupilDiameter(pupilDiameter),
+      retinaDistance(retinaDistance),
+      retinaRadius(retinaRadius),
+      retinaSemiDiam(retinaSemiDiam),
+      iorSpectra(iorSpectra),
+      flipRad(flipRad),
+      mmUnits(mmUnits),
+      diffractionEnabled(diffractionEnabled) {
+
+        // ZLY left: in the middle of completing constructor function
+
+        // Scale units depending on the units of the scene
+        if(mmUnits){
+            lensScaling = 1;
+        }else{
+            lensScaling = 0.001;
+        }
+        
+        pupilDiameter = pupilDiameter*lensScaling;
+        retinaDistance = retinaDistance*lensScaling;
+        retinaRadius = retinaRadius*lensScaling;
+        retinaSemiDiam = retinaSemiDiam*lensScaling;
+        
+        // -------------------------
+        // --- Read in lens file ---
+        // -------------------------
+        
+        /*
+         Note on sign convention:
+         For the realistic eye code, we have gone with the Zemax convention for the lens radius. A positive lens radius means the center of the spherical lens is in the positive direction (toward the scene) relative to the location of the lenes. This is different than the other camera classes where the convention is flipped. If necessary, one can turn on the [flipLensRadius] flag.
+         */
+        
+        // Find the complete path for the specfile
+        // ZLY: To check - does ResolveFilename return the absolute path?
+        std::string lensFileName = ResolveFilename(specfile);
+        
+        
+        std::vector<Float> vals = ReadFloatFile(lensFileName);
+        // Check to see if there is valid input in the lens file.
+        if (vals.empty()) {
+            Warning("Unable to read lens file!");
+            return;
+        }
+        
+        // The lens file should include  columns for [radiusX radiusY thickness mediumIndex semiDiameter conicConstantX conicConstantY].
+        // Let's check then that the file is a multiple of 7 (not including the effective focal length at the top)
+        if ((vals.size()-1) % 7 != 0)
+        {
+            Warning("Wrong number of float values in lens file! Did you forget to specify the focal length? Is this a lens file with biconic surfaces? Do you have a carriage return at the end of the data?");
+            return;
+        }
+        
+        effectiveFocalLength = vals[0]*lensScaling;   // Read the effective focal length.
+        
+        frontThickness = 0;
+        for (int i = 1; i < vals.size(); i+=7)
+        {
+            LensElementEye currentLensEl;
+            currentLensEl.radiusX = vals[i]*lensScaling;
+            currentLensEl.radiusY = vals[i+1]*lensScaling;
+            currentLensEl.thickness = vals[i+2]*lensScaling;
+            currentLensEl.mediumIndex = vals[i+3];
+            currentLensEl.semiDiameter = vals[i+4]*lensScaling;
+            currentLensEl.conicConstantX = vals[i+5];
+            currentLensEl.conicConstantY = vals[i+6];
+            
+            frontThickness += currentLensEl.thickness;
+            
+            // Note: Zemax and PBRT-spectral seem to have different conventions for what the positive and negative sign of the radius is. In Zemax, a positive radius means that the center of lens sphere is directed toward the positive Z-axis, and vice versa. In previous PBRT-spectral iterations, this was flipped. Here I've rewritten the lens tracing code to go with the Zemax convention, however to be backward compatible we might want to have this ability to flip the radii.
+            if(flipRad){
+                currentLensEl.radiusX = -1*currentLensEl.radiusX;
+                currentLensEl.radiusY = -1*currentLensEl.radiusY;
+                currentLensEl.conicConstantX = -1*currentLensEl.conicConstantX;
+                currentLensEl.conicConstantY = -1*currentLensEl.conicConstantY;
+                Warning("Flipping lens radius & conic convention.");
+            }
+            
+            // A radius of zero in BOTH x and y directions indicates an aperture. We should be careful of this though, since sometimes we may want to define a flat surface...
+            // If the surface is an aperture, we set it's size to be equal to the pupil diameter specified.
+            if (currentLensEl.radiusX == 0 && currentLensEl.radiusY == 0 ){
+                currentLensEl.semiDiameter = pupilDiameter/2;
+            }
+            else{
+                // We have to do a semi-diameter check here. As we change accommodation, we also change the radius of curvature, and we don't want the semi-diameter to be bigger than the radius. This manifests as a square root of a negative number in equation 1 on Einighammer et al. 2009.
+                // TODO: This check is sort of hack-y, is there a better mathematical way to do this?
+                // Note: This calculation should be done in millimeters.
+                float smallerR = std::min(currentLensEl.radiusX,currentLensEl .radiusY)*(1/lensScaling);
+                float biggerK = std::max(currentLensEl.conicConstantX,currentLensEl.conicConstantY);
+                if(currentLensEl.semiDiameter*(1/lensScaling)*currentLensEl.semiDiameter*(1/lensScaling)*(1+biggerK)/(smallerR*smallerR) > 1.0f ){
+                    currentLensEl.semiDiameter = 0.95 * sqrt((smallerR*smallerR/(1+biggerK))); // 0.95 is to add some buffer zone, since rays act very strangely when they get too close to the edge of the conical surface.
+                }
+            }
+            
+            
+            lensEls.push_back(currentLensEl);
+        }
+        
+        // Check thickness of last element. It should be zero, since we use the "retina distance" parameter for this final "thickness."
+        if(lensEls[lensEls.size()-1].thickness != 0){
+            Error("Thickness of lens element closest to zero must be zero. Define thickness in 'retinaDistance' parameter instead.");
+        }
+
+        // To calculate the "film diagonal", we use the retina semi-diameter. The film diagonal is the diagonal of the rectangular image rendered out by PBRT, in real units. Since we restrict samples to a circular image, we can calculate the film diagonal to be the same as a square that circumscribes the circular image.
+        retinaDiag = retinaSemiDiam*1.4142*2; // sqrt(2)*2
+        
+        // We are going to use our own error handling for gsl to prevent it from crashing the moment a ray doesn't intersect.
+        gsl_set_error_handler_off();
+        
+        // Set up GSL random number generator for diffraction modeling
+        const gsl_rng_type * T;
+        gsl_rng_env_setup();
+        T = gsl_rng_default;
+        r = gsl_rng_alloc (T);
+}
+
 
 // OmniCamera Method Definitions
 OmniCamera::OmniCamera(CameraBaseParameters baseParameters,

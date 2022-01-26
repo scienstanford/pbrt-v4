@@ -590,10 +590,76 @@ class RealisticCamera : public CameraBase {
     pstd::vector<Bounds2f> exitPupilBounds;
 };
 
-// Initial commit to building sceneEye camera
-// class SceneEyeCamera : public CameraBase {
-//
-//};
+// HumanEyeCamera Definition
+class HumanEyeCamera : public CameraBase {
+  public:
+    //HumanEyeCamera Public Declarations
+    struct LensElementEye {
+        Float radiusX;
+        Float radiusY;
+        Float thickness;
+        Float mediumIndex;
+        Float semiDiameter;
+        Float conicConstantX;
+        Float conicConstantY;
+    };
+
+    // RealisticCamera Public Methods
+    HumanEyeCamera(CameraBaseParameters baseParameters,
+                    bool simpleWeighting,
+                    bool noWeighting,
+                    std::string specfile,
+                    Float pupilDiameter,
+                    Float retinaDistance,
+                    Float retinaRadius,
+                    Float retinaSemiDiam,
+                    pstd::vector<Spectrum> iorSpectra,
+                    bool flipRad,
+                    bool mmUnits,
+                    bool diffractionEnabled);
+    static HumanEyeCamera *Create(const ParameterDictionary &parameters,
+                                    const CameraTransform &cameraTransform,
+                                    Film film, Medium medium, const FileLoc *loc,
+                                    Allocator alloc = {});
+    PBRT_CPU_GPU
+    pstd::optional<CameraRay> GenerateRay(CameraSample sample,
+                                          SampledWavelengths &lambda) const;
+
+    private:
+        // HumanEyeCamera Private Methods
+        const bool simpleWeighting;
+        const bool noWeighting;
+
+        // Lens information
+        pstd::vector<LensElementEye> lensEls;
+        Float effectiveFocalLength;
+
+        // Specific parameters for the human eye
+        Float pupilDiameter;
+        Float retinaDistance;
+        Float retinaRadius;
+        Float retinaSemiDiam;
+        Float retinaDiag; // This will take the place of "film->diag"
+        Float frontThickness; // The distance from the back of the lens to the front of the eye.
+        pstd::vector<Spectrum> iorSpectra;
+
+        // Flags for conventions
+        bool diffractionEnabled;
+        float lensScaling;
+
+        // Private methods for tracing through lens
+        bool IntersectLensElAspheric(const Ray &r, Float *tHit, LensElementEye currElement, Float zShift, Vector3f *n) const;
+        void applySnellsLaw(Float n1, Float n2, Float lensRadius, Vector3f &normalVec, Ray * ray ) const;
+        Float lookUpIOR(int mediumIndex, const Ray &ray) const;
+        void diffractHURB(Point3f intersect, Float apertureRadius, const Float wavelength, const Vector3f oldDirection, Vector3f *newDirection) const;
+        
+        // Handy method to explicity solve for the z(x,y) at a given point (x,y), for the biconic SAG
+        Float BiconicZ(Float x, Float y, LensElementEye currElement) const;
+
+        // ZLY: To check whether this is needed or not
+        // // GSL seed(?) for random number generation
+        // gsl_rng * r;
+};
 
 
 // OmniCamera Definition
