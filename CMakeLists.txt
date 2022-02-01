@@ -984,6 +984,16 @@ target_link_libraries (cyhair2pbrt PRIVATE pbrt_opt pbrt_warnings)
 add_sanitizers (cyhair2pbrt)
 
 ##################
+# lenstool
+add_executable(lenstool src/pbrt/cmd/lenstool.cpp)
+
+target_compile_definitions (lenstool PRIVATE ${PBRT_DEFINITIONS})
+target_compile_options (lenstool PRIVATE ${PBRT_CXX_FLAGS})
+target_include_directories (lenstool PUBLIC src src/ext)
+target_link_libraries (lenstool PRIVATE ${ALL_PBRT_LIBS} pbrt_warnings pbrt_opt)
+
+add_sanitizers (lenstool)
+##################
 # Unit tests
 
 set (PBRT_TEST_SOURCE
@@ -1035,6 +1045,7 @@ add_test (pbrt_unit_test pbrt_test)
 install (TARGETS
   pbrt_exe
   imgtool
+  lenstool
   pspec
   plytool
   cyhair2pbrt
