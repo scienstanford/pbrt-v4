@@ -625,7 +625,7 @@ class OmniCamera : public CameraBase {
                     Float focusDistance, Float filmDistance,
                     bool caFlag, bool diffractionEnabled,
                     pstd::vector<OmniCamera::LensElementInterface>& microlensData,
-                    Vector2i microlensDims, std::vector<Float> & microlensOffsets, Float microlensSensorOffset,
+                    Vector2i microlensDims, std::vector<Vector2f> & microlensOffsets, Float microlensSensorOffset,
                     Float apertureDiameter, Image apertureImage, Allocator alloc);
 
     static OmniCamera *Create(const ParameterDictionary &parameters,

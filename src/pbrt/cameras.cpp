@@ -15,6 +15,7 @@
 #include <pbrt/util/image.h>
 #include <pbrt/util/lowdiscrepancy.h>
 #include <pbrt/util/math.h>
+#include <pbrt/util/vecmath.h>
 #include <pbrt/util/parallel.h>
 #include <pbrt/util/print.h>
 #include <pbrt/util/stats.h>
@@ -1485,7 +1486,7 @@ OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
                                  Float focusDistance, Float filmDistance,
                                  bool caFlag, bool diffractionEnabled,
                                  pstd::vector<OmniCamera::LensElementInterface>& microlensData,
-                                 Vector2i microlensDims, std::vector<Float> & microlensOffsets, Float microlensSensorOffset,                                 
+                                 Vector2i microlensDims, std::vector<Vector2f> & microlensOffsets, Float microlensSensorOffset,                                 
                                  Float setApertureDiameter, Image apertureImage,
                                  Allocator alloc)
     : CameraBase(baseParameters),
@@ -1505,11 +1506,12 @@ OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
     elementInterfaces = lensInterfaceData;
     if (microlensData.size() > 0) {
         microlens.elementInterfaces = microlensData;
-        microlens.offsets.resize(microlensOffsets.size() / 2);
-        for (int i = 0; i < microlens.offsets.size(); ++i) {
-            microlens.offsets[i].x = microlensOffsets[2 * i + 0];
-            microlens.offsets[i].y = microlensOffsets[2 * i + 1];
-        }
+        // microlens.offsets.resize(microlensOffsets.size() / 2);
+        // for (int i = 0; i < microlens.offsets.size(); ++i) {
+        //     microlens.offsets[i].x = microlensOffsets[2 * i + 0];
+        //     microlens.offsets[i].y = microlensOffsets[2 * i + 1];
+        // }
+        microlens.offsets = microlensOffsets;
         microlens.dimensions = microlensDims;
         microlens.offsetFromSensor = microlensSensorOffset;
     }
@@ -2145,7 +2147,7 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
     // Load element data from lens description file: microlens
     pstd::vector<OmniCamera::LensElementInterface> microlensData;
 
-    std::vector<Float> microlensOffsets;
+    std::vector<Vector2f> microlensOffsets;
 
     Vector2i microlensDims;
 
@@ -2301,7 +2303,7 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
                     return nullptr;
                 }
                 for (auto offset : mljOffsets) {
-                    microlensOffsets.push_back(Float(offset));
+                    microlensOffsets.push_back(toVec2(offset));
                 }
             }
 
