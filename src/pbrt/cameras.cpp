@@ -19,18 +19,17 @@
 #include <pbrt/util/parallel.h>
 #include <pbrt/util/print.h>
 #include <pbrt/util/stats.h>
-#include <ext/json.hpp> // zhenyi
-#include <fstream> // zhenyi
+#include <ext/json.hpp> 
+#include <fstream> 
 
 #include <algorithm>
 
 #include <math.h>
 #include <cmath>
-#include <gsl/gsl_roots.h>
+#include <gsl/gsl_roots.h> // For solving biconic surface intersections.
 #include <gsl/gsl_errno.h>
 
 using json = nlohmann::json;
-
 namespace pbrt {
 
 // CameraTransform Method Definitions
@@ -1480,13 +1479,42 @@ RealisticCamera *RealisticCamera::Create(const ParameterDictionary &parameters,
                                              std::move(apertureImage), alloc);
 }
 
+Float sgn(Float val) {
+    return Float((Float(0) < val) - (val < Float(0)));
+}
+static Float computeZOfLensElement(Float r, const OmniCamera::LensElementInterface& element) {
+    if (element.asphericCoefficients.size() == 0) {
+        Float R = std::abs(element.curvatureRadius.x);
+        Float d = std::sqrt((R*R) - (r*r));
+        Float z = R-d;
+        return sgn(element.curvatureRadius.x)*z;
+    } else {
+        r *= 1000.0f;
+        Float c = (Float)1.0 / (element.curvatureRadius.x * 1000.0f);
+        Float kappa = element.conicConstant.x * 1000.0f;
+        Float r2 = r*r;
+        Float r2i = r2;
+        //printf("r^2 = %g\n", r2);
+        // Equation 1 from https://onlinelibrary.wiley.com/doi/pdf/10.1111/cgf.12953
+        Float z = (c*r2) / (1.0 + std::sqrt(1.0 - ((1.0 + kappa)*c*c*r2)));
+        Float zBefore = z;
+        for (int j = 0; j < element.asphericCoefficients.size(); ++j) {
+            r2i *= r2;
+            int i = j + 2; // First coefficient is at 2i=4, i = 2
+            Float A2i = element.asphericCoefficients[j];
+            z += (A2i * r2i);
+        }
+        return z/1000.0f;
+    }
+}
 // OmniCamera Method Definitions
 OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
                                  pstd::vector<OmniCamera::LensElementInterface> &lensInterfaceData,
                                  Float focusDistance, Float filmDistance,
                                  bool caFlag, bool diffractionEnabled,
                                  pstd::vector<OmniCamera::LensElementInterface>& microlensData,
-                                 Vector2i microlensDims, std::vector<Vector2f> & microlensOffsets, Float microlensSensorOffset,                                 
+                                 Vector2i microlensDims, std::vector<Vector2f> & microlensOffsets, Float microlensSensorOffset, 
+                                 int microlensSimulationRadius,                                
                                  Float setApertureDiameter, Image apertureImage,
                                  Allocator alloc)
     : CameraBase(baseParameters),
@@ -1504,18 +1532,40 @@ OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
 
     // Initialize _elementInterfaces_ for camera
     elementInterfaces = lensInterfaceData;
+
+    for (LensElementInterface& element : elementInterfaces) {
+        // Compute bounding planes for the aspherics
+        if (element.asphericCoefficients.size() > 0) {
+            // Compute sampled min and max of Z (making sure to sample extrema in r)
+            // Compute largest change, use that to conservatively expand bounds.
+            Float maxR = element.apertureRadius.x;
+            Float zMin = computeZOfLensElement(maxR, element);
+            Float zMax = zMin;
+            int sampleCount = 128;
+            Float stepR = maxR/sampleCount;
+            Float lastZ = computeZOfLensElement(0.0, element);
+            Float largestDiff = 0.0;
+            for (Float R = 0.0; R < maxR; R += stepR) {
+                Float newZ = computeZOfLensElement(R, element);
+                zMin = std::min(zMin, newZ);
+                zMax = std::max(zMax, newZ);
+
+                Float zDiff = std::abs(lastZ - newZ);
+                largestDiff = std::max(largestDiff, zDiff);
+                lastZ = newZ;
+            }
+            element.zMin = zMin - largestDiff;
+            element.zMax = zMax + largestDiff;
+        }
+    }
+
     if (microlensData.size() > 0) {
         microlens.elementInterfaces = microlensData;
-        // microlens.offsets.resize(microlensOffsets.size() / 2);
-        // for (int i = 0; i < microlens.offsets.size(); ++i) {
-        //     microlens.offsets[i].x = microlensOffsets[2 * i + 0];
-        //     microlens.offsets[i].y = microlensOffsets[2 * i + 1];
-        // }
         microlens.offsets = microlensOffsets;
         microlens.dimensions = microlensDims;
         microlens.offsetFromSensor = microlensSensorOffset;
+        microlens.simulationRadius = microlensSimulationRadius;
     }
-
 
     if(filmDistance == 0){
         // Float fb = FocusBinarySearch(focusDistance); // may be useful, disable for now
@@ -1538,11 +1588,298 @@ OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
     FindMinimumDifferentials(this);
 }
 
+struct aspheric_params {
+    Float c;
+    Float kappa;
+    std::vector<Float>* A;
+    Ray ray;
+};
+
+double AsphericIntersect(double t, void *params) {
+    struct aspheric_params *p;
+    p = (struct aspheric_params *)params;
+
+    Point3f X = p->ray(t);
+    // Compute distance from intersect to lens along z-axis
+
+    const Float c = p->c;
+    const Float kappa = p->kappa;
+    const Float r = std::sqrt(X.x*X.x + X.y*X.y);
+    Float r2 = r*r;
+    Float r2i = r2;
+    // Equation 1 from https://onlinelibrary.wiley.com/doi/pdf/10.1111/cgf.12953
+    Float z = (c*r2) / (1.0 + std::sqrt(1.0 - ((1.0 + kappa)*c*c*r2)));
+    Float zBefore = z;
+    for (int j = 0; j < p->A->size(); ++j) {
+        r2i *= r2;
+        int i = j + 2; // First coefficient is at 2i=4, i = 2
+        Float A2i = (*p->A)[j];
+        z += (A2i * r2i);
+    }
+    //if (std::abs(p->ray.d.x) > std::abs(p->ray.d.z)) printf("t, z, X.z: %g, %g, %g\n", t, z, X.z);
+    return X.z - z;
+}
+
+bool IntersectAsphericalElement(const OmniCamera::LensElementInterface& element, const Float elementZ, const Ray& r, Float* tHit, Normal3f* n) {
+    // Computation is done in meters
+    const Float c = 1.0f/(element.curvatureRadius.x * 1000.0f);
+    const Float kappa = element.conicConstant.x * 1000.0f;
+    std::vector<Float> A = element.asphericCoefficients;
+    // This code lets us find the intersection with an aspheric surface. At tHit, the ray will intersect the surface. Therefore:
+    // If
+    // (x,y,z) = ray_origin + thit * ray_direction
+    // then:
+    // z - u(x,y) = 0
+    // where u(x,y) is the SAG of the surface, defined in Eq.1 of Einighammer et al. 2009 and in the Zemax help page under biconic surfaces.
+    // We can use this fact to solve for thit. If the surface is not a sphere, this is a messy polynomial. So instead we use a numeric root-finding method (Van Wijingaarden-Dekker-Brent's Method.) This method is available in the GSL library.
+
+
+    // Move ray to object(lens) space.
+    Ray lensRay = r;
+    lensRay.o = (lensRay.o - Vector3f(0, 0, elementZ)) * 1000.0f;
+    int status;
+    int iter = 0, max_iter = 100;
+    const gsl_root_fsolver_type *T;
+    gsl_root_fsolver *s;
+    double root = 0;
+
+    gsl_function F;
+
+    struct aspheric_params params = { c, kappa, &A, lensRay };
+    F.function = &AsphericIntersect;
+    F.params = &params;
+
+    // TODO: Use intersection with tight bounding spherical geometry to define the initial bounds
+    // Recommended by https://graphics.tudelft.nl/Publications-new/2016/JKLEL16/pdf.pdf
+    // We currently use planes as proxies because its easier...
+    // TODO: Make sure this works for rays from scene to sensor as well
+    double t_lo = (element.zMax*1000.0f - lensRay.o.z) / lensRay.d.z;
+    double t_hi = (element.zMin*1000.0f - lensRay.o.z) / lensRay.d.z;
+    //printf("Before aperture t_lo, t_hi: %g %g\n", t_lo, t_hi);
+    {
+        // (ox + t dx)^2 + (oy + t dy)^2 - r^2 = 0
+        // (dx^2 + dy^2)t^2 = (2dxox+2dyoy)t + (ox^2 + oy^2 - r^2)
+        Float dx = lensRay.d.x;
+        Float dy = lensRay.d.y;
+        Float ox = lensRay.o.x;
+        Float oy = lensRay.o.y;
+        Float R = element.apertureRadius.x * 1000.0f;
+        bool startsInAperture = (ox*ox + oy*oy) <= R*R;
+        Float t_a0, t_a1;
+        Float A = (dx*dx + dy*dy);
+        Float B = 2 * (dx*ox + dy*oy);
+        Float C = ox*ox + oy*oy - R*R;
+        Quadratic(A, B, C, &t_a0, &t_a1);
+        bool bothNegative = (t_a0 < 0) && (t_a1 < 0);
+        bool bothPositive = (t_a0 >= 0) && (t_a1 >= 0);
+        Float minT = std::min(t_a0, t_a1);
+        Float maxT = std::max(t_a0, t_a1);
+        Float nonnegativeT = (t_a0 < 0) ? t_a1 : t_a0; // only valid if !bothNegative
+        if (startsInAperture) {
+            if (!bothNegative) {
+                if (bothPositive) {
+                    t_hi = std::min(t_hi, (double)minT);
+                } else {
+                    t_hi = std::min(t_hi, (double)nonnegativeT);
+                }
+            }
+        } else {
+            if (bothNegative) {
+                t_lo = t_hi; // No valid solutions
+            } else {
+                if (bothPositive) {
+                    t_lo = std::max(t_lo, (double)minT);
+                    t_hi = std::min(t_hi, (double)maxT);
+                } else {
+                    t_lo = std::max(t_lo, (double)nonnegativeT);
+                }
+            }
+        }
+    }
+
+    T = gsl_root_fsolver_brent;
+    s = gsl_root_fsolver_alloc(T);
+    // We'll handle errors
+    gsl_set_error_handler_off();
+    status = gsl_root_fsolver_set(s, &F, t_lo, t_hi);
+    if (status != 0) {
+        // Ray probably does not intersect. This might depend on the t_hi set above, i.e. if it's too small OR too large. TODO: Can we check this?
+        gsl_root_fsolver_free(s);
+        return false;
+    }
+
+    do {
+        iter++;
+        gsl_root_fsolver_iterate(s);
+        root = gsl_root_fsolver_root(s);
+        t_lo = gsl_root_fsolver_x_lower(s);
+        t_hi = gsl_root_fsolver_x_upper(s);
+        status = gsl_root_test_interval(t_lo, t_hi,
+            0, 0.00001);
+
+        if (status == GSL_SUCCESS) {
+            gsl_root_fsolver_free(s);
+
+            *tHit = root / 1000.0f; // Convert back to meters
+            Point3f intersect = r(*tHit);
+
+            // Compute normal through finite differences TODO: compute closed form?
+            const Float EPS = 0.000001f;
+
+            auto offsetOnLens = [intersect, element, elementZ](Vector2f off) {
+                Vector2f off2 = Vector2f(intersect.x + off.x, intersect.y + off.y);
+                return Point3f(off2.x, off2.y, computeZOfLensElement(Length(off2), element) + elementZ);
+            };
+
+            Vector3f dx = offsetOnLens( { EPS,0 }) - offsetOnLens({ -EPS,0 });
+            Vector3f dy = offsetOnLens({ 0,EPS }) - offsetOnLens({ 0,-EPS });
+
+            *n = Normal3f(Normalize(Cross(dx, dy)));
+            *n = FaceForward(*n, -r.d);
+
+            return true;
+        }
+
+    } while (status == GSL_CONTINUE && iter < max_iter);
+    printf("Couldn't find root!\n");
+    gsl_root_fsolver_free(s);
+    return false;
+    } 
+
+void OmniCamera::diffractHURB(Ray &rLens, const LensElementInterface &element, const Float t) const {
+    // Convert the rays in this element space
+    auto invTransform = Inverse(element.transform);
+    Ray rElement = invTransform(rLens);
+
+    Point3f intersect = rElement(t);
+    Float apertureRadius = element.apertureRadius.x;
+    Float wavelength = rElement.wavelength;
+    Vector3f oldDirection = rElement.d;
+
+    // ZLY: Directly copied from realisticEye
+    // Modified wavelength unit conversion as I think it is always assumed to be in unit of meters
+    // std::cout << "wavelength = " << wavelength << std::endl;
+    Float dist2Int = std::sqrt(intersect.x*intersect.x + intersect.y*intersect.y);
+    Vector3f dirS = Normalize(Vector3f(intersect.x, intersect.y, 0));
+    Vector3f dirL = Normalize(Vector3f(-1*intersect.y, intersect.x, 0));
+    Vector3f dirU = Vector3f(0,0,1); // Direction pointing normal to the aperture plane and toward the scene.
+
+    Float dist2EdgeS = apertureRadius - dist2Int;
+    Float dist2EdgeL = std::sqrt(apertureRadius*apertureRadius - dist2Int*dist2Int);
+
+    // Calculate variance according to Freniere et al. 1999
+    double sigmaS = atan(1/(1.41 * dist2EdgeS * 2*Pi/(wavelength*1e-9) ));
+    double sigmaL = atan(1/(1.41 * dist2EdgeL * 2*Pi/(wavelength*1e-9) ));
+
+    // Sample from bivariate gaussian
+    double initS = 0;
+    double initL = 0;
+    double *noiseS = &initS;
+    double *noiseL = &initL;
+    
+
+    
+    gsl_ran_bivariate_gaussian (r, sigmaS, sigmaL, 0, noiseS, noiseL);
+
+    // DEBUG:
+//        std::cout << "noiseS = " << *noiseS << std::endl;
+//        std::cout << "noiseL = " << *noiseL << std::endl;
+//        std::cout << *noiseS << " " << *noiseL << std::endl;
+
+    // Decompose our original ray into dirS and dirL.
+    Float projS = Dot(oldDirection,dirS)/Length(dirS);
+    Float projL = Dot(oldDirection,dirL)/Length(dirL);
+    Float projU = Dot(oldDirection,dirU)/Length(dirU);
+
+    /*
+     We have now decomposed the original, incoming ray into three orthogonal
+     directions: directionS, directionL, and directionU.
+     directionS is the direction along the shortest distance to the aperture
+     edge.
+     directionL is the orthogonal direction to directionS in the plane of the
+     aperture.
+     directionU is the direction normal to the plane of the aperture, pointing
+     toward the scene.
+     To orient our azimuth and elevation directions, imagine that the
+     S-U-plane forms the "ground plane." "Theta_x" in the Freniere paper is
+     therefore the deviation in the azimuth and "Theta_y" is the deviation in
+     the elevation.
+     */
+
+    // Calculate current azimuth and elevation angles
+    Float thetaA = atan(projS/projU); // Azimuth
+    Float thetaE = atan(projL/std::sqrt(projS*projS + projU*projU)); // Elevation
+
+    // Deviate the angles
+    thetaA = thetaA + *noiseS;
+    thetaE = thetaE + *noiseL;
+
+    // Recalculate the ray direction
+    // Remember the ray direction is normalized, so it should have length = 1
+    Float newProjL = sin(thetaE);
+    Float newProjSU = cos(thetaE);
+    Float newProjS = newProjSU * sin(thetaA);
+    Float newProjU = newProjSU * cos(thetaA);
+
+    // Add up the new projections to get a new direction
+    rElement.d = Normalize(-newProjS*dirS - newProjL*dirL - newProjU*dirU);
+    rLens = element.transform(rElement);
+}
+
+
+OmniCamera::IntersectResult OmniCamera::TraceElement(const LensElementInterface &element, const Ray& rLens, 
+    const Float& elementZ, Float& t, Normal3f& n, bool& isStop, 
+    const ConvexQuadf& bounds = ConvexQuadf()) const {
+    isStop = (element.curvatureRadius.x == 0) && (element.asphericCoefficients.size() == 0);
+    auto invTransform = Inverse(element.transform);
+    Ray rElement = invTransform(rLens);
+    if (isStop) {
+        // The refracted ray computed in the previous lens element
+        // interface may be pointed "backwards" in some
+        // extreme situations; in such cases, 't' becomes negative.
+        t = (elementZ - rElement.o.z) / rElement.d.z;
+        if (rElement.d.z == 0.0 || t < 0) return MISS;
+    } else {
+        if (element.asphericCoefficients.size() > 0) {
+            if (!IntersectAsphericalElement(element, elementZ, rElement, &t, &n))
+                return MISS;
+        } else {
+            Float radius = element.curvatureRadius.x;
+            Float zCenter = elementZ + element.curvatureRadius.x;
+            if (!IntersectSphericalElement(radius, zCenter, rElement, &t, &n))
+                return MISS;
+        }
+    }
+    CHECK_GE(t, 0);
+    // Transform the normal back into the original space.
+    n = element.transform(n);
+
+    // Test intersection point against element aperture
+    Point3f pHit = rElement(t);
+    Float r2 = pHit.x * pHit.x + pHit.y * pHit.y;
+    Float apertureRadius2 = element.apertureRadius.x * element.apertureRadius.x;
+    Point2f pHit2f;
+    pHit2f.x = pHit.x;
+    pHit2f.y = pHit.y;
+    //std::cout << "- " << element.apertureRadius.x << "," << element.apertureRadius.y << "\n";
+    if (r2 > apertureRadius2) return CULLED_BY_APERTURE;
+    if (!bounds.Contains(Point2f(pHit2f))) {
+        return CULLED_BY_APERTURE;
+    }
+    return HIT;
+};
+
 Float OmniCamera::TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const {
+    
+    const ConvexQuadf &bounds = ConvexQuadf();
+
     Float elementZ = 0, weight = 1;
+
     // Transform _rCamera_ from camera to lens system space
     Ray rLens(Point3f(rCamera.o.x, rCamera.o.y, -rCamera.o.z),
               Vector3f(rCamera.d.x, rCamera.d.y, -rCamera.d.z), rCamera.time);
+
+    rLens.wavelength = 550; // tmp
 
     for (int i = elementInterfaces.size() - 1; i >= 0; --i) {
         const LensElementInterface &element = elementInterfaces[i];
@@ -1552,6 +1889,11 @@ Float OmniCamera::TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const {
         Float t;
         Normal3f n;
         bool isStop = (element.curvatureRadius.x == 0);
+
+        IntersectResult result = TraceElement(element, rLens, elementZ, t, n, isStop, bounds);
+        if (result != HIT)
+            return 0;
+
         if (isStop) {
             // Compute _t_ at plane of aperture stop
             t = (elementZ - rLens.o.z) / rLens.d.z;
@@ -1650,14 +1992,57 @@ Float OmniCamera::FocusThickLens(Float focusDistance) {
     return elementInterfaces.back().thickness + delta;
 }
 
+Float OmniCamera::FocusDistance(Float filmDistance) {
+    // Find offset ray from film center through lens
+    Bounds2f bounds = BoundExitPupil(0, .001 * film.Diagonal());
+
+    const std::array<Float, 3> scaleFactors = {0.1f, 0.01f, 0.001f};
+    Float lu = 0.0f;
+
+    Ray ray;
+
+    // Try some different and decreasing scaling factor to find focus ray
+    // more quickly when `aperturediameter` is too small.
+    // (e.g. 2 [mm] for `aperturediameter` with wide.22mm.dat),
+    bool foundFocusRay = false;
+    for (Float scale : scaleFactors) {
+        lu = scale * bounds.pMax[0];
+        if (TraceLensesFromFilm(Ray(Point3f(0, 0, LensRearZ() - filmDistance),
+                                    Vector3f(lu, 0, filmDistance)), &ray)) {
+            foundFocusRay = true;
+            break;
+        }
+    }
+
+    if (!foundFocusRay) {
+        Error(
+            "Focus ray at lens pos(%f,0) didn't make it through the lenses "
+            "with film distance %f?!??\n",
+            lu, filmDistance);
+        return Infinity;
+    }
+
+    // Compute distance _zFocus_ where ray intersects the principal axis
+    Float tFocus = -ray.o.x / ray.d.x;
+    Float zFocus = ray(tFocus).z;
+    if (zFocus < 0) zFocus = Infinity;
+    return zFocus;
+}
+
 Bounds2f OmniCamera::BoundExitPupil(Float filmX0, Float filmX1) const {
     Bounds2f pupilBounds;
     // Sample a collection of points on the rear lens to find exit pupil
     const int nSamples = 1024 * 1024;
     // Compute bounding box of projection of rear element on sampling plane
     Float rearRadius = RearElementRadius();
-    Bounds2f projRearBounds(Point2f(-1.5f * rearRadius, -1.5f * rearRadius),
-                            Point2f(1.5f * rearRadius, 1.5f * rearRadius));
+    Point3f finalElementTranslation = elementInterfaces[elementInterfaces.size() - 1].transform(Point3f(0,0,0));
+    Point2f xy(finalElementTranslation.x, finalElementTranslation.y);
+    Bounds2f projRearBounds(Point2f(-1.5f * rearRadius, -1.5f * rearRadius) + xy,
+                            Point2f(1.5f * rearRadius, 1.5f * rearRadius) + xy);
+
+    if (HasMicrolens()){
+        return projRearBounds;
+    }
 
     for (int i = 0; i < nSamples; ++i) {
         // Find location of sample points on $x$ segment and rear lens element
@@ -1714,25 +2099,87 @@ static Vector2f mapMul(Vector2f v0, Vector2f v1) {
 static Vector2f mapDiv(Vector2f v0, Vector2f v1) {
     return Vector2f(v0.x/v1.x, v0.y/v1.y);
 }
+static Vector2f mapDiv(Vector2f v0, Vector2i v1) {
+    return Vector2f(v0.x / (pbrt::Float)v1.x, v0.y / (pbrt::Float)v1.y);
+}
 static Point2f mapDiv(Point2f v0, Vector2f v1) {
     return Point2f(v0.x / v1.x, v0.y / v1.y);
 }
 
-pstd::optional<ExitPupilSample> OmniCamera::SampleMicrolensPupil(Point2f pFilm, Point2f uLens) const {
+Point2i OmniCamera::MicrolensIndex(const Point2f &p) const {
     Bounds2f extent = physicalExtent;
-    Vector2f normFilm = mapDiv(pFilm - extent.pMin, extent.pMax - extent.pMin);
+    Vector2f normFilm = mapDiv(p - extent.pMin, extent.pMax - extent.pMin);
     Vector2i d = microlens.dimensions;
     Vector2f df = Vector2f(d.x, d.y);
     Vector2f lensSpace = mapMul(normFilm, df);
-    Point2f lensIndex(pstd::floor(lensSpace.x), pstd::floor(lensSpace.y));
-    Point2f sampledLensSpacePt = mapDiv(lensIndex + uLens, df);
+    return Point2i(pstd::floor(lensSpace.x), pstd::floor(lensSpace.y));
+}
+pstd::optional<ExitPupilSample> OmniCamera::SampleMicrolensPupil(Point2f pFilm, Point2f uLens) const {
+    Bounds2f extent = physicalExtent;
+    Point2f lensIndex = Point2f(MicrolensIndex(pFilm));
+    Float R = (Float)microlens.simulationRadius;
+    lensIndex -= Vector2f(R, R);
+    Float diameter = (R * 2.0) + 1.0;
+    Vector2i d = microlens.dimensions;
+    Vector2f df = Vector2f(d.x, d.y);
+    Point2f sampledLensSpacePt = mapDiv(lensIndex + (uLens*diameter), df);
 
-    Float pdf = 1 / extent.Area();
+    Float pdf = 1 / extent.Area()*diameter*diameter / (df.x*df.y);
     // sample on microlens
     Point2f result2 = extent.Lerp(sampledLensSpacePt);
 
     return ExitPupilSample{Point3f(result2.x, result2.y, microlens.offsetFromSensor),pdf};
 }
+
+Transform OmniCamera::MicrolensElement::ComputeCameraToMicrolens() const {
+    return Scale(1, 1, -1)*Translate({ -center.x, -center.y, 0.0f });
+}
+
+// Idx are here two integers that indicate the row and column number of the microlens
+Point2f OmniCamera::MicrolensCenterFromIndex(const Point2i& idx) const {
+    Bounds2f extent = physicalExtent;
+    Vector2f indexf(idx.x, idx.y);
+    const Vector2i& d = microlens.dimensions;
+    Vector2f normalizedLensCenter = mapDiv(indexf + Vector2f(0.5f, 0.5f), d); // Compute proportional position
+
+    // Use this proportion to get position in film space. This is the physical position of the microlens.
+    Point2f lensCenter = extent.Lerp(Point2f(normalizedLensCenter)); 
+    
+    // If the lens index has valid bounds (0 < index < maxnumber of elements)
+    // Then apply the local offset as read from the JSON file. 
+    if (idx.x >= 0 && idx.y >= 0 && idx.x < d.x && idx.y < d.y) {
+        lensCenter += microlens.offsets[idx.y*d.x + idx.x];
+    }
+    return lensCenter;
+}
+
+OmniCamera::MicrolensElement OmniCamera::MicrolensElementFromIndex(const Point2i& idx) const {
+    MicrolensElement element;
+    element.index = idx;
+    element.center = MicrolensCenterFromIndex(idx);
+    const Point2i offsets[4] = { {0,0}, {0,1}, {1,0}, {1,1} };
+    Point2f corners[4];
+    for (int i = 0; i < 4; ++i) {
+        corners[i] = Point2f(0, 0);
+        Point2i cornerIdx = idx-Vector2i(offsets[i]);
+        for (const auto& off : offsets) {
+            Point2f neighborCenter = MicrolensCenterFromIndex(cornerIdx + off);
+            corners[i] += neighborCenter;
+        }
+        corners[i] *= (Float)0.25;
+        corners[i] += -element.center; // Center the corners
+    }
+
+    // A Rectangle is used to bound the area of the microlens
+    element.centeredBounds = ConvexQuadf(corners[0], corners[1], corners[2], corners[3]);
+    return element;
+}
+
+// OmniCamera::MicrolensElement OmniCamera::ComputeMicrolensElement(const Ray& filmRay) const {
+//     Point3f pointOnMicrolens(filmRay(microlens.offsetFromSensor / filmRay.d.z)); // project ray in direction to the plane of microlens (offsetFrom Sensor)
+//     Point2f pointOnMicrolens2(pointOnMicrolens); // Keep only (x,y) values
+//     return MicrolensElementFromIndex(MicrolensIndex(pointOnMicrolens2)); // Generate a microlensElement from this information
+// }
 
 pstd::optional<CameraRay> OmniCamera::GenerateRay(CameraSample sample,
                                                        SampledWavelengths &lambda) const {
@@ -1744,16 +2191,20 @@ pstd::optional<CameraRay> OmniCamera::GenerateRay(CameraSample sample,
 
     // Trace ray from _pFilm_ through lens system
     pstd::optional<ExitPupilSample> eps;
-    if (microlens.elementInterfaces.size() > 0){
+    if (HasMicrolens()){
         eps = SampleMicrolensPupil(Point2f(pFilm.x, pFilm.y), sample.pLens);
     } else {
         eps = SampleExitPupil(Point2f(pFilm.x, pFilm.y), sample.pLens);
     }
     if (!eps)
         return {};
+
     Ray rFilm(pFilm, eps->pPupil - pFilm);
+
     Ray ray;
+
     Float weight = TraceLensesFromFilm(rFilm, &ray);
+
     if (weight == 0)
         return {};
 
@@ -1769,6 +2220,9 @@ pstd::optional<CameraRay> OmniCamera::GenerateRay(CameraSample sample,
     return CameraRay{ray, SampledSpectrum(weight)};
 }
 
+bool OmniCamera::HasMicrolens() const {
+    return microlens.elementInterfaces.size() > 0;
+}
 // STAT_PERCENT("Camera/Rays vignetted by lens system", vignettedRays, totalRays);
 
 std::string OmniCamera::LensElementInterface::ToString() const {
@@ -1788,6 +2242,11 @@ Float OmniCamera::TraceLensesFromScene(const Ray &rCamera, Ray *rOut) const {
         Float t;
         Normal3f n;
         bool isStop = (element.curvatureRadius.x == 0);
+
+        IntersectResult result = TraceElement(element, rLens, elementZ, t, n, isStop);
+        if (result != HIT)
+            return 0;
+
         if (isStop) {
             t = (elementZ - rLens.o.z) / rLens.d.z;
             if (t < 0)
@@ -1830,74 +2289,104 @@ Float OmniCamera::TraceLensesFromScene(const Ray &rCamera, Ray *rOut) const {
 void OmniCamera::DrawLensSystem() const {
     Float sumz = -LensFrontZ();
     Float z = sumz;
+
+    auto toZXCoord = [](const Point3f& p, const Transform& xForm) {
+        const Point3f p3 = xForm(p);
+        return Point2f(p3.z, p3.x);
+    };
+
     for (size_t i = 0; i < elementInterfaces.size(); ++i) {
         const LensElementInterface &element = elementInterfaces[i];
-        Float r = element.curvatureRadius.x;
-        if (r == 0) {
-            // stop
-            printf("{Thick, Line[{{%f, %f}, {%f, %f}}], ", z, element.apertureRadius.x, z,
-                   2 * element.apertureRadius.x);
-            printf("Line[{{%f, %f}, {%f, %f}}]}, ", z, -element.apertureRadius.x, z,
-                   -2 * element.apertureRadius.x);
-        } else {
-            Float theta = std::abs(SafeASin(element.apertureRadius.x / r));
-            if (r > 0) {
-                // convex as seen from front of lens
-                Float t0 = Pi - theta;
-                Float t1 = Pi + theta;
-                printf("Circle[{%f, 0}, %f, {%f, %f}], ", z + r, r, t0, t1);
+        const Transform& xForm = element.transform;
+        if (element.asphericCoefficients.size() == 0) {
+            Float r = element.curvatureRadius.x;
+            if (r == 0) {
+                Point2f startU = toZXCoord(Point3f(element.apertureRadius.x, 0, z), xForm);
+                Point2f startL = toZXCoord(Point3f(-element.apertureRadius.x, 0, z), xForm);
+                Point2f endU = toZXCoord(Point3f(2 * element.apertureRadius.x, 0, z), xForm);
+                Point2f endL = toZXCoord(Point3f(-2 * element.apertureRadius.x, 0, z), xForm);
+                // stop
+                printf("{Thick, Line[{{%f, %f}, {%f, %f}}], ", startU.x, startU.y, endU.x, endU.y);
+                printf("Line[{{%f, %f}, {%f, %f}}]}, ", startL.x, startL.y, endL.x, endL.y);
             } else {
-                // concave as seen from front of lens
-                Float t0 = -theta;
-                Float t1 = theta;
-                printf("Circle[{%f, 0}, %f, {%f, %f}], ", z + r, -r, t0, t1);
-            }
-            if (element.eta != 0 && element.eta != 1) {
-                // connect top/bottom to next element
-                CHECK_LT(i + 1, elementInterfaces.size());
-                Float nextApertureRadius = elementInterfaces[i + 1].apertureRadius.x;
-                Float h = std::max(element.apertureRadius.x, nextApertureRadius);
-                Float hlow = std::min(element.apertureRadius.x, nextApertureRadius);
-
-                Float zp0, zp1;
+                // TODO compute proper tilt
+                Point2f C = toZXCoord(Point3f(0, 0, z + r), xForm);
+                Float theta = std::abs(std::asin(element.apertureRadius.x / r));
                 if (r > 0) {
-                    zp0 = z + element.curvatureRadius.x -
-                          element.apertureRadius.x / std::tan(theta);
+                    // convex as seen from front of lens
+                    Float t0 = Pi - theta;
+                    Float t1 = Pi + theta;
+                    printf("Circle[{%f, %f}, %f, {%f, %f}], ", C.x, C.y, r, t0, t1);
                 } else {
-                    zp0 = z + element.curvatureRadius.x +
-                          element.apertureRadius.x / std::tan(theta);
+                    // concave as seen from front of lens
+                    Float t0 = -theta;
+                    Float t1 = theta;
+                    printf("Circle[{%f, %f}, %f, {%f, %f}], ", C.x, C.y, -r, t0, t1);
                 }
+                if (element.eta != 0 && element.eta != 1) {
+                    // TODO: re-enable
+                    /*
+                    // connect top/bottom to next element
+                    CHECK_LT(i + 1, elementInterfaces.size());
+                    Float nextApertureRadius =
+                        elementInterfaces[i + 1].apertureRadius.x;
+                    Float h = std::max(element.apertureRadius.x, nextApertureRadius);
+                    Float hlow =
+                        std::min(element.apertureRadius.x, nextApertureRadius);
 
-                Float nextCurvatureRadius = elementInterfaces[i + 1].curvatureRadius.x;
-                Float nextTheta =
-                    std::abs(SafeASin(nextApertureRadius / nextCurvatureRadius));
-                if (nextCurvatureRadius > 0) {
-                    zp1 = z + element.thickness + nextCurvatureRadius -
-                          nextApertureRadius / std::tan(nextTheta);
-                } else {
-                    zp1 = z + element.thickness + nextCurvatureRadius +
-                          nextApertureRadius / std::tan(nextTheta);
+                    Float zp0, zp1;
+                    if (r > 0) {
+                        zp0 = z + element.curvatureRadius.x -
+                              element.apertureRadius.x / std::tan(theta);
+                    } else {
+                        zp0 = z + element.curvatureRadius.x +
+                              element.apertureRadius.x / std::tan(theta);
+                    }
+
+                    Float nextCurvatureRadius =
+                        elementInterfaces[i + 1].curvatureRadius.x;
+                    Float nextTheta = std::abs(
+                        std::asin(nextApertureRadius / nextCurvatureRadius));
+                    if (nextCurvatureRadius > 0) {
+                        zp1 = z + element.thickness + nextCurvatureRadius -
+                              nextApertureRadius / std::tan(nextTheta);
+                    } else {
+                        zp1 = z + element.thickness + nextCurvatureRadius +
+                              nextApertureRadius / std::tan(nextTheta);
+                    }
+
+                    // Connect tops
+                    printf("Line[{{%f, %f}, {%f, %f}}], ", zp0, h, zp1, h);
+                    printf("Line[{{%f, %f}, {%f, %f}}], ", zp0, -h, zp1, -h);
+
+                    // vertical lines when needed to close up the element profile
+                    if (element.apertureRadius.x < nextApertureRadius) {
+                        printf("Line[{{%f, %f}, {%f, %f}}], ", zp0, h, zp0, hlow);
+                        printf("Line[{{%f, %f}, {%f, %f}}], ", zp0, -h, zp0, -hlow);
+                    } else if (element.apertureRadius.x > nextApertureRadius) {
+                        printf("Line[{{%f, %f}, {%f, %f}}], ", zp1, h, zp1, hlow);
+                        printf("Line[{{%f, %f}, {%f, %f}}], ", zp1, -h, zp1, -hlow);
+                    }
+                    */
                 }
-
-                // Connect tops
-                printf("Line[{{%f, %f}, {%f, %f}}], ", zp0, h, zp1, h);
-                printf("Line[{{%f, %f}, {%f, %f}}], ", zp0, -h, zp1, -h);
-
-                // vertical lines when needed to close up the element profile
-                if (element.apertureRadius.x < nextApertureRadius) {
-                    printf("Line[{{%f, %f}, {%f, %f}}], ", zp0, h, zp0, hlow);
-                    printf("Line[{{%f, %f}, {%f, %f}}], ", zp0, -h, zp0, -hlow);
-                } else if (element.apertureRadius.x > nextApertureRadius) {
-                    printf("Line[{{%f, %f}, {%f, %f}}], ", zp1, h, zp1, hlow);
-                    printf("Line[{{%f, %f}, {%f, %f}}], ", zp1, -h, zp1, -hlow);
-                }
+            }
+        } else {
+            Float yStep = element.apertureRadius.x / 16;
+            Float rInit = element.apertureRadius.x;
+            Float lensZInit = z + computeZOfLensElement(std::abs(rInit), element);
+            Point2f lastPoint = toZXCoord(Point3f(rInit, 0, lensZInit), xForm);
+            for (Float r = element.apertureRadius.x; r >= -element.apertureRadius.x; r -= yStep) { 
+                Float lensZ = z + computeZOfLensElement(std::abs(r), element);
+                Point2f thisPoint = toZXCoord(Point3f(r, 0, lensZ), xForm);
+                printf("Line[{{%f, %f}, {%f, %f}}], ", lastPoint.x, lastPoint.y, thisPoint.x, thisPoint.y);
+                lastPoint = thisPoint;
             }
         }
         z += element.thickness;
     }
 
-    // 24mm height for 35mm film
-    printf("Line[{{0, -.012}, {0, .012}}], ");
+    float filmRadius = film.Diagonal() / (2.0f*std::sqrt(2.0f));
+    printf("Line[{{0, %f}, {0, %f}}], ", -filmRadius, filmRadius);
     // optical axis
     printf("Line[{{0, 0}, {%f, 0}}] ", 1.2f * sumz);
 }
@@ -2252,15 +2741,39 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
             return s[0];
         };
 
-        auto toLensElementInterface = [toVec2, toTransform, toIORSpectrum, apertureDiameter](json surf) {
+        auto toAsphericCoefficients = [lensFile](json jaspherics) {
+            std::vector<Float> coefficients;
+            if (jaspherics.is_null()) { // Perfectly fine to have no aspherics
+                return coefficients;
+            }
+
+            if (!(jaspherics.is_array())) {
+                Error("Invalid aspheric coefficients in lens specification file \"%s\","
+                    " must be an array of floats", lensFile.c_str());
+            }
+            for (int i = 0; i < jaspherics.size(); ++i) {
+                json coeff = jaspherics[i];
+                if (!coeff.is_number()) {
+                    Error("Invalid aspheric coefficients in lens specification file \"%s\","
+                        " must be an array of floats", lensFile.c_str());
+                }
+                coefficients.push_back((Float)coeff);
+            }
+            
+            return coefficients;
+        };
+
+        auto toLensElementInterface = [toVec2, toTransform, toIORSpectrum, apertureDiameter, toAsphericCoefficients](json surf) {
             OmniCamera::LensElementInterface result;
             // Convert mm to m
             result.apertureRadius   = toVec2(surf["semi_aperture"]) * (Float).001;
             result.conicConstant    = toVec2(surf["conic_constant"]) * (Float).001;
             result.curvatureRadius  = toVec2(surf["radius"]) * (Float).001;
             result.eta              = toIORSpectrum(surf["ior"]);
+            
             result.thickness        = Float(surf["thickness"]) * (Float).001;
             result.transform        = toTransform(surf["transform"]);
+            
             if (result.curvatureRadius.x == 0.0f) {
                 Float apertureRadius = apertureDiameter * (Float).001 / Float(2.);
                 if (apertureRadius > result.apertureRadius.x) {
@@ -2273,6 +2786,7 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
                     result.apertureRadius.y = apertureRadius;
                 }
             }
+            result.asphericCoefficients = toAsphericCoefficients(surf["aspheric_coefficients"]);
             return result;
         };
 
@@ -2446,6 +2960,7 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
                                              caFlag, diffractionEnabled,
                                              microlensData, microlensDims,
                                              microlensOffsets, microlensSensorOffset,
+                                             microlensSimulationRadius,
                                              apertureDiameter,
                                              std::move(apertureImage), alloc);
 }

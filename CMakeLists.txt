@@ -836,6 +836,7 @@ target_include_directories (pbrt_lib PUBLIC
   ${DOUBLE_CONVERSION_INCLUDE}
   ${NANOVDB_INCLUDE}
   ${CMAKE_CURRENT_BINARY_DIR}
+  ${GSL_INCLUDE_DIR}
 )
 if (PBRT_CUDA_ENABLED AND PBRT_OPTIX7_PATH)
     target_include_directories (pbrt_lib SYSTEM PUBLIC ${PBRT_OPTIX7_PATH}/include)
@@ -858,6 +859,7 @@ set (ALL_PBRT_LIBS
   ${OPENEXR_LIBS}
   Ptex_static
   ${ZLIB_LIBRARIES}
+  ${GSL_LIBRARIES}
   ${LIBDEFLATE_LIBRARIES}
   double-conversion
   ${PBRT_CUDA_LIB}

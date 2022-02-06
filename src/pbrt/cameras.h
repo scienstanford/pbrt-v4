@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <gsl/gsl_randist.h>
 
 namespace pbrt {
 
@@ -610,6 +611,9 @@ class OmniCamera : public CameraBase {
         Transform transform;
         Float thickness;
         Float eta;
+        std::vector<Float> asphericCoefficients;
+        Float zMin;
+        Float zMax;
         std::string ToString() const;
     };
     struct MicrolensData {
@@ -617,6 +621,8 @@ class OmniCamera : public CameraBase {
         float offsetFromSensor;
         std::vector<Vector2f> offsets;
         Vector2i dimensions;
+        // Non-physical term
+        int simulationRadius;
     };
 
     // OmniCamera Public Methods
@@ -626,6 +632,7 @@ class OmniCamera : public CameraBase {
                     bool caFlag, bool diffractionEnabled,
                     pstd::vector<OmniCamera::LensElementInterface>& microlensData,
                     Vector2i microlensDims, std::vector<Vector2f> & microlensOffsets, Float microlensSensorOffset,
+                    int microlensSimulationRadius,
                     Float apertureDiameter, Image apertureImage, Allocator alloc);
 
     static OmniCamera *Create(const ParameterDictionary &parameters,
@@ -667,7 +674,16 @@ class OmniCamera : public CameraBase {
   private:
     // OmniCamera Private Declarations
 
+    enum IntersectResult {MISS,CULLED_BY_APERTURE,HIT};
+
     // OmniCamera Private Methods
+    struct MicrolensElement {
+        Point2f center;
+        ConvexQuadf centeredBounds;
+        Point2i index;
+        Transform ComputeCameraToMicrolens() const;
+    };
+
     PBRT_CPU_GPU
     Float LensRearZ() const { return elementInterfaces.back().thickness; }
 
@@ -683,6 +699,8 @@ class OmniCamera : public CameraBase {
     Float RearElementRadius() const { return elementInterfaces.back().apertureRadius.x; }
 
     PBRT_CPU_GPU
+    // Float TraceLensesFromFilm(const Ray &ray, const std::vector<LensElementInterface>& interfaces, Ray *rOut,
+    //     const Transform CameraToLens, const ConvexQuadf& bounds) const;
     Float TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const;
 
     PBRT_CPU_GPU
@@ -710,6 +728,11 @@ class OmniCamera : public CameraBase {
         return true;
     }
 
+    void diffractHURB(Ray &rLens, const LensElementInterface &element, const Float t) const;
+
+      // GSL seed(?) for random number generation
+    gsl_rng * r;
+
     PBRT_CPU_GPU
     Float TraceLensesFromScene(const Ray &rCamera, Ray *rOut) const;
 
@@ -719,15 +742,30 @@ class OmniCamera : public CameraBase {
 
     static void ComputeCardinalPoints(Ray rIn, Ray rOut, Float *p, Float *f);
     void ComputeThickLensApproximation(Float pz[2], Float f[2]) const;
+    Float FocusBinarySearch(Float focusDistance);
     Float FocusThickLens(Float focusDistance);
+    Float FocusDistance(Float filmDist);
     Bounds2f BoundExitPupil(Float filmX0, Float filmX1) const;
     void RenderExitPupil(Float sx, Float sy, const char *filename) const;
 
     PBRT_CPU_GPU
+    IntersectResult TraceElement(const LensElementInterface &element, const Ray& rLens, const Float& elementZ,
+         Float& t, Normal3f& n, bool& isStop, const ConvexQuadf& bounds) const;
+
+    PBRT_CPU_GPU
     pstd::optional<ExitPupilSample> SampleExitPupil(Point2f pFilm, Point2f uLens) const;
-    pstd::optional<ExitPupilSample> SampleMicrolensPupil(Point2f pFilm, Point2f uLens) const;
 
     void TestExitPupilBounds() const;
+
+    Point2i MicrolensIndex(const Point2f &p) const;
+    Point2f MicrolensCenterFromIndex(const Point2i &idx) const;
+    MicrolensElement MicrolensElementFromIndex(const Point2i &idx) const;
+    MicrolensElement ComputeMicrolensElement(const Ray &filmRay) const;
+
+    PBRT_CPU_GPU
+    pstd::optional<ExitPupilSample> SampleMicrolensPupil(Point2f pFilm, Point2f uLens) const;
+
+    bool HasMicrolens() const;
 
     // OmniCamera Private Members
     Bounds2f physicalExtent;
