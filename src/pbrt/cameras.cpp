@@ -1879,7 +1879,11 @@ Float OmniCamera::TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const {
     Ray rLens(Point3f(rCamera.o.x, rCamera.o.y, -rCamera.o.z),
               Vector3f(rCamera.d.x, rCamera.d.y, -rCamera.d.z), rCamera.time);
 
-    rLens.wavelength = 550; // tmp
+    if(rOut){
+        rLens.wavelength = rOut->wavelength;
+    } else {
+        rLens.wavelength = 550;
+    }
 
     for (int i = elementInterfaces.size() - 1; i >= 0; --i) {
         const LensElementInterface &element = elementInterfaces[i];
@@ -1928,14 +1932,43 @@ Float OmniCamera::TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const {
 
         // Update ray path for element interface interaction
         if (!isStop) {
+            rLens.o = rLens(t);
             Vector3f w;
-            Float eta_i = element.eta;
-            Float eta_t = (i > 0 && elementInterfaces[i - 1].eta != 0)
-                              ? elementInterfaces[i - 1].eta
-                              : 1;
+
+            // Thomas Goossens spectral modification using SampeldSpectrum
+            Float spectralEtaI; element.etaspectral.GetValueAtWavelength(rLens.wavelength,&spectralEtaI);
+            Float spectralEtaT; elementInterfaces[i - 1].etaspectral.GetValueAtWavelength(rLens.wavelength,&spectralEtaT);
+
+            Float eta_i = spectralEtaI;
+            Float eta_t = (i > 0 && spectralEtaT != 0)
+                             ? spectralEtaT
+                             : 1;           
+            // Float eta_i = element.eta;
+            // Float eta_t = (i > 0 && elementInterfaces[i - 1].eta != 0)
+            //                   ? elementInterfaces[i - 1].eta
+            //                   : 1;
+
+            // Added by Trisha and Zhenyi (5/18)
+            if(caFlag && (rLens.wavelength >= 400) && (rLens.wavelength <= 700))
+            {     
+            
+                
+                if (eta_i != 1)
+                    eta_i = (rLens.wavelength - 550) * -.04/(300)  +  eta_i;
+                if (eta_t != 1)
+                    eta_t = (rLens.wavelength - 550) * -.04/(300)  +  eta_t;
+            }
+                        
             if (!Refract(Normalize(-rLens.d), n, eta_t / eta_i, nullptr, &w))
                 return 0;
             rLens.d = w;
+        }else{ // We are add stop, so we optionally enable HURB diffraction
+              if (diffractionEnabled) {
+                // DEBUG: Check direction did change
+                // std::cout << "rLens.d = (" << rLens.d.x << "," << rLens.d.y << "," << rLens.d.z << ")" << std::endl;
+                // Adjust ray direction using HURB diffraction
+                diffractHURB(rLens, element, t);
+            }
         }
     }
     // Transform _rLens_ from lens system space back to camera space
@@ -2711,7 +2744,10 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
             // Stored in columns in json, but pbrt stores matrices
             // in row-major order.
             if (jiors.is_number()) { // Perfectly fine to have no transform
-                return (Float)jiors;
+                SampledSpectrum iors((Float)jiors);
+                // return (Float)jiors;
+                return iors;
+
             }
             if (!(jiors.is_array()) || (jiors.size() != 2) || (!jiors[0].is_array())
                 || (!jiors[1].is_array()) || (jiors[0].size() != jiors[1].size())
@@ -2728,9 +2764,14 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
                 wavelengths[i] = (Float)jiors[0][i];
                 iors[i] = (Float)jiors[1][i];
             }
+            // Resample spectrum
+            SampledWavelengths lambda = SampledWavelengths::SampleUniform(0);
             PiecewiseLinearSpectrum s_tmp(pstd::MakeSpan(wavelengths), pstd::MakeSpan(iors));
-            SampledSpectrum s; // tmp
-            // SampledSpectrum s = SampledSpectrum::SampledSpectrum(wavelengths.data(), iors.data(), (int)numSamples);
+            SampledSpectrum s;
+            for (int i=0; i<NSpectrumSamples;++i){
+                s[i] = s_tmp(lambda[i]);
+            }
+            /* TG: This original piece of code checked whether the spectrum is constant when given, because it was not yet supported
             for (int i = 0; i < numSamples-1; ++i) {
                 if (!(s[i] == s[i + 1])) {
                     Error("Invalid ior in lens specification file \"%s\","
@@ -2738,7 +2779,8 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
                         lensFile.c_str());
                 }
             }
-            return s[0];
+            */
+            return s;
         };
 
         auto toAsphericCoefficients = [lensFile](json jaspherics) {
@@ -2769,7 +2811,8 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
             result.apertureRadius   = toVec2(surf["semi_aperture"]) * (Float).001;
             result.conicConstant    = toVec2(surf["conic_constant"]) * (Float).001;
             result.curvatureRadius  = toVec2(surf["radius"]) * (Float).001;
-            result.eta              = toIORSpectrum(surf["ior"]);
+            result.etaspectral      = toIORSpectrum(surf["ior"]);
+            result.eta              = result.etaspectral[0]; //for backwards compatibility during refactor (TG)
             
             result.thickness        = Float(surf["thickness"]) * (Float).001;
             result.transform        = toTransform(surf["transform"]);
