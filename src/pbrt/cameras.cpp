@@ -1876,8 +1876,8 @@ Float OmniCamera::TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const {
     Float elementZ = 0, weight = 1;
 
     // Transform _rCamera_ from camera to lens system space
-    Ray rLens(Point3f(rCamera.o.x, rCamera.o.y, -rCamera.o.z),
-              Vector3f(rCamera.d.x, rCamera.d.y, -rCamera.d.z), rCamera.time);
+    const Transform LensFromCamera = Scale(1, 1, -1);
+    Ray rLens = LensFromCamera(rCamera);
 
     if(rOut){
         rLens.wavelength = rOut->wavelength;
@@ -1893,11 +1893,12 @@ Float OmniCamera::TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const {
         Float t;
         Normal3f n;
         bool isStop = (element.curvatureRadius.x == 0);
-
+        // Omni Camera method
         IntersectResult result = TraceElement(element, rLens, elementZ, t, n, isStop, bounds);
         if (result != HIT)
             return 0;
 
+        /* PBRT Method
         if (isStop) {
             // Compute _t_ at plane of aperture stop
             t = (elementZ - rLens.o.z) / rLens.d.z;
@@ -1912,6 +1913,7 @@ Float OmniCamera::TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const {
                 return 0;
         }
         DCHECK_GE(t, 0);
+        */
 
         // Test intersection point against element aperture
         Point3f pHit = rLens(t);
@@ -1932,27 +1934,24 @@ Float OmniCamera::TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const {
 
         // Update ray path for element interface interaction
         if (!isStop) {
-            rLens.o = rLens(t);
             Vector3f w;
 
             // Thomas Goossens spectral modification using SampeldSpectrum
-            Float spectralEtaI; element.etaspectral.GetValueAtWavelength(rLens.wavelength,&spectralEtaI);
-            Float spectralEtaT; elementInterfaces[i - 1].etaspectral.GetValueAtWavelength(rLens.wavelength,&spectralEtaT);
+            // Float spectralEtaI; element.etaspectral.GetValueAtWavelength(rLens.wavelength,&spectralEtaI);
+            // Float spectralEtaT; elementInterfaces[i - 1].etaspectral.GetValueAtWavelength(rLens.wavelength,&spectralEtaT);
 
-            Float eta_i = spectralEtaI;
-            Float eta_t = (i > 0 && spectralEtaT != 0)
-                             ? spectralEtaT
-                             : 1;           
-            // Float eta_i = element.eta;
-            // Float eta_t = (i > 0 && elementInterfaces[i - 1].eta != 0)
-            //                   ? elementInterfaces[i - 1].eta
-            //                   : 1;
+            // Float eta_i = spectralEtaI;
+            // Float eta_t = (i > 0 && spectralEtaT != 0)
+            //                  ? spectralEtaT
+            //                  : 1;           
+            Float eta_i = element.eta;
+            Float eta_t = (i > 0 && elementInterfaces[i - 1].eta != 0)
+                              ? elementInterfaces[i - 1].eta
+                              : 1;
 
             // Added by Trisha and Zhenyi (5/18)
             if(caFlag && (rLens.wavelength >= 400) && (rLens.wavelength <= 700))
             {     
-            
-                
                 if (eta_i != 1)
                     eta_i = (rLens.wavelength - 550) * -.04/(300)  +  eta_i;
                 if (eta_t != 1)
@@ -2275,11 +2274,12 @@ Float OmniCamera::TraceLensesFromScene(const Ray &rCamera, Ray *rOut) const {
         Float t;
         Normal3f n;
         bool isStop = (element.curvatureRadius.x == 0);
-
+        // Omni method
         IntersectResult result = TraceElement(element, rLens, elementZ, t, n, isStop);
         if (result != HIT)
             return 0;
-
+        
+        /* PBRT method
         if (isStop) {
             t = (elementZ - rLens.o.z) / rLens.d.z;
             if (t < 0)
@@ -2290,6 +2290,7 @@ Float OmniCamera::TraceLensesFromScene(const Ray &rCamera, Ray *rOut) const {
             if (!IntersectSphericalElement(radius, zCenter, rLens, &t, &n))
                 return 0;
         }
+        */
 
         // Test intersection point against element aperture
         // Don't worry about the aperture image here.
@@ -3007,4 +3008,5 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
                                              apertureDiameter,
                                              std::move(apertureImage), alloc);
 }
+
 }  // namespace pbrt
