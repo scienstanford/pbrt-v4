@@ -700,9 +700,10 @@ class OmniCamera : public CameraBase {
     PBRT_CPU_GPU
     Float RearElementRadius() const { return elementInterfaces.back().apertureRadius.x; }
 
-    PBRT_CPU_GPU
+    
     // Float TraceLensesFromFilm(const Ray &ray, const std::vector<LensElementInterface>& interfaces, Ray *rOut,
     //     const Transform CameraToLens, const ConvexQuadf& bounds) const;
+    PBRT_CPU_GPU
     Float TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const;
 
     PBRT_CPU_GPU
@@ -730,6 +731,7 @@ class OmniCamera : public CameraBase {
         return true;
     }
 
+    // PBRT_CPU_GPU
     void diffractHURB(Ray &rLens, const LensElementInterface &element, const Float t) const;
 
       // GSL seed(?) for random number generation
@@ -767,7 +769,7 @@ class OmniCamera : public CameraBase {
     PBRT_CPU_GPU
     pstd::optional<ExitPupilSample> SampleMicrolensPupil(Point2f pFilm, Point2f uLens) const;
 
-    bool HasMicrolens() const;
+    // bool HasMicrolens() const;
 
     // OmniCamera Private Members
     Bounds2f physicalExtent;

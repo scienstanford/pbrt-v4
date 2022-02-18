@@ -1830,7 +1830,6 @@ void OmniCamera::diffractHURB(Ray &rLens, const LensElementInterface &element, c
 OmniCamera::IntersectResult OmniCamera::TraceElement(const LensElementInterface &element, const Ray& rLens, 
     const Float& elementZ, Float& t, Normal3f& n, bool& isStop, 
     const ConvexQuadf& bounds = ConvexQuadf()) const {
-    isStop = (element.curvatureRadius.x == 0) && (element.asphericCoefficients.size() == 0);
     auto invTransform = Inverse(element.transform);
     Ray rElement = invTransform(rLens);
     if (isStop) {
@@ -1840,9 +1839,10 @@ OmniCamera::IntersectResult OmniCamera::TraceElement(const LensElementInterface 
         t = (elementZ - rElement.o.z) / rElement.d.z;
         if (rElement.d.z == 0.0 || t < 0) return MISS;
     } else {
-        if (element.asphericCoefficients.size() > 0) {
-            if (!IntersectAsphericalElement(element, elementZ, rElement, &t, &n))
-                return MISS;
+        if (0) {
+        // if (element.asphericCoefficients.size() > 0) {
+            // if (!IntersectAsphericalElement(element, elementZ, rElement, &t, &n))
+            //     return MISS; // Aspherical is not working for GPU now --Zhenyi
         } else {
             Float radius = element.curvatureRadius.x;
             Float zCenter = elementZ + element.curvatureRadius.x;
@@ -1893,6 +1893,7 @@ Float OmniCamera::TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const {
         Float t;
         Normal3f n;
         bool isStop = (element.curvatureRadius.x == 0);
+        // bool isStop = (element.curvatureRadius.x == 0) && (element.asphericCoefficients.size() == 0);
         // Omni Camera method
         IntersectResult result = TraceElement(element, rLens, elementZ, t, n, isStop, bounds);
         if (result != HIT)
@@ -2072,7 +2073,7 @@ Bounds2f OmniCamera::BoundExitPupil(Float filmX0, Float filmX1) const {
     Bounds2f projRearBounds(Point2f(-1.5f * rearRadius, -1.5f * rearRadius) + xy,
                             Point2f(1.5f * rearRadius, 1.5f * rearRadius) + xy);
 
-    if (HasMicrolens()){
+    if (microlens.elementInterfaces.size() > 0){
         return projRearBounds;
     }
 
@@ -2223,7 +2224,7 @@ pstd::optional<CameraRay> OmniCamera::GenerateRay(CameraSample sample,
 
     // Trace ray from _pFilm_ through lens system
     pstd::optional<ExitPupilSample> eps;
-    if (HasMicrolens()){
+    if (microlens.elementInterfaces.size() > 0){
         eps = SampleMicrolensPupil(Point2f(pFilm.x, pFilm.y), sample.pLens);
     } else {
         eps = SampleExitPupil(Point2f(pFilm.x, pFilm.y), sample.pLens);
@@ -2252,9 +2253,9 @@ pstd::optional<CameraRay> OmniCamera::GenerateRay(CameraSample sample,
     return CameraRay{ray, SampledSpectrum(weight)};
 }
 
-bool OmniCamera::HasMicrolens() const {
-    return microlens.elementInterfaces.size() > 0;
-}
+// bool OmniCamera::HasMicrolens() const {
+//     return microlens.elementInterfaces.size() > 0;
+// }
 // STAT_PERCENT("Camera/Rays vignetted by lens system", vignettedRays, totalRays);
 
 std::string OmniCamera::LensElementInterface::ToString() const {
@@ -2274,6 +2275,7 @@ Float OmniCamera::TraceLensesFromScene(const Ray &rCamera, Ray *rOut) const {
         Float t;
         Normal3f n;
         bool isStop = (element.curvatureRadius.x == 0);
+        // bool isStop = (element.curvatureRadius.x == 0) && (element.asphericCoefficients.size() == 0);
         // Omni method
         IntersectResult result = TraceElement(element, rLens, elementZ, t, n, isStop);
         if (result != HIT)
