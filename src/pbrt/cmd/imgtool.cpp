@@ -10,7 +10,6 @@
 #include <pbrt/util/check.h>
 #include <pbrt/util/color.h>
 #include <pbrt/util/colorspace.h>
-#include <pbrt/util/error.h>
 #include <pbrt/util/file.h>
 #include <pbrt/util/image.h>
 #include <pbrt/util/log.h>
@@ -36,6 +35,8 @@ extern "C" {
 #include <cstdlib>
 #include <map>
 #include <string>
+#include <iostream>
+#include <fstream>
 
 #include <flip.h>
 
@@ -78,7 +79,7 @@ static std::map<std::string, CommandUsage> commandUsage = {
       "Assemble multiple images representing cropped regions of a larger\n"
       "    image into a single composite image.",
       std::string(R"(
-    --outfile <name>   Output image filename.
+    --outfile          Output image filename.
 )")}},
     {"average",
      {"average [options] <filename base>",
@@ -86,7 +87,7 @@ static std::map<std::string, CommandUsage> commandUsage = {
       "    The constituent images are specified with a path that gives their\n"
       "    prefix.",
       std::string(R"(
-    --outfile <name>   Output image filename.
+    --outfile          Output image filename.
 )")}},
     {"cat",
      {"cat [options] <filename>",
@@ -105,7 +106,7 @@ static std::map<std::string, CommandUsage> commandUsage = {
                        image. Default: 5
     --level <n>        Minimum RGB value for a pixel for it to contribute to bloom.
                        Default: Infinity (i.e., no bloom is applied)
-    --outfile <name>   Output image filename.
+    --outfile          Output image filename.
     --scale <s>        Amount by which the bloom image is scaled before being
                        added to the original image. Default: 0.3
     --width <w>        Width of Gaussian used to generate bloom images.
@@ -128,11 +129,20 @@ static std::map<std::string, CommandUsage> commandUsage = {
     --despike <v>      For any pixels with a luminance value greater than <v>,
                        replace the pixel with the median of the 3x3 neighboring
                        pixels. Default: infinity (i.e., disabled).
+    --exr2bin [<ch1,ch2...>|<chx:chy>]
+                       Convert input .exr file to binary file according to channels specified.
+                       --outfile <path\to\output\dir\filename> can be specifiled for output path.
+                       e.g. imgtool convert --exr2bin 1,2,3,5 pbrt.exr
+                       e.g. imgtool convert --exr2bin 1:5 pbrt.exr
+                       e.g. imgtool convert --exr2bin B,G,R,Radiance.C05 pbrt.exr
+                       e.g. imgtool convert --exr2bin Radiance --outfile /path/to/dir/ pbrt.exr
+                       e.g. imgtool convert --exr2bin Radiance --outfile /path/to/dir/filename pbrt.exr
+                       Default: all channels at the same directory with pbrt.exr
     --flipy            Flip the image along the y axis
     --gamma <v>        Apply a gamma curve with exponent v. (Default: 1 (none)).
     --maxluminance <n> Luminance value mapped to white by tonemapping.
                        Default: 1
-    --outfile <name>   Output image filename.
+    --outfile          Output image filename.
     --preservecolors   By default, out-of-gammut colors have each component
                        clamped to [0,1] when written to non-HDR formats. With
                        this option enabled, such colors are scaled by their
@@ -183,10 +193,10 @@ static std::map<std::string, CommandUsage> commandUsage = {
       "   reference image. All image files starting with <filename prefix>\n"
       "    are used to compute error.",
       std::string(R"(
-    --crop <x0,x1,y0,y1> Crop images before performing diff.
-    --errorfile <name>   Output average error image.
-    --metric <name>      Error metric to use. (Options: "MAE", MSE", "MRSE")
-    --reference <name>   Reference image filename.
+   --crop <x0,x1,y0,y1> Crop images before performing diff.
+   --errorfile <name>   Output average error image.
+   --metric <name>      Error metric to use. (Options: "MAE", MSE", "MRSE")
+   --reference <name>   Reference image filename.
 )")}},
     {"falsecolor",
      {"falsecolor [options] <filename>",
@@ -258,9 +268,9 @@ static std::map<std::string, CommandUsage> commandUsage = {
       "Apply white balancing to the specified image.", std::string(R"(
     --illuminant <n>   Apply white balance for the given standard illuminant
                        (e.g. D65, D50, A, F1, F2, ...)
-    --outfile <name>   Filename to store result image.
-    --primaries <x,y>  Apply white balance for the primaries (x,y).
-    --temperature <T>  Apply white balance for a color temperature T.
+    --outfile <name>   Filename to store result image
+    --primaries <x,y>  Apply white balance for the primaries (x,y)
+    --temperature <T>  Apply white balance for a color temperature T
 )")}},
 
 };
@@ -310,42 +320,6 @@ int help(std::vector<std::string> args) {
         }
     }
     return 0;
-}
-
-static bool checkImageCompatibility(std::string fn1, const Image &im1, const RGBColorSpace *cs1,
-                                    std::string fn2, const Image &im2, const RGBColorSpace *cs2) {
-    if (im1.Resolution() != im2.Resolution()) {
-        Error("%s: image resolution (%d, %d) doesn't match \"%s\" (%d, %d).",
-              fn1.c_str(), im1.Resolution().x, im1.Resolution().y, fn2.c_str(),
-              im2.Resolution().x, im2.Resolution().y);
-        return false;
-    }
-    if (im1.NChannels() != im2.NChannels()) {
-        Error("%s: image channel count %d doesn't match \"%s\", %d.",
-              fn1.c_str(), im1.NChannels(), fn2.c_str(), im2.NChannels());
-        return false;
-    }
-    if (im1.ChannelNames() != im2.ChannelNames()) {
-        auto print = [](const std::vector<std::string> &n) {
-            std::string s = n[0];
-            for (size_t i = 1; i < n.size(); ++i) {
-                s += ", ";
-                s += n[i];
-            }
-            return s;
-        };
-        Error("%s: warning: image channel names \"%s\" don't match \"%s\" with \"%s\".",
-              fn1.c_str(), print(im1.ChannelNames()).c_str(), fn2.c_str(),
-              print(im2.ChannelNames()).c_str());
-        return false;
-    }
-
-    if (*cs1 != *cs2) {
-        Error("%s: color space does not match \"%s\".", fn1, fn2);
-        return false;
-    }
-
-    return true;
 }
 
 int makesky(std::vector<std::string> args) {
@@ -483,13 +457,16 @@ int assemble(std::vector<std::string> args) {
         ImageMetadata &metadata = im.metadata;
 
         if (!metadata.fullResolution) {
-            Error("%s: doesn't have full resolution in image metadata. Skipping.",
-                  file);
+            fprintf(stderr,
+                    "%s: doesn't have full resolution in image metadata. "
+                    "Skipping.\n",
+                    file.c_str());
             continue;
         }
         if (!metadata.pixelBounds) {
-            Error("%s: doesn't have pixel bounds in image metadata. Skipping.",
-                  file);
+            fprintf(stderr,
+                    "%s: doesn't have pixel bounds in image metadata. Skipping.\n",
+                    file.c_str());
             continue;
         }
 
@@ -504,30 +481,38 @@ int assemble(std::vector<std::string> args) {
             // Make sure that this image's info is compatible with the
             // first image's.
             if (*metadata.fullResolution != fullImage.Resolution()) {
-                Warning("%s: full resolution (%d, %d) in EXR file doesn't match the full resolution of first EXR file (%d, %d). "
-                      "Ignoring this file.", file, metadata.fullResolution->x,
-                      metadata.fullResolution->y, fullImage.Resolution().x,
-                      fullImage.Resolution().y);
+                fprintf(stderr,
+                        "%s: full resolution (%d, %d) in EXR file doesn't match "
+                        "the full resolution of first EXR file (%d, %d). "
+                        "Ignoring this file.\n",
+                        file.c_str(), metadata.fullResolution->x,
+                        metadata.fullResolution->y, fullImage.Resolution().x,
+                        fullImage.Resolution().y);
                 continue;
             }
             if (Union(*metadata.pixelBounds, fullBounds) != fullBounds) {
-                Warning("%s: pixel bounds (%d, %d) - (%d, %d) in EXR file isn't inside the the full image (0, 0) - (%d, %d). "
-                        "Ignoring this file.", file, metadata.pixelBounds->pMin.x,
+                fprintf(stderr,
+                        "%s: pixel bounds (%d, %d) - (%d, %d) in EXR file isn't "
+                        "inside the the full image (0, 0) - (%d, %d). Ignoring "
+                        "this file.\n",
+                        file.c_str(), metadata.pixelBounds->pMin.x,
                         metadata.pixelBounds->pMin.y, metadata.pixelBounds->pMax.x,
                         metadata.pixelBounds->pMax.y, fullBounds.pMax.x,
                         fullBounds.pMax.y);
                 continue;
             }
             if (fullImage.NChannels() != image.NChannels()) {
-                Warning("%s: %d channel image; expecting %d channels.",
-                        file, image.NChannels(), fullImage.NChannels());
+                fprintf(stderr, "%s: %d channel image; expecting %d channels.\n",
+                        file.c_str(), image.NChannels(), fullImage.NChannels());
                 continue;
             }
             const RGBColorSpace *cs = metadata.GetColorSpace();
             if (*cs != *colorSpace) {
-                Warning("%s: color space (%s) doesn't match first image's color space (%s).",
-                        file, cs->ToString(),
-                        colorSpace->ToString());
+                fprintf(stderr,
+                        "%s: color space (%s) doesn't match first image's color "
+                        "space (%s).\n",
+                        file.c_str(), cs->ToString().c_str(),
+                        colorSpace->ToString().c_str());
                 continue;
             }
         }
@@ -554,16 +539,13 @@ int assemble(std::vector<std::string> args) {
                 ++unseenPixels;
 
     if (seenMultiple > 0)
-        Warning("%s: %d pixels present in multiple images.", outfile,
+        fprintf(stderr, "%s: %d pixels present in multiple images.\n", outfile.c_str(),
                 seenMultiple);
     if (unseenPixels > 0)
-        Warning("%s: %d pixels not present in any images.", outfile,
+        fprintf(stderr, "%s: %d pixels not present in any images.\n", outfile.c_str(),
                 unseenPixels);
 
-    ImageMetadata outMetadata;
-    outMetadata.colorSpace = colorSpace;
-
-    fullImage.Write(outfile, outMetadata);
+    fullImage.Write(outfile);
 
     return 0;
 }
@@ -602,13 +584,16 @@ int splitn(std::vector<std::string> args) {
     for (const std::string &file : infiles) {
         ImageAndMetadata im = Image::Read(file);
         Image &image = im.image;
-
-        if (!colorSpace)
-            colorSpace = im.metadata.GetColorSpace();
-        else if (!checkImageCompatibility(infiles[0], images.front(), colorSpace,
-                                          file, image, im.metadata.GetColorSpace()))
-            return false;
-
+        if (!images.empty()) {
+            if (image.Resolution() != images.front().Resolution()) {
+                fprintf(stderr, "%s: image resolution mismatch.\n", file.c_str());
+                return 1;
+            }
+            if (image.NChannels() != images.front().NChannels()) {
+                fprintf(stderr, "%s: image channel count mismatch.\n", file.c_str());
+                return 1;
+            }
+        }
         images.push_back(image);
     }
 
@@ -704,14 +689,9 @@ int splitn(std::vector<std::string> args) {
         }
     }
 
-    // TODO: we could try to be more clever about carrying through more
-    // metadata, when applciable.
-    ImageMetadata outMetadata;
-    outMetadata.colorSpace = colorSpace;
-
-    result.Write(outfile, outMetadata);
+    result.Write(outfile);
     if (crops.size())
-        cropsImage.Write(std::string("crops-") + outfile, outMetadata);
+        cropsImage.Write(std::string("crops-") + outfile);
 
     return 0;
 }
@@ -742,7 +722,7 @@ int scalenormalmap(std::vector<std::string> args) {
     const Image &image = im.image;
     ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
     if (!rgbDesc) {
-        Error("%s: doesn't have R, G, B channels.", filename);
+        fprintf(stderr, "%s: doesn't have R, G, B channels.\n", filename.c_str());
         return 1;
     }
 
@@ -763,7 +743,7 @@ int scalenormalmap(std::vector<std::string> args) {
             scaledImage.SetChannels({x, y}, rgbDesc, rgb);
         }
 
-    if (!scaledImage.Write(outfile, im.metadata))
+    if (!scaledImage.Write(outfile))
         return 1;
 
     return 0;
@@ -851,6 +831,43 @@ int cat(std::vector<std::string> args) {
     return 0;
 }
 
+static bool checkImageCompatibility(const std::string &fn1, const Image &im1,
+                                    const std::string &fn2, const Image &im2) {
+    if (im1.Resolution() != im2.Resolution()) {
+        fprintf(stderr, "%s: image resolution (%d, %d) doesn't match \"%s\" (%d, %d).",
+                fn1.c_str(), im1.Resolution().x, im1.Resolution().y, fn2.c_str(),
+                im2.Resolution().x, im2.Resolution().y);
+        return false;
+    }
+    if (im1.NChannels() != im2.NChannels()) {
+        fprintf(stderr, "%s: image channel count %d doesn't match \"%s\", %d.",
+                fn1.c_str(), im1.NChannels(), fn2.c_str(), im2.NChannels());
+        return false;
+    }
+    if (im1.ChannelNames() != im2.ChannelNames()) {
+        auto print = [](const std::vector<std::string> &n) {
+            std::string s = n[0];
+            for (size_t i = 1; i < n.size(); ++i) {
+                s += ", ";
+                s += n[i];
+            }
+            return s;
+        };
+        fprintf(stderr,
+                "%s: warning: image channel names \"%s\" don't match \"%s\" "
+                "with \"%s\".",
+                fn1.c_str(), print(im1.ChannelNames()).c_str(), fn2.c_str(),
+                print(im2.ChannelNames()).c_str());
+    }
+
+#if 0
+    if (*md1.GetColorSpace() != *md2.GetColorSpace())
+        fprintf(stderr, "%s: warning: : computing difference of images with different "
+                "color spaces!");
+#endif
+    return true;
+}
+
 int average(std::vector<std::string> args) {
     std::string avgFile, filenameBase;
 
@@ -875,13 +892,12 @@ int average(std::vector<std::string> args) {
 
     std::vector<std::string> filenames = MatchingFilenames(filenameBase);
     if (filenames.empty()) {
-        Error("%s: no matching filenames!", filenameBase);
+        fprintf(stderr, "%s: no matching filenames!\n", filenameBase.c_str());
         return 1;
     }
 
     // Compute average image
     ThreadLocal<Image> avgImages;
-    ThreadLocal<const RGBColorSpace *> colorSpaces;
     std::atomic<bool> failed{false};
 
     ParallelFor(0, filenames.size(), [&](size_t i) {
@@ -889,11 +905,9 @@ int average(std::vector<std::string> args) {
         Image &im = imRead.image;
 
         Image &avg = avgImages.Get();
-        if (avg.Resolution() == Point2i(0, 0)) {
+        if (avg.Resolution() == Point2i(0, 0))
             avg = Image(PixelFormat::Float, im.Resolution(), im.ChannelNames());
-            colorSpaces.Get() = imRead.metadata.GetColorSpace();
-        } else if (!checkImageCompatibility(filenames[i], im, imRead.metadata.GetColorSpace(),
-                                            filenames[0], avg, colorSpaces.Get())) {
+        else if (!checkImageCompatibility(filenames[i], im, filenames[0], avg)) {
             failed = true;
             return;
         }
@@ -932,14 +946,7 @@ int average(std::vector<std::string> args) {
         }
     });
 
-    ImageMetadata avgMetadata;
-    colorSpaces.ForAll([&](const RGBColorSpace *cs) {
-        // Will redundantly set it, but whatever.
-        avgMetadata.colorSpace = cs;
-    });
-
-    if (!avgImage.Write(avgFile, avgMetadata))
-        return 1;
+    CHECK(avgImage.Write(avgFile));
 
     return 0;
 }
@@ -974,7 +981,7 @@ int error(std::vector<std::string> args) {
 
     std::vector<std::string> filenames = MatchingFilenames(filenameBase);
     if (filenames.empty()) {
-        Error("%s: no matching filenames!", filenameBase);
+        fprintf(stderr, "%s: no matching filenames!\n", filenameBase.c_str());
         return 1;
     }
 
@@ -1008,6 +1015,7 @@ int error(std::vector<std::string> args) {
 
     ThreadLocal<double> sumErrors;
     std::vector<int> spp(filenames.size());
+    std::atomic<bool> failed{false};
     ParallelFor(0, filenames.size(), [&](size_t i) {
         ImageAndMetadata imRead = Image::Read(filenames[i]);
         Image &im = imRead.image;
@@ -1041,10 +1049,14 @@ int error(std::vector<std::string> args) {
 
     for (int i = 1; i < filenames.size(); ++i) {
         if (spp[i] != spp[0]) {
-            Error("%s: spp %d mismatch. %s has %d.", filenames[i], spp[i], filenames[0], spp[0]);
+            printf("%s: spp %d mismatch. %s has %d.\n", filenames[i].c_str(), spp[i],
+                   filenames[0].c_str(), spp[0]);
             return 1;
         }
     }
+
+    if (failed)
+        return 1;
 
     double sumError = 0.;
     sumErrors.ForAll([&sumError](double err) { sumError += err; });
@@ -1140,14 +1152,15 @@ int diff(std::vector<std::string> args) {
     ImageChannelDesc refDesc = refImage.GetChannelDesc(splitChannels);
     ImageChannelDesc imgDesc = image.GetChannelDesc(splitChannels);
     if (refDesc.size() != splitChannels.size()) {
-        Error("%s: image does not have \"%s\" channels.", referenceFile, channels);
+        fprintf(stderr, "%s: image does not have \"%s\" channels.\n",
+                referenceFile.c_str(), channels.c_str());
         return 1;
     }
     refImage = refImage.SelectChannels(refDesc);
 
     if (imgDesc.size() != splitChannels.size()) {
-        Error("%s: image does not have \"%s\" channels.", imageFile,
-              channels);
+        fprintf(stderr, "%s: image does not have \"%s\" channels.\n", imageFile.c_str(),
+                channels.c_str());
         return 1;
     }
     image = image.SelectChannels(imgDesc);
@@ -1157,9 +1170,17 @@ int diff(std::vector<std::string> args) {
         image = image.Crop(
             Bounds2i({cropWindow[0], cropWindow[2]}, {cropWindow[1], cropWindow[3]}));
 
-    if (!checkImageCompatibility(imageFile, image, im.metadata.GetColorSpace(),
-                                 referenceFile, refImage, refMetadata.GetColorSpace()))
+    if (image.Resolution() != refImage.Resolution()) {
+        fprintf(stderr,
+                "%s: image resolution (%d, %d) doesn't match reference (%d, %d)\n",
+                imageFile.c_str(), image.Resolution().x, image.Resolution().y,
+                refImage.Resolution().x, refImage.Resolution().y);
         return 1;
+    }
+
+    if (*im.metadata.GetColorSpace() != *refMetadata.GetColorSpace())
+        fprintf(stderr, "Warning: computing difference of images with different "
+                        "color spaces!");
 
     // Clamp Infs
     int nClamped = 0, nRefClamped = 0;
@@ -1176,9 +1197,10 @@ int diff(std::vector<std::string> args) {
                 }
             }
     if (nClamped > 0)
-        Warning("%s: clamped %d infinite pixel values.", imageFile, nClamped);
+        fprintf(stderr, "%s: clamped %d infinite pixel values.\n", imageFile.c_str(),
+                nClamped);
     if (nRefClamped > 0)
-        Warning("%s: clamped %d infinite pixel values.", referenceFile,
+        fprintf(stderr, "%s: clamped %d infinite pixel values.\n", referenceFile.c_str(),
                 nRefClamped);
 
     // Image averages. Compute before FLIP potentially goes and clamps things...
@@ -1196,8 +1218,9 @@ int diff(std::vector<std::string> args) {
     else {
         // FLIP
         if (refImage.NChannels() != 3) {
-            Error("%s: only 3 channel images are currently supported for FLIP.",
-                  referenceFile);
+            fprintf(stderr,
+                    "%s: only 3 channel images are currently supported for FLIP.\n",
+                    referenceFile.c_str());
             return 1;
         }
 
@@ -1244,7 +1267,7 @@ int diff(std::vector<std::string> args) {
            referenceFile, imageAverage, refAverage, deltaString, metric, error.Average());
 
     if (!outFile.empty()) {
-        if (!errorImage.Write(outFile, im.metadata))
+        if (!errorImage.Write(outFile))
             return 1;
     }
 
@@ -1290,8 +1313,8 @@ static void printImageStats(const char *name, const Image &image,
         int m = int(s) / 60;
         s -= m * 60;
 
-        printf("\trender time: %dh %dm %.02fs (total %.02fs)\n", h, m, s,
-               *metadata.renderTimeSeconds);
+        printf("\trender time: %dh %dm %d.%02ds\n", h, m, int(s),
+               int(100 * (s - int(s))));
     }
     if (metadata.cameraFromWorld)
         printf("\tcamera from world: %s\n", metadata.cameraFromWorld->ToString().c_str());
@@ -1583,77 +1606,79 @@ int bloom(std::vector<std::string> args) {
         }
     }
 
-    if (outFile.empty())
-        usage("bloom", "--outfile must be specified");
-    if (inFile.empty())
-        usage("bloom", "input filename must be specified");
+if (outFile.empty())
+usage("bloom", "--outfile must be specified");
+if (inFile.empty())
+usage("bloom", "input filename must be specified");
 
-    ImageAndMetadata imRead = Image::Read(inFile);
-    Image &image = imRead.image;
+ImageAndMetadata imRead = Image::Read(inFile);
+Image& image = imRead.image;
 
-    std::vector<Image> blurred;
+std::vector<Image> blurred;
 
-    // First, threshold the source image
-    int nSurvivors = 0;
-    Point2i res = image.Resolution();
-    int nc = image.NChannels();
-    Image thresholdedImage(PixelFormat::Float, image.Resolution(), image.ChannelNames());
-    for (int y = 0; y < res.y; ++y) {
-        for (int x = 0; x < res.x; ++x) {
-            bool overThreshold = false;
+// First, threshold the source image
+int nSurvivors = 0;
+Point2i res = image.Resolution();
+int nc = image.NChannels();
+Image thresholdedImage(PixelFormat::Float, image.Resolution(), image.ChannelNames());
+for (int y = 0; y < res.y; ++y) {
+    for (int x = 0; x < res.x; ++x) {
+        bool overThreshold = false;
+        for (int c = 0; c < nc; ++c)
+            if (image.GetChannel({ x, y }, c) > level)
+                overThreshold = true;
+        if (overThreshold) {
+            ++nSurvivors;
             for (int c = 0; c < nc; ++c)
-                if (image.GetChannel({x, y}, c) > level)
-                    overThreshold = true;
-            if (overThreshold) {
-                ++nSurvivors;
-                for (int c = 0; c < nc; ++c)
-                    thresholdedImage.SetChannel({x, y}, c, image.GetChannel({x, y}, c));
-            } else
-                for (int c = 0; c < nc; ++c)
-                    thresholdedImage.SetChannel({x, y}, c, 0.f);
+                thresholdedImage.SetChannel({ x, y }, c, image.GetChannel({ x, y }, c));
+        }
+        else
+            for (int c = 0; c < nc; ++c)
+                thresholdedImage.SetChannel({ x, y }, c, 0.f);
+    }
+}
+if (nSurvivors == 0) {
+    fprintf(stderr, "imgtool: no pixels were above bloom threshold %f\n", level);
+    return 1;
+}
+blurred.push_back(std::move(thresholdedImage));
+
+if ((width % 2) == 0) {
+    ++width;
+    fprintf(stderr, "imgtool bloom: width must be an odd value. Rounding up to %d.\n",
+        width);
+}
+int radius = width / 2;
+
+// Blur thresholded image.
+Float sigma = radius / 2.;  // TODO: make a parameter
+
+for (int iter = 0; iter < iterations; ++iter) {
+    Image blur =
+        blurred.back().GaussianFilter(image.AllChannelsDesc(), radius, sigma);
+    blurred.push_back(blur);
+}
+
+// Finally, add all of the blurred images, scaled, to the original.
+for (int y = 0; y < res.y; ++y) {
+    for (int x = 0; x < res.x; ++x) {
+        for (int c = 0; c < nc; ++c) {
+            Float blurredSum = 0.f;
+            // Skip the thresholded image, since it's already
+            // present in the original; just add pixels from the
+            // blurred ones.
+            for (size_t j = 1; j < blurred.size(); ++j)
+                blurredSum += blurred[j].GetChannel({ x, y }, c);
+            image.SetChannel(
+                { x, y }, c,
+                image.GetChannel({ x, y }, c) + (scale / iterations) * blurredSum);
         }
     }
-    if (nSurvivors == 0) {
-        Warning("No pixels were above bloom threshold %f", level);
-        return 1;
-    }
-    blurred.push_back(std::move(thresholdedImage));
+}
 
-    if ((width % 2) == 0) {
-        ++width;
-        Warning("Bloom width must be an odd value. Rounding up to %d.", width);
-    }
-    int radius = width / 2;
+image.Write(outFile);
 
-    // Blur thresholded image.
-    Float sigma = radius / 2.;  // TODO: make a parameter
-
-    for (int iter = 0; iter < iterations; ++iter) {
-        Image blur =
-            blurred.back().GaussianFilter(image.AllChannelsDesc(), radius, sigma);
-        blurred.push_back(blur);
-    }
-
-    // Finally, add all of the blurred images, scaled, to the original.
-    for (int y = 0; y < res.y; ++y) {
-        for (int x = 0; x < res.x; ++x) {
-            for (int c = 0; c < nc; ++c) {
-                Float blurredSum = 0.f;
-                // Skip the thresholded image, since it's already
-                // present in the original; just add pixels from the
-                // blurred ones.
-                for (size_t j = 1; j < blurred.size(); ++j)
-                    blurredSum += blurred[j].GetChannel({x, y}, c);
-                image.SetChannel(
-                    {x, y}, c,
-                    image.GetChannel({x, y}, c) + (scale / iterations) * blurredSum);
-            }
-        }
-    }
-
-    image.Write(outFile, imRead.metadata);
-
-    return 0;
+return 0;
 }
 
 int convert(std::vector<std::string> args) {
@@ -1666,14 +1691,17 @@ int convert(std::vector<std::string> args) {
     Float despikeLimit = Infinity;
     bool preserveColors = false;
     bool bw = false;
+    bool exr2bin = false;
     std::string inFile, outFile;
     std::string colorspace;
     std::string channelNames;
-    std::array<int, 4> cropWindow = {-1, 0, -1, 0};
+    std::vector<std::string> targetChannelNames;
+    std::vector<int> exr2mat_channels;
+    std::array<int, 4> cropWindow = { -1, 0, -1, 0 };
     Float clamp = Infinity;
 
     for (auto iter = args.begin(); iter != args.end(); ++iter) {
-        auto onError = [](const std::string &err) {
+        auto onError = [](const std::string& err) {
             usage("convert", "%s", err.c_str());
             exit(1);
         };
@@ -1694,7 +1722,26 @@ int convert(std::vector<std::string> args) {
             ParseArg(&iter, args.end(), "scale", &scale, onError) ||
             ParseArg(&iter, args.end(), "tonemap", &tonemap, onError)) {
             // success
-        } else if ((*iter)[0] != '-' && inFile.empty()) {
+        } else if (normalizeArg(*iter) == normalizeArg("exr2bin")) {
+            exr2bin = true;
+            std::string::size_type n;
+            if (((*(iter + 1)).find(".exr") == std::string::npos) && ((*(iter + 1)).find("outfile") == std::string::npos)) {
+                ++iter;
+                if ((n = (*iter).find(':')) != std::string::npos) {
+                    int start = std::stoi((*iter).substr(0, n));
+                    int end = std::stoi((*iter).substr(n + 1, std::string::npos));
+                    for (int i = start; i != end + 1; i++) {
+                        exr2mat_channels.push_back(i);
+                    }
+                } else if (isdigit((*iter)[0])) {
+                    exr2mat_channels = SplitStringToInts((*iter), ',');
+                } else {
+                    targetChannelNames =
+                        SplitString((*iter), ',');
+                }
+            }
+        }
+        else if ((*iter)[0] != '-' && inFile.empty()) {
             inFile = *iter;
         } else
             usage("convert", "%s: unknown command flag", iter->c_str());
@@ -1706,7 +1753,7 @@ int convert(std::vector<std::string> args) {
         usage("convert", "--repeatpix value must be greater than zero");
     if (scale == 0)
         usage("convert", "--scale value must be non-zero");
-    if (outFile.empty())
+    if (outFile.empty()&&!exr2bin)
         usage("convert", "--outfile filename must be specified");
     if (inFile.empty())
         usage("convert", "input filename not specified");
@@ -1715,13 +1762,75 @@ int convert(std::vector<std::string> args) {
     Image image = std::move(imRead.image);
     ImageMetadata metadata = std::move(imRead.metadata);
 
-    ImageMetadata outMetadata;
-    // These are the only entries it makes sense to copy along (so far).
-    outMetadata.colorSpace = metadata.colorSpace;
-    outMetadata.cameraFromWorld = metadata.cameraFromWorld;
-    outMetadata.NDCFromWorld = metadata.NDCFromWorld;
-    outMetadata.pixelBounds = metadata.pixelBounds;
-    outMetadata.fullResolution = metadata.fullResolution;
+    if (exr2bin) {
+        Point2i res = image.Resolution();
+        int nc = image.NChannels();
+        std::vector<std::string> exrChannelNames = image.ChannelNames();
+        if (exr2mat_channels.empty() && targetChannelNames.empty())
+            for (int i = 0; i != nc; ++i) {
+                exr2mat_channels.push_back(i + 1);
+            }
+        else if (exr2mat_channels.empty() && !targetChannelNames.empty()) {
+            for (auto target : targetChannelNames) {
+                for (int i = 0; i < exrChannelNames.size(); ++i) {
+                    auto name = exrChannelNames.at(i);
+                    if ((!name.compare(target)) ||
+                        ((name.find(target) != std::string::npos) &&
+                         (name.at(name.find(target) + target.size()) == '.'))) {
+                        exr2mat_channels.push_back(i + 1);
+                    }
+                }
+            }
+        }
+        int mc = exr2mat_channels.size();
+        size_t datasize = res.x * res.y;
+
+        if (inFile.find(".exr") == inFile.npos ||
+            inFile.find(".exr") != (inFile.size() - 4)) {
+            fprintf(stderr, "Wrong input filename: %s  \n", inFile.c_str());
+            return 1;
+        }
+        for (int c = 0; c < mc; ++c) {
+            float *buf_exr = new float[datasize];
+            for (int y = 0; y < res.y; ++y)
+                for (int x = 0; x < res.x; ++x) {
+                    buf_exr[x * res.y + y] =
+                        image.GetChannel({x, y}, exr2mat_channels.at(c) - 1);
+                }
+            std::size_t dirOffset;
+            std::string outDir;
+            std::string fileName;
+            if (!outFile.empty()) {
+                dirOffset = outFile.find_last_of("/\\");
+                outDir = outFile.substr(0, dirOffset + 1);
+                fileName = outFile.substr(dirOffset + 1);
+                if (fileName.empty())
+                    fileName = inFile.substr(0, inFile.size() - 4);
+                else if ((fileName.find(".bin") != fileName.npos) ||
+                         (fileName.find(".dat") != fileName.npos))
+                    fileName = fileName.substr(0, fileName.size() - 4);
+                else
+                    fileName = outDir + fileName;
+            }
+            else
+                fileName = inFile.substr(0, inFile.size() - 4);
+            std::string binaryName = fileName + '_' +
+                                     std::to_string(res.y) + '_' + std::to_string(res.x) +
+                                     '_' + exrChannelNames.at(exr2mat_channels.at(c)-1);
+            //'_' + std::to_string(exr2mat_channels.at(c));
+            std::fstream file(binaryName, std::ios::out | std::ios::binary);
+            if (!file) {
+                fprintf(stderr, "Failed opening binary file.  \n");
+                return 1;
+            }
+            file.write((char *)buf_exr, datasize * sizeof(float));
+            file.close();
+            delete[] buf_exr;
+            buf_exr = NULL;
+        }
+        printf("exr2bin done.");
+        return 0;
+    }
 
     if (channelNames.empty()) {
         // If the input image has AOVs and the target image is a regular
@@ -1734,8 +1843,10 @@ int convert(std::vector<std::string> args) {
             }
 
         if (hasAOVs && !HasExtension(outFile, "exr")) {
-            Warning("%s: image has non-RGB channels but converting to an image format that can't store them. Converting RGB only.",
-                    inFile);
+            fprintf(stderr,
+                    "%s: image has non-RGB channels but converting to an "
+                    "image format that can't store them. Converting RGB only.\n",
+                    inFile.c_str());
             channelNames = "R,G,B";
         }
     }
@@ -1744,8 +1855,8 @@ int convert(std::vector<std::string> args) {
         std::vector<std::string> splitChannelNames = SplitString(channelNames, ',');
         ImageChannelDesc desc = image.GetChannelDesc(splitChannelNames);
         if (!desc) {
-            Error("%s: image doesn't have channels \"%s\".", inFile,
-                  channelNames);
+            fprintf(stderr, "%s: image doesn't have channels \"%s\".\n", inFile.c_str(),
+                    channelNames.c_str());
             return 1;
         }
         image = image.SelectChannels(desc);
@@ -1761,37 +1872,8 @@ int convert(std::vector<std::string> args) {
     if (cropWindow[3] < 0)
         cropWindow[3] = cropWindow[2] - cropWindow[3];
     if (cropWindow[0] >= 0 && cropWindow[2] >= 0) {
-        Bounds2i cropBounds({cropWindow[0], cropWindow[2]}, {cropWindow[1], cropWindow[3]});
-
-        Point2i fullRes = metadata.fullResolution ? *metadata.fullResolution :
-            image.Resolution();
-
-        if (metadata.pixelBounds && !Inside(cropBounds, *metadata.pixelBounds)) {
-            Error("%s: crop window bounds (%d,%d)-(%d,%d) are not inside "
-                  "image's pixel bounds (%d,%d)-(%d,%d).", inFile,
-                  cropBounds.pMin.x, cropBounds.pMin.y, cropBounds.pMax.x,
-                  cropBounds.pMax.y, metadata.pixelBounds->pMin.x,
-                  metadata.pixelBounds->pMin.y, metadata.pixelBounds->pMax.x,
-                  metadata.pixelBounds->pMax.y);
-            return 1;
-        } else if (!Inside(cropBounds, Bounds2i(Point2i(0,0), fullRes))) {
-            Error("%s: crop window bounds (%d,%d)-(%d,%d) are not inside "
-                  "image's resolution (%d,%d).", inFile, cropBounds.pMin.x,
-                  cropBounds.pMin.y, cropBounds.pMax.x, cropBounds.pMax.y,
-                  fullRes.x, fullRes.y);
-            return 1;
-        }
-
-        outMetadata.fullResolution = fullRes;
-        outMetadata.pixelBounds = cropBounds;
-
-        // Adjust crop bounds for call to Crop()
-        if (metadata.pixelBounds) {
-            cropBounds.pMin = Point2i(cropBounds.pMin - metadata.pixelBounds->pMin);
-            cropBounds.pMax = Point2i(cropBounds.pMax - metadata.pixelBounds->pMin);
-        }
-        image = image.Crop(cropBounds);
-
+        image = image.Crop(
+            Bounds2i({cropWindow[0], cropWindow[2]}, {cropWindow[1], cropWindow[3]}));
         res = image.Resolution();
     }
 
@@ -1817,16 +1899,18 @@ int convert(std::vector<std::string> args) {
     if (!colorspace.empty()) {
         const RGBColorSpace *dest = RGBColorSpace::GetNamed(colorspace);
         if (!dest) {
-            Error("%s: color space unknown.", colorspace);
+            fprintf(stderr, "%s: color space unknown.\n", colorspace.c_str());
             return 1;
         }
         ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
         if (!rgbDesc) {
-            Error("%s: doesn't have R, G, B channels.", inFile);
+            fprintf(stderr, "%s: doesn't have R, G, B channels.\n", inFile.c_str());
             return 1;
         }
 
-        const RGBColorSpace *srcColorSpace = metadata.GetColorSpace();
+        const RGBColorSpace *srcColorSpace = (metadata.colorSpace && *metadata.colorSpace)
+                                                 ? *metadata.colorSpace
+                                                 : RGBColorSpace::sRGB;
         SquareMatrix<3> m = ConvertRGBColorSpace(*srcColorSpace, *dest);
         for (int y = 0; y < res.y; ++y)
             for (int x = 0; x < res.x; ++x) {
@@ -1834,7 +1918,7 @@ int convert(std::vector<std::string> args) {
                 RGB rgb = Mul<RGB>(m, channels);
                 image.SetChannels({x, y}, rgbDesc, {rgb.r, rgb.g, rgb.b});
             }
-        outMetadata.colorSpace = dest;
+        metadata.colorSpace = dest;
     }
 
     if (bw) {
@@ -1965,27 +2049,12 @@ int convert(std::vector<std::string> args) {
         }
         image = std::move(scaledImage);
         res = image.Resolution();
-
-        if (outMetadata.fullResolution)
-            *outMetadata.fullResolution *= repeat;
-        if (outMetadata.pixelBounds) {
-            outMetadata.pixelBounds->pMin *= repeat;
-            outMetadata.pixelBounds->pMax *= repeat;
-        }
     }
 
-    if (flipy) {
+    if (flipy)
         image.FlipY();
-        if (outMetadata.pixelBounds && outMetadata.fullResolution) {
-            // Flip the pixel bounds in the metadata as well
-            int by[2] = { outMetadata.fullResolution->y - 1 - outMetadata.pixelBounds->pMax.y,
-                          outMetadata.fullResolution->y - 1 - outMetadata.pixelBounds->pMin.y };
-            outMetadata.pixelBounds->pMin.y = by[0];
-            outMetadata.pixelBounds->pMax.y = by[1];
-        }
-    }
 
-    if (!image.Write(outFile, outMetadata))
+    if (!image.Write(outFile))
         return 1;
 
     return 0;
@@ -2032,7 +2101,7 @@ int whitebalance(std::vector<std::string> args) {
 
     ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
     if (!rgbDesc) {
-        Error("%s: doesn't have R, G, B channels.", inFile);
+        fprintf(stderr, "%s: doesn't have R, G, B channels.\n", inFile.c_str());
         return 1;
     }
 
@@ -2042,15 +2111,15 @@ int whitebalance(std::vector<std::string> args) {
         std::string name = "stdillum-" + illuminant;
         Spectrum illum = GetNamedSpectrum(name);
         if (!illum) {
-            Error("%s: illuminant unknown.", name);
+            fprintf(stderr, "%s: illuminant unknown.\n", name.c_str());
             return 1;
         }
         srcWhite = SpectrumToXYZ(illum).xy();
     } else if (temperature > 0) {
         // Sensor::Create uses Spectra::D() rather than BlackbodySpectrum
         // here---make consistent?
-        DenselySampledSpectrum illum = Spectra::D(temperature, Allocator());
-        srcWhite = SpectrumToXYZ(&illum).xy();
+        BlackbodySpectrum bb(temperature);
+        srcWhite = SpectrumToXYZ(&bb).xy();
     } else
         srcWhite = Point2f(xy[0], xy[1]);
 
@@ -2065,7 +2134,7 @@ int whitebalance(std::vector<std::string> args) {
             image.SetChannels({x, y}, rgbDesc, {rgb.r, rgb.g, rgb.b});
         }
 
-    image.Write(outFile, imRead.metadata);
+    image.Write(outFile);
 
     return 0;
 }
@@ -2097,7 +2166,7 @@ int makeemitters(std::vector<std::string> args) {
 
     ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
     if (!rgbDesc) {
-        Error("%s: didn't find R, G, and B channels", filename);
+        fprintf(stderr, "%s: didn't find R, G, and B channels", filename.c_str());
         return 1;
     }
 
@@ -2168,9 +2237,10 @@ int makeequiarea(std::vector<std::string> args) {
     const Image &latlongImage = latlong.image;
 
     if (2 * latlongImage.Resolution().y != latlongImage.Resolution().x)
-        Warning("%s: esolution (%d, %d) doesn't have a 2:1 aspect ratio. "
-                "It is doubtful that this is a lat-long environment map.",
-                inFilename, latlongImage.Resolution().x,
+        fprintf(stderr,
+                "%s: Warning: resolution (%d, %d) doesn't have a 2:1 aspect ratio. "
+                "It's doubtful that this is a lat-long environment map.\n",
+                inFilename.c_str(), latlongImage.Resolution().x,
                 latlongImage.Resolution().y);
 
     if (resolution == 0)
@@ -2226,6 +2296,7 @@ int makeequiarea(std::vector<std::string> args) {
 
     ImageMetadata equiRectMetadata;
     equiRectMetadata.cameraFromWorld = latlong.metadata.cameraFromWorld;
+    equiRectMetadata.NDCFromWorld = latlong.metadata.NDCFromWorld;
     equiRectMetadata.colorSpace = latlong.metadata.colorSpace;
     equiRectMetadata.stringVectors = latlong.metadata.stringVectors;
     equiRectImage.Write(outFilename, equiRectMetadata);
@@ -2421,7 +2492,8 @@ int denoise(std::vector<std::string> args) {
 
     auto checkForChannels = [&inFilename](ImageChannelDesc &desc, const char *names) {
         if (!desc) {
-            Error("%s: didn't find \"%s\" channels.", inFilename, names);
+            fprintf(stderr, "%s: didn't find \"%s\" channels.\n", inFilename.c_str(),
+                    names);
             exit(1);
         }
     };
@@ -2459,16 +2531,10 @@ int denoise(std::vector<std::string> args) {
                 result.SetChannel({x, y}, c, Ldenoised[c]);
         }
 
-    ImageMetadata outMetadata;
-    outMetadata.cameraFromWorld = im.metadata.cameraFromWorld;
-    outMetadata.NDCFromWorld = im.metadata.NDCFromWorld;
-    outMetadata.pixelBounds = im.metadata.pixelBounds;
-    outMetadata.fullResolution = im.metadata.fullResolution;
-    outMetadata.colorSpace = im.metadata.colorSpace;
-
-    if (!result.Write(outFilename, outMetadata))
+    if (!result.Write(outFilename)) {
+        fprintf(stderr, "%s: couldn't write image.\n", outFilename.c_str());
         return 1;
-
+    }
     return 0;
 }
 
@@ -2514,17 +2580,21 @@ int denoise_optix(std::vector<std::string> args) {
         image.GetChannelDesc({"Albedo.R", "Albedo.G", "Albedo.B"}),
         image.GetChannelDesc({"Nsx", "Nsy", "Nsz"})};
     if (!desc[0]) {
-        Error("%s: image doesn't have R, G, B channels.", inFilename);
+        fprintf(stderr, "%s: image doesn't have R, G, B channels.", inFilename.c_str());
         return 1;
     }
     if (!desc[1]) {
-        Warning("%s: image doesn't have Albedo.{R,G,B} channels. "
-                "Denoising quality may suffer.", inFilename);
+        fprintf(stderr,
+                "Warning: %s: image doesn't have Albedo.{R,G,B} channels. "
+                "Denoising quality may suffer.\n",
+                inFilename.c_str());
         nLayers = 1;
     }
     if (!desc[2]) {
-        Warning("%s: image doesn't have Nsx, Nsy, Nsz channels. "
-                "Denoising quality may suffer.", inFilename);
+        fprintf(stderr,
+                "Warning: %s: image doesn't have Nsx, Nsy, Nsz channels. "
+                "Denoising quality may suffer.\n",
+                inFilename.c_str());
         nLayers = 1;
     }
 
@@ -2637,15 +2707,7 @@ int denoise_optix(std::vector<std::string> args) {
     Image result(PixelFormat::Float, image.Resolution(), {"R", "G", "B"});
     CUDA_CHECK(cudaMemcpy(result.RawPointer({0, 0}), (const void *)outputImage.data,
                           imageBytes, cudaMemcpyDeviceToHost));
-
-    ImageMetadata outMetadata;
-    outMetadata.cameraFromWorld = im.metadata.cameraFromWorld;
-    outMetadata.NDCFromWorld = im.metadata.NDCFromWorld;
-    outMetadata.pixelBounds = im.metadata.pixelBounds;
-    outMetadata.fullResolution = im.metadata.fullResolution;
-    outMetadata.colorSpace = im.metadata.colorSpace;
-
-    CHECK(result.Write(outFilename, outMetadata));
+    CHECK(result.Write(outFilename));
 
     return 0;
 }
@@ -2653,6 +2715,7 @@ int denoise_optix(std::vector<std::string> args) {
 
 int main(int argc, char *argv[]) {
     PBRTOptions opt;
+    opt.quiet = true;
     InitPBRT(opt);
 
     if (argc < 2) {
@@ -2736,9 +2799,11 @@ int main(int argc, char *argv[]) {
 
         if (pixel[0] - width < 0 || pixel[0] + width >= image.Resolution().x ||
             pixel[0] - width < 0 || pixel[0] + width >= image.Resolution().y) {
-            Error("%s: pixel (%d, %d) with width %d doesn't work with resolution (%d, %d).",
-                  filename, pixel[0], pixel[0], width, image.Resolution().x,
-                  image.Resolution().y);
+            fprintf(stderr,
+                    "%s: pixel (%d, %d) with width %d doesn't work with "
+                    "resolution (%d, %d).\n",
+                    filename.c_str(), pixel[0], pixel[0], width, image.Resolution().x,
+                    image.Resolution().y);
             return 1;
         }
 
