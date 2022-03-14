@@ -2473,9 +2473,17 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
       passNoPassPerWavelength(passNoPassPerWavelength),
       polyWavelengths_nm(polyWavelengths_nm) {
     
-   // Compute pupil bounding box to improve performance buy having a higher chance of finding a passing ray
+        // Compute pupil bounding box to improve performance buy having a higher chance of finding a passing ray
+        // Motivation: PBRT randomly chooses samples on the film (film pixel samples). It is then the job of the camera
+        // to generate a ray into the scene. In principle we only need to sample rays that are passed by the pass no pass function
+        // However, these passnopass functions are encoded for off-axis positions ON THE INPUTPLANE of the RTF.
+        // PBRT on the other chooses positions ON THE FILM. Therefore we have a deadlock because one cannot know the position on hte
+        // input plane before knowing what ray to shoot, and to know what ray to shoot, we need to know the off-axis position.
+        // The procedure below works around this by remapping the passnopassfunctions for off-axis positions on the FILM.
+        // This is done by calculating a bounding box for 64 offaxis position on the film. 
+        // The function SampleExitPupil then, during tracing, uses these bounding boxes to generate a ray which is then intersected with the actual inputplane
 
-    // std::cout << "Generate exit pupil bounds for performance" << "\n";
+    
     // Compute film's physical extent
     Float diagonal = film.Diagonal();
     Float aspect = (Float)film.FullResolution().y / (Float)film.FullResolution().x;
@@ -2493,7 +2501,7 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
 
     });
         // Compute minimum differentials for _RealisticCamera_
-    FindMinimumDifferentials(this);
+    FindMinimumDifferentials(this); // Thomas: Why was this added
 }
 
 // This returns a vector with two elements [radius, degree]
@@ -2519,13 +2527,11 @@ inline Float powerLoop(Float number,Float power){
 
 // Take (rho,dx,du) input and apply apply polynomial (single LensPolynomialTerm)
 Float RTFCamera::PolynomialCal(Float rho, Float dx, Float dy, LensPolynomialTerm &polyTerm) const{
-    // tic("");
     Float res= 0;
     for (int i = 0; i < polyTerm.termr.size(); i++) {
-       // res += (std::pow(radiusRotation.x * 1000, polyTerm.termr[i]) * std::pow(dir.x, polyTerm.termu[i]) * std::pow(dir.y, polyTerm.termv[i])) * polyTerm.coeff[i]; // Much slower
        res += (powerLoop(rho * 1000, polyTerm.termr[i]) * powerLoop(dx, polyTerm.termu[i]) * powerLoop(dy, polyTerm.termv[i])) * polyTerm.coeff[i]; //Faster
     }
-    // toc("rtf_polycal.txt");
+
     return res;
 }
 
@@ -2537,21 +2543,46 @@ Ray RTFCamera::ApplyPolynomial(Float rho, Vector3f dir, pstd::vector< RTFCamera:
     /// Position on output plane
     Float x = PolynomialCal(rho,dir.x,dir.y,polynomialMap[0]) * 0.001f; //mm to meter
     Float y = PolynomialCal(rho,dir.x,dir.y,polynomialMap[1]) * 0.001f; // mm to meter
-    
+    Float z = PolynomialCal(rho,dir.x,dir.y,polynomialMap[2]) * 0.001f; // mm to meter  Z measured from rear vertex of reverse lens (object side)
 
     /// Direction vector first two components
     /// The RTF generates only two components o the output direction vector, the other two can be deduced    Float dx = PolynomialCal(radiusAndDegree.x,dir.x,dir.y,polynomialMap[3]); 
     // normalized direction vector needs no unit transformation
     Float dx = PolynomialCal(rho,dir.x,dir.y,polynomialMap[3]);
     Float dy = PolynomialCal(rho,dir.x,dir.y,polynomialMap[4]);
-    Float dz = std::sqrt(std::abs(1 - dx * dx - dy * dy));
-    if (1 - dx * dx - dy * dy < 0) {
-        Warning("Problemetic ray fitting.");
+    Float dz; // See below
+
+    //Float dz = std::sqrt(std::abs(1 - dx * dx - dy * dy));
+
+     // If there is a direction vector dz polynomial given, use it,
+    // If not, then deduce it from dx dy assuming the ray is not travelling backwards (dz>0)
+    // This is used to enable RTF systems where outcoming rays travel backward (e.g. for wide angle lenses/fisheye)
+    if(polynomialMap.size()==6){
+        // Explicitly approxmiate dz
+        dz = PolynomialCal(rho,dir.x,dir.y,polynomialMap[5]);
+        
+
+        // Depending on the sign we normalize the direction vector
+        Float sign = 1;
+        if(dz<0){ sign =-1;}
+        dz = sign*std::sqrt(std::abs(1 - dx * dx - dy * dy));
+
+        
+        //std::cout << "Calculate dz: " << dz << "\n";
+     }else{ 
+         // Deduce dz
+        dz = std::sqrt(std::abs(1 - dx * dx - dy * dy));
+        //std::cout << "Deduce dz: " << dz << "\n";
     }
+
+    if (1 - dx * dx - dy * dy < 0) {
+        Warning("Problematic ray fitting.");
+    }
+
 
    
     // The outocming Ray starts at the output plane: 
-    Float outputPlane_z = (filmDistance+lensThickness+planeOffsetOutput); /// Lens thickness: WIHOUT input plane
+    Float outputPlane_z = (filmDistance+lensThickness+z); /// Lens thickness: WIHOUT input plane
   
     Ray rOut = Ray(Point3f(x, y, outputPlane_z), Vector3f(dx, dy, dz)); // Original
 
@@ -2573,7 +2604,7 @@ Float evalPolynomial(pstd::vector<Float> coefficients,Float x){
              }
              return result;
 }
-
+/*
 // A ray is valid if it passes through all circles on the circle plane
 bool RTFCamera::IsValidRayCircles(const Ray &rotatedRayOnInputplane,RTFCamera::RTFVignettingTerms &vignetting) const{
     Vector3f dir = (rotatedRayOnInputplane.d);
@@ -2618,51 +2649,38 @@ bool RTFCamera::IsValidRayCircles(const Ray &rotatedRayOnInputplane,RTFCamera::R
     } 
     return true;
 }
+*/
 
 // TODO Document
 bool RTFCamera::TraceLensesFromFilm(
     const Ray &rayOnInputPlane, Ray *rOut, int wlIndex) const {
 
-    // tic(""); 
-    Ray rLens = (rayOnInputPlane);  // No need to flip it for rtf calculations ( compare with omni)
+        Ray rLens = (rayOnInputPlane);  // No need to flip it for rtf calculations ( compare with omni)
 
     // STEP 1. Rotating so that the origin of the ray lies on the y axis.
     Vector2f radiusAndRotation = Pos2RadiusRotation(rLens.o);
     Ray rotatedRay = RotateRays(rLens, 90 - radiusAndRotation.y);
-    // toc("rtf-trace-1-rotaterays.txt");
-    //std::cout << " rotated ray: " << rotatedRay << "\n";
-    // STEP 2. Determine whether the ray will be vignetted or not
-    // tic("");
-    //auto vignetting = vignettingTerms[wlIndex];
 
+    // STEP 2. Determine whether the ray will be vignetted or not
     auto passnopass = passNoPassPerWavelength[wlIndex];
     if (!passnopass->isValidRay(rotatedRay)){
         return false;
     }
-    // toc("rtf-trace-2-vignetting.txt");
-
+    
     // I think it should be normalized already
-    // tic("");
     Vector3f dir = Normalize(rotatedRay.d);
-    // toc("rtf-trace-3-normalize.txt");
 
 
     // Select polynomial for given wavelength and apply it
-    // tic("");
     pstd::vector<RTFCamera::LensPolynomialTerm> polynomialMap = polynomialMaps[wlIndex];
-    // toc("rtf-trace-4-selectpoly.txt");     
-    // tic("");
+
     rLens = ApplyPolynomial(radiusAndRotation.x, dir, polynomialMap);
-    // toc("rtf-trace-4-applypoly.txt");
-
-     //rLens.d = Normalize(rLens.d); // Unnecesary to renormalize again
-
+    
+    
     // Rotate the output ray back
-    // tic("");
+    
     rLens = RotateRays(rLens, radiusAndRotation.y - 90);
-    // toc("rtf-trace-5-rotateback.txt");
-    //std::cout << " rotated ray: " << rLens << "\n";
-  
+
     // Rotate rays back to camera space
     if ((rOut != nullptr)) {
         *rOut = (rLens);
@@ -2672,12 +2690,13 @@ bool RTFCamera::TraceLensesFromFilm(
     return true;
 }
 
+/*
 inline Float RTFCamera::distanceCirclePlaneFromFilm() const {
     // In principle this should be made wavelength dependent, now just using the
     // vignetting term corresdponding to the first wavelength
     return (filmDistance - planeOffsetInput + vignettingTerms[0].circlePlaneZ);
 }
-
+*/
 // BoundExitPupilRTF() takes an interval along the  axis on the film.
 // It samples a series of points along the interval [pfilmX0 pfilmX1]
 // For each point, it also samples a point on the bounding box of the rear lens
@@ -2766,18 +2785,6 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
 
         if (Inside(Point2f(pOnPupilPlane.x, pOnPupilPlane.y), pupilBounds) ||
             passnopass->isValidRay(rotatedRay)) {
-            //std::cout << "rotated on input " << rotatedRay << "\n";
-
-           /* 
-            if(std::abs(pOnPupilPlane.x)>14e-3){
-                //std::cout<< "Film pos     : " << pFilm << "\n";
-                //std::cout<< "pupilplane   :" << pOnPupilPlane << "\n";
-                //std::cout<< "unrotated ray: " << r << "\n";
-                //std::cout<< "rotated ray  : " << rotatedRay << "\n";
-                bool check =IsValidRayCircles(rotatedRay, vignetting);
-            }
-            */
-            
             pupilBounds =
                 Union(pupilBounds, Point2f(pOnPupilPlane.x, pOnPupilPlane.y));
             ++nExitingRays;
@@ -2958,10 +2965,10 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
    //Float  pupilArea=exitPupilBoundsArea;
 
      // Construct the ray coming from the film to the point on the input plane
-    // tic("");
+    
     Ray rFilm(pFilm, pOnInputPlane - pFilm);
     Ray rOriginOnInputPlane = Ray(pOnInputPlane, pOnInputPlane - pFilm);
-    // toc("rtf-step2-constructray.txt");
+    
 
     // CHoose which wavelength to use (and hence which polynomial)
     // The wavelengths provided by the lens file might not be equal to the wavelenth of the ray
@@ -3212,89 +3219,52 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
                 return std::make_shared<PassNoPassEllipse>(PassNoPassEllipse(positions,radiiX,radiiY,centersX,centersY,circlePlaneZ));
             };
 
-          auto determinePassNoPass = [toPassNoPassEllipse,apertureDiameter, exitPupilBounds, pupilIndex, toTerms](json sp)
+//  This function could perhaps be encapsulated in the class as a statcif cuntion
+            auto toRayPassCircles = [apertureDiameter, exitPupilBounds, pupilIndex, toTerms](json sp)
+            {
+                Float mm_to_meter = 0.001f;
+
+                pstd::vector<Float> radii = toTerms(sp["radii"]);
+                pstd::vector<Float> sensitivities = toTerms(sp["sensitivities"]);
+                Float rayPassPlaneDistanceFromInput = mm_to_meter*((Float) sp["intersectPlaneDistance"]);
+
+
+
+                // Convert mm to meter
+                
+                for (int i = 0; i < radii.size(); i++)
+                {
+                    // Convert from mm to meter
+                    radii[i] = mm_to_meter * radii[i];
+
+                    // No conversion required
+                    sensitivities[i] = 1.0f*sensitivities[i];
+                 }
+
+                
+                return std::make_shared<PassNoPassCircleIntersection>(PassNoPassCircleIntersection(radii,sensitivities,rayPassPlaneDistanceFromInput));
+            };
+
+
+    
+          auto determinePassNoPass = [toPassNoPassEllipse,toRayPassCircles,apertureDiameter, exitPupilBounds, pupilIndex, toTerms](json sp)
             {
 
                 auto method = (std::string)sp["method"];
                 if(method == "minimalellipse"){
-                    return toPassNoPassEllipse(sp);
+                    return std::dynamic_pointer_cast<PassNoPass>(toPassNoPassEllipse(sp));
+                 }else if(method == "circles"){ 
+                    // Perhaps ecapsulate this function within the class with a static function?
+                    return std::dynamic_pointer_cast<PassNoPass>(toRayPassCircles(sp)); 
+                 }else{
+                    Error("Error unknown Ray Pass method:",
+                                         method.c_str());
+                    
+                   return  std::dynamic_pointer_cast<PassNoPass>(toPassNoPassEllipse(sp)); 
                 }
-                   return toPassNoPassEllipse(sp); //change 
             };
 
             
-            auto toVignetTerms = [apertureDiameter, exitPupilBounds, pupilIndex, toTerms](json sp)
-            {
-                RTFCamera::RTFVignettingTerms result;
-                Float mm_to_meter = 0.001f;
-
-                result.circlePlaneZ = mm_to_meter * (Float)sp["circlePlaneZ"];
-
-                result.circleRadii = toTerms(sp["circleRadii"]);
-                result.circleSensitivities = toTerms(sp["circleSensitivities"]);
-
-                // Just set to equal vector sizes for inialization. Actual values will be calculated below
-                // result.pupilPos =  result.circleRadii;
-                // result.pupilRadii =  result.circleRadii;
-
-                result.circleRadiusPoly = toTerms(sp["circleNonlinearRadius"]);
-                if (result.circleRadiusPoly[0] != 1.0)
-                {
-                    Warning("First coefficient of circle radius polynomial should be 1.");
-                }
-
-                result.circleSensitivityPoly = toTerms(sp["circleNonlinearSensitivity"]);
-                // if(result.circleSensitivityPoly[0]!=0.0){Warning("First coefficient of circle sensitivity polynomial should be 0.");}
-
-                Float diaphragmIndex = (Float)sp["diaphragmIndex"];
-                Float diaphragmToCircleRadius = (Float)sp["diaphragmToCircleRadius"];
-
-                Float smallestBound = INFINITY; // for initialization to find smallest pupil
-                result.exitpupilIndex = 0;
-
-                for (int i = 0; i < result.circleRadii.size(); i++)
-                {
-                    // Convert from mm to meter
-                    result.circleRadii[i] = mm_to_meter * result.circleRadii[i];
-                }
-
-                for (int i = 0; i < result.circleSensitivityPoly.size(); i++)
-                {
-                    // Convert coefficients to work for meters
-
-                    result.circleSensitivityPoly[i] = result.circleSensitivityPoly[i] / std::pow(mm_to_meter, i);
-                }
-
-                for (int i = 0; i < result.circleRadiusPoly.size(); i++)
-                {
-                    // Convert coefficients to work for meters
-                    if (i == 0)
-                    {
-                        // The first coefficient should remain unchanged be
-                        continue;
-                    }
-
-                    result.circleRadiusPoly[i] = result.circleRadiusPoly[i] / std::pow(mm_to_meter, i);
-                }
-
-                // If the aperture diameter is given in the PBRT file, update the corresponding pupil and projected circles
-                if (apertureDiameter != -1)
-                {
-                    std::cout << "Warning! Aperture diameter manually set to " << apertureDiameter << " mm \n";
-                    Float before = result.circleRadii[diaphragmIndex];
-                    // Convet given apertureDiameter to the projected circle radius
-                    result.circleRadii[diaphragmIndex] = 0.5 * (mm_to_meter * apertureDiameter) * diaphragmToCircleRadius;
-
-                    std::cout << "--> Projected circle radius changed from " << before * 1000 << " mm to " << result.circleRadii[diaphragmIndex] * 1000 << " mm\n";
-                }
-
-                // Set exit pupil that will be sampled in PBRT
-                // Here I choose to take the same pupil that belongs to the diaphragm
-                result.exitpupilIndex = diaphragmIndex;
-
-                return result;
-            };
-
             // TG: so after this loop exitpupilBounds = Point2f  (0, pupilRadii[pupilIndex])
 
             // Loop over all wavelengths
@@ -3304,9 +3274,32 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
             vignettingTerms = pstd::vector<RTFCamera::RTFVignettingTerms>(polynomials.size());
 
             passNoPassPerWavelength = pstd::vector<std::shared_ptr<PassNoPass>>(polynomials.size());
+
             // Initialize map of polynomials
-            // For each wavelength (outer vector), we have a vector of 6 polynomials (x,y,z,dx,dy,dz) (position and direciton vector)
-            polynomialMaps = pstd::vector<pstd::vector<RTFCamera::LensPolynomialTerm>>(polynomials.size(), pstd::vector<RTFCamera::LensPolynomialTerm>(6));
+                // For each wavelength (outer vector), we have a vector of 6 polynomials (x,y,z,dx,dy,dz) (position and direciton vector)
+                
+                // Initialize vector depending on how many polynomials we use
+                // This depends on whether the direction vector z polynomial is used.
+                // By default we do not use and hence we assume that all rays come out with a positive value for dz = sqrt(1-dx^2 -dy^2)
+                // When rays can exit the output plane or surface in arbitrary directions, we can use the polynomial for dz.
+                // TG: Ideally what I would like to see is to leverage polymorphism and make a seperate class (like raypass) for the transfer functions.
+                // This will encapsulate the specific implementation details about whether polynomials or for example neural
+                // networks are used or whether planar of spherical output spheres are used.
+                // For now, this dirty hack determines when to the polynomial use dz or not
+                bool useDZpolynomial=false;
+                try{
+
+                    // Read from the json RTF file if present
+                 useDZpolynomial = (bool) j["useDZpolynomial"];
+                } catch (const std::exception& e) { /* */ } // The parameter was absent or not boolean.
+                
+
+                int nbTerms =5; // By default do not use dz polynomial
+                if(useDZpolynomial){
+                     nbTerms = 6; // Extra polynomial for dz
+                }
+            // nbTerms is used to initialize the vector of this length
+            polynomialMaps = pstd::vector<pstd::vector<RTFCamera::LensPolynomialTerm>>(polynomials.size(), pstd::vector<RTFCamera::LensPolynomialTerm>(nbTerms));
             
             if (polynomials.is_array() && polynomials.size() > 0)
             {
@@ -3315,16 +3308,16 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
                     Float wavelength = (Float)sp["wavelength_nm"];
                     polyWavelengths_nm[wlIndex] = (Float)wavelength;
 
-                    std::shared_ptr<PassNoPass> passNoPass = determinePassNoPass(sp["passnopass"]);
+                    
+                    // Read Ray Pass FUnction section from JSON file
+                   json raypass = sp["raypass"];
+                    if(raypass.is_null()){
+                        raypass = sp["passnopass"]; //Backwards compatibility
+                    }
+                    // COnstruct raypass function for each wavelength
+                    std::shared_ptr<PassNoPass> passNoPass = determinePassNoPass(raypass);
                     passNoPassPerWavelength[wlIndex] = passNoPass;
                     passNoPass->print();
-                    // Read vignetting terms
-                    //vignettingTerms[wlIndex] = toVignetTerms(sp);
-
-                    // TODO: Determine exix pupil
-                    // pupilIndx
-                    // ExitpupilBounds
-                    // Update exitPupil. Note pMin here is not topleft point but the radius.
 
                     // Read Polynomial Terms
                     auto jpoly = sp["poly"];
@@ -3368,7 +3361,11 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
                             }
                             else if ((outputname == "outdz") || (outputname == "outw"))
                             {
-                                polynomialmapIndex = 5;
+                                 if(useDZpolynomial){
+                                       polynomialmapIndex=5;
+                                 }else{
+                                    continue; // Skip it if we dont need it
+                                 }
                             }
                             else
                             {
@@ -3381,7 +3378,7 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
                     }
                     else
                     {
-                        Error("Error, invalid polynoial specification \"%s\".",
+                        Error("Error, invalid polynomial specification \"%s\".",
                               lensFile.c_str());
                         return nullptr;
                     }
@@ -3390,7 +3387,7 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
             }
             else
             {
-                Error("Error, invalid polynoial specification \"%s\".",
+                Error("Error, invalid polynomial specification \"%s\".",
                       lensFile.c_str());
                 return nullptr;
             }
