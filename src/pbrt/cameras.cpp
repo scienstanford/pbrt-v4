@@ -2728,8 +2728,6 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
     int nExitingRays = 0;
 
     // Compute bounding box of projection of rear element on sampling plane
-    //Float rearRadius = getPupilRadius(vignetting,vignetting.exitpupilIndex);
-
     Float rearRadius = passnopass->getOnAxisRadiusEstimate(); // Fix rear readius obtaining
 
     // Film distance is measured from the actual rear element
@@ -2830,7 +2828,7 @@ Point3f RTFCamera::SampleExitPupil(const Point2f &pFilm,
 
     //RTFVignettingTerms vignetting = vignettingTerms[0];
     auto passnopass = passNoPassPerWavelength[0];
-    //Float pupilPlaneZFromFilm = (filmDistance-planeOffsetInput)+getPupilPosition(vignetting,vignetting.exitpupilIndex);
+    
     Float pupilPlaneZFromFilm = (filmDistance-planeOffsetInput)+passnopass->distanceInputToIntersectPlane();
 
     // Return sample point rotated by angle of _pFilm_ with $+x$ axis
@@ -2856,76 +2854,6 @@ Point3f RTFCamera::SampleExitPupil(const Point2f &pFilm,
     return pPointOnInputPlane;
 }
 
-// Choose the circle corresponding to the diaphragm to generate a ray sample
-// The circle moves with off axis distance
-Point3f RTFCamera::SampleMainCircle(const Point2f &pFilm, const Point2f &lensSample, RTFCamera::RTFVignettingTerms &terms,Float *sampleBoundsArea) const {
-
-
-    // Off axis distance on Film       
-    Float rho = std::sqrt(pFilm.x*pFilm.x + pFilm.y*pFilm.y);
-    Point2f offaxisDirection = pFilm/rho;
-
-
-    // Off axis distance on input plane
-    // The problem is that from pfilm alone, I cannot determine where the circle is unless circles are defined with respect
-    // to the film: inputplane = film
-
-    int pupilIndex = terms.exitpupilIndex;
-    Float circleRadius=terms.circleRadii[pupilIndex]*evalPolynomial(terms.circleRadiusPoly,rho);
-    //Float circleRadius=terms.circleRadii[pupilIndex];
-    
-    
-    Float circleSensitivity= evalPolynomial(terms.circleSensitivityPoly,rho);
-    Point2f pSample = circleRadius * SampleUniformDiskConcentric(lensSample);
-    
-    // Move circle according to its sensitivity
-    pSample= pSample+circleSensitivity*pFilm;
-
-    Float inputPlane_z=filmDistance-planeOffsetInput;
-
-
-    // The sample was generated in the "circle plane", that is the plane in which the cirlce moves
-    // To generate a valid input for the RTF, we project it back to the inputplane
-    Float ratio = inputPlane_z / (inputPlane_z + terms.circlePlaneZ);
-    Point2f pLens = Lerp(ratio, pFilm, pSample);
-    
-    // Give back area for radiometric purposs calculations
-    *sampleBoundsArea=circleRadius*circleRadius*Pi;
-    //std::cout << "boundsarea "<< *sampleBoundsArea  << "Radius" <<circleRadius <<"\n";
-    // A point is made 
-    return Point3f(pLens.x, pLens.y, inputPlane_z);
-}
-
-
-// This function needs to return a point on The INPUT plane of the RTF
-Point3f RTFCamera::SampleExitPupilVignetting(const Point2f &pFilm, const Point2f &lensSample, RTFCamera::RTFVignettingTerms &terms) const {
-    // lensSample comes from 
-    // Uniformly sample the exit pupil using PBRT function (TG)
-    // Note ther eis also a function "UniformSampleDisk" but the PBRT book does not recommend
-    // this because it distortes area (something related to the monte carlo stratified Sample )
-    int pupilIndex = terms.exitpupilIndex;
-    Float lensRadius=getPupilRadius(terms,pupilIndex);
-    Point2f pSample = 2*lensRadius * SampleUniformDiskConcentric(lensSample);
-    
-
-
-    Float inputPlane_z=filmDistance-planeOffsetInput;
-
-    // The Sample has been taken at the exit pupil, and now has to be projected back to the input plane 
-    // This done using the Lerp (linear interpolation) function. First the interpolation factor (ratio) is calculated:
-    // "inputPlane_z + terms.pupilPos[pupilIndex]" is a sum because pupil positions are defined relative to inputplane position"
-    // So we are dividing by the actual Z position of the pupil
-    
-    Float ratio = inputPlane_z / (inputPlane_z + getPupilPosition(terms,pupilIndex));
-   // Float ratio = (filmDistance) / ((filmDistance) + pupilPos[pupilIndex]); // original
-   //  The interpolation is done:
-   
-    Point2f pLens = Lerp(ratio, pFilm, pSample);
-     
-
-    // A point is made 
-    return Point3f(pLens.x, pLens.y, inputPlane_z);
-}
 
 // This function is supposed to generate the output ray
 pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
@@ -2936,8 +2864,7 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
     Point2f pFilm2 = physicalExtent.Lerp(s);
     Point3f pFilm(-pFilm2.x, pFilm2.y, 0);
 
-        // We want to find the sample on the lens, this information is in sample.pLens. But how?
-    // 
+    // We want to find the sample on the lens, this information is in sample.pLens. But how?
     Point3f pOnInputPlane;
         
     // Trace ray from _pFilm_ through RTF
@@ -2945,27 +2872,11 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
 
 
     /// SAMPLING STRATEGY 1 : Use precomputed bounding pboxes (defective at the moment, but this will become the preferred way )
-    // tic("");
     pOnInputPlane = SampleExitPupil(Point2f(pFilm.x, pFilm.y), sample.pLens, &exitPupilBoundsArea);
     Float pupilArea=exitPupilBoundsArea;
-    // toc("rtf-step1-samplexitpupil.txt");
 
-    // SAMPLING STRATEGY 2 : Use the position of the exit pupil (which remains always at the same position)
-    // The disadvantage is that the exit pupil might actually move 
-    // To take this into account the radius of the pupil is assumed larger, because it doesnt matter we generate samples 
-    // in a too broad region because the rays will be correctly discarded later. However, the more tight the boundaries of the sample generation
-    // algorithm, the more passing rays you generate, the more effficient the simulation
-   //pOnInputPlane = SampleExitPupilVignetting(Point2f(pFilm.x, pFilm.y), sample.pLens,vignetting);
-   //Float pupilArea = vignetting.pupilRadii[vignetting.exitpupilIndex] * vignetting.pupilRadii[vignetting.exitpupilIndex] * Pi;
     
-    // SAMPLING STRATEGY 3 DEFECTIVE: Use the projected circle (corresponding to exit pupil). The problem with this approach, compared to exit pupil is that
-    // the position of the circle varies with off axis distance. This was estimated for off axis distances on the input plane, but pbrt generates
-    // samples which are initially on the FILM , which may or may nog be the input plane. Therefore it seems like a deadlock situation.
-    //pOnInputPlane = SampleMainCircle(Point2f(pFilm.x, pFilm.y), sample.pLens,vignetting,&exitPupilBoundsArea);
-   //Float  pupilArea=exitPupilBoundsArea;
-
-     // Construct the ray coming from the film to the point on the input plane
-    
+    // Construct the ray coming from the film to the point on the input plane
     Ray rFilm(pFilm, pOnInputPlane - pFilm);
     Ray rOriginOnInputPlane = Ray(pOnInputPlane, pOnInputPlane - pFilm);
     
@@ -2997,11 +2908,6 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
     ray = RenderFromCamera(ray);
     ray.d = Normalize(ray.d);
 
-
-
-    // Select the vignetting terms corresponding to the chosen wavelength        
-    // RTFVignettingTerms vignetting = vignettingTerms[wlIndex];
-
     Float weight = 1;
     // Compute weighting for _OmniCamera_ ray
     Float cosTheta = Normalize(rFilm.d).z;
@@ -3012,14 +2918,6 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
 }
 
 
-Float RTFCamera::getPupilPosition(RTFVignettingTerms vignetting, int circleIndex) const{
-    Float pos = vignetting.circlePlaneZ/(1.0f-vignetting.circleSensitivities[circleIndex]);                    
-    return pos;
-}
-
-Float RTFCamera::getPupilRadius(RTFVignettingTerms vignetting, int circleIndex) const{
-    return std::abs(getPupilPosition(vignetting,circleIndex)/vignetting.circlePlaneZ)*vignetting.circleRadii[circleIndex];
-}
 
 std::string RTFCamera::ToString() const
 {
