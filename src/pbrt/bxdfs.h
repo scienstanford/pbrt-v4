@@ -174,12 +174,10 @@ class DielectricBxDF {
 
     PBRT_CPU_GPU
     BxDFFlags Flags() const {
-        if (eta == 1)
-            return BxDFFlags::Transmission;
-        else
-            return BxDFFlags::Reflection | BxDFFlags::Transmission |
-                   (mfDistrib.EffectivelySmooth() ? BxDFFlags::Specular
-                                                  : BxDFFlags::Glossy);
+        BxDFFlags flags = (eta == 1) ? BxDFFlags::Transmission
+                                     : (BxDFFlags::Reflection | BxDFFlags::Transmission);
+        return flags |
+               (mfDistrib.EffectivelySmooth() ? BxDFFlags::Specular : BxDFFlags::Glossy);
     }
 
     PBRT_CPU_GPU
@@ -863,7 +861,7 @@ class LayeredBxDF {
                 uc = r();
                 u = Point2f(r(), r());
                 pstd::optional<BSDFSample> wis = tiInterface.Sample_f(wi, uc, u, !mode);
-                if (!wis || !wos->f || wos->pdf == 0 || wos->wi.z == 0 ||
+                if (!wis || !wis->f || wis->pdf == 0 || wis->wi.z == 0 ||
                     wis->IsReflection())
                     continue;
 
@@ -1023,10 +1021,11 @@ class MeasuredBxDF {
     // MeasuredBxDF Public Methods
     MeasuredBxDF() = default;
     PBRT_CPU_GPU
-    MeasuredBxDF(const MeasuredBRDF *brdf, const SampledWavelengths &lambda)
+    MeasuredBxDF(const MeasuredBxDFData *brdf, const SampledWavelengths &lambda)
         : brdf(brdf), lambda(lambda) {}
 
-    static MeasuredBRDF *BRDFDataFromFile(const std::string &filename, Allocator alloc);
+    static MeasuredBxDFData *BRDFDataFromFile(const std::string &filename,
+                                              Allocator alloc);
 
     PBRT_CPU_GPU
     SampledSpectrum f(Vector3f wo, Vector3f wi, TransportMode mode) const;
@@ -1053,16 +1052,17 @@ class MeasuredBxDF {
   private:
     // MeasuredBxDF Private Methods
     PBRT_CPU_GPU
+    static Float theta2u(Float theta) { return std::sqrt(theta * (2 / Pi)); }
+    PBRT_CPU_GPU
+    static Float phi2u(Float phi) { return phi * (1 / (2 * Pi)) + .5f; }
+
+    PBRT_CPU_GPU
     static Float u2theta(Float u) { return Sqr(u) * (Pi / 2.f); }
     PBRT_CPU_GPU
     static Float u2phi(Float u) { return (2.f * u - 1.f) * Pi; }
-    PBRT_CPU_GPU
-    static Float theta2u(Float theta) { return std::sqrt(theta * (2.f / Pi)); }
-    PBRT_CPU_GPU
-    static Float phi2u(Float phi) { return (phi + Pi) / (2.f * Pi); }
 
     // MeasuredBxDF Private Members
-    const MeasuredBRDF *brdf;
+    const MeasuredBxDFData *brdf;
     SampledWavelengths lambda;
 };
 

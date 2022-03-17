@@ -16,7 +16,7 @@
 
 namespace pbrt {
 
-class MeasuredBRDF;
+struct MeasuredBxDFData;
 
 // BxDFReflTransFlags Definition
 enum class BxDFReflTransFlags {

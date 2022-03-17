@@ -372,14 +372,19 @@ void BasicSceneBuilder::ObjectInstance(const std::string &name, FileLoc loc) {
             RenderFromObject(0) * worldFromRender, graphicsState.transformStartTime,
             RenderFromObject(1) * worldFromRender, graphicsState.transformEndTime);
 
-        instanceUses.push_back(
-            InstanceSceneEntity(name, loc, animatedRenderFromInstance));
-    } else {
-        const class Transform *renderFromInstance =
-            transformCache.Lookup(RenderFromObject(0) * worldFromRender);
-
-        instanceUses.push_back(InstanceSceneEntity(name, loc, renderFromInstance));
+        // For very small changes, animatedRenderFromInstance may have both
+        // xforms equal even if CTMIsAnimated() has returned true. Fall
+        // through to create a regular non-animated instance in that case.
+        if (animatedRenderFromInstance.IsAnimated()) {
+            instanceUses.push_back(
+                InstanceSceneEntity(name, loc, animatedRenderFromInstance));
+            return;
+        }
     }
+
+    const class Transform *renderFromInstance =
+        transformCache.Lookup(RenderFromObject(0) * worldFromRender);
+    instanceUses.push_back(InstanceSceneEntity(name, loc, renderFromInstance));
 }
 
 void BasicSceneBuilder::EndOfFiles() {
@@ -516,6 +521,18 @@ void BasicSceneBuilder::Option(const std::string &name, const std::string &value
         if (value.size() < 3 || value.front() != '"' || value.back() != '"')
             ErrorExitDeferred(&loc, "%s: expected quoted string for option value", value);
         Options->mseReferenceOutput = value.substr(1, value.size() - 2);
+    } else if (nName == "rendercoordsys") {
+        if (value.size() < 3 || value.front() != '"' || value.back() != '"')
+            ErrorExitDeferred(&loc, "%s: expected quoted string for option value", value);
+        std::string renderCoordSys = value.substr(1, value.size() - 2);
+        if (renderCoordSys == "camera")
+            Options->renderingSpace = RenderingCoordinateSystem::Camera;
+        else if (renderCoordSys == "cameraworld")
+            Options->renderingSpace = RenderingCoordinateSystem::CameraWorld;
+        else if (renderCoordSys == "world")
+            Options->renderingSpace = RenderingCoordinateSystem::World;
+        else
+            ErrorExit("%s: unknown rendering coordinate system.", renderCoordSys);
     } else if (nName == "seed") {
         Options->seed = std::atoi(value.c_str());
     } else if (nName == "forcediffuse") {
@@ -1080,7 +1097,7 @@ void BasicScene::Done() {
 void BasicScene::CreateMaterials(const NamedTextures &textures,
                                  std::map<std::string, pbrt::Material> *namedMaterialsOut,
                                  std::vector<pbrt::Material> *materialsOut) {
-    LOG_VERBOSE("Starting to consume normal map futures");
+    LOG_VERBOSE("Starting to consume %d normal map futures", normalMapJobs.size());
     std::lock_guard<std::mutex> lock(materialMutex);
     for (auto &job : normalMapJobs) {
         CHECK(normalMaps.find(job.first) == normalMaps.end());
@@ -1108,8 +1125,13 @@ void BasicScene::CreateMaterials(const NamedTextures &textures,
             continue;
         }
 
-        std::string fn = nm.second.parameters.GetOneString("normalmap", "");
-        Image *normalMap = !fn.empty() ? normalMaps[fn] : nullptr;
+        std::string fn =
+            ResolveFilename(nm.second.parameters.GetOneString("normalmap", ""));
+        Image *normalMap = nullptr;
+        if (!fn.empty()) {
+            CHECK(normalMaps.find(fn) != normalMaps.end());
+            normalMap = normalMaps[fn];
+        }
 
         TextureParameterDictionary texDict(&mtl.parameters, &textures);
         class Material m = Material::Create(type, texDict, normalMap, *namedMaterialsOut,
@@ -1121,8 +1143,12 @@ void BasicScene::CreateMaterials(const NamedTextures &textures,
     materialsOut->reserve(materials.size());
     for (const auto &mtl : materials) {
         Allocator alloc = threadAllocators.Get();
-        std::string fn = mtl.parameters.GetOneString("normalmap", "");
-        Image *normalMap = !fn.empty() ? normalMaps[fn] : nullptr;
+        std::string fn = ResolveFilename(mtl.parameters.GetOneString("normalmap", ""));
+        Image *normalMap = nullptr;
+        if (!fn.empty()) {
+            CHECK(normalMaps.find(fn) != normalMaps.end());
+            normalMap = normalMaps[fn];
+        }
 
         TextureParameterDictionary texDict(&mtl.parameters, &textures);
         class Material m = Material::Create(mtl.name, texDict, normalMap,

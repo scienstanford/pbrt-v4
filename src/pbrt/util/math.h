@@ -204,17 +204,11 @@ struct CompensatedFloat {
 
 template <int N>
 class SquareMatrix;
+PBRT_CPU_GPU inline Float SinXOverX(Float x);
 
 // Math Inline Functions
 PBRT_CPU_GPU inline Float Lerp(Float x, Float a, Float b) {
     return (1 - x) * a + x * b;
-}
-
-// http://www.plunk.org/~hatch/rightway.php
-PBRT_CPU_GPU inline Float SinXOverX(Float x) {
-    if (1 + x * x == 1)
-        return 1;
-    return std::sin(x) / x;
 }
 
 template <typename T>
@@ -340,6 +334,13 @@ PBRT_CPU_GPU inline constexpr Float EvaluatePolynomial(Float t, C c) {
 template <typename Float, typename C, typename... Args>
 PBRT_CPU_GPU inline constexpr Float EvaluatePolynomial(Float t, C c, Args... cRemaining) {
     return FMA(t, EvaluatePolynomial(t, cRemaining...), c);
+}
+
+// http://www.plunk.org/~hatch/rightway.html
+PBRT_CPU_GPU inline Float SinXOverX(Float x) {
+    if (1 + x * x == 1)
+        return 1;
+    return std::sin(x) / x;
 }
 
 PBRT_CPU_GPU inline float SafeASin(float x) {
@@ -922,9 +923,21 @@ class Interval {
     PBRT_CPU_GPU
     Interval &operator-=(Float f) { return *this -= Interval(f); }
     PBRT_CPU_GPU
-    Interval &operator*=(Float f) { return *this *= Interval(f); }
+    Interval &operator*=(Float f) {
+        if (f > 0)
+            *this = Interval(MulRoundDown(f, low), MulRoundUp(f, high));
+        else
+            *this = Interval(MulRoundDown(f, high), MulRoundUp(f, low));
+        return *this;
+    }
     PBRT_CPU_GPU
-    Interval &operator/=(Float f) { return *this /= Interval(f); }
+    Interval &operator/=(Float f) {
+        if (f > 0)
+            *this = Interval(DivRoundDown(low, f), DivRoundUp(high, f));
+        else
+            *this = Interval(DivRoundDown(high, f), DivRoundUp(low, f));
+        return *this;
+    }
 
 #ifndef PBRT_IS_GPU_CODE
     static const Interval Pi;
@@ -979,11 +992,22 @@ PBRT_CPU_GPU inline Interval operator-(Float f, Interval i) {
 }
 
 PBRT_CPU_GPU inline Interval operator*(Float f, Interval i) {
-    return Interval(f) * i;
+    if (f > 0)
+        return Interval(MulRoundDown(f, i.LowerBound()), MulRoundUp(f, i.UpperBound()));
+    else
+        return Interval(MulRoundDown(f, i.UpperBound()), MulRoundUp(f, i.LowerBound()));
 }
 
 PBRT_CPU_GPU inline Interval operator/(Float f, Interval i) {
-    return Interval(f) / i;
+    if (InRange(0, i))
+        // The interval we're dividing by straddles zero, so just
+        // return an interval of everything.
+        return Interval(-Infinity, Infinity);
+
+    if (f > 0)
+        return Interval(DivRoundDown(f, i.UpperBound()), DivRoundUp(f, i.LowerBound()));
+    else
+        return Interval(DivRoundDown(f, i.LowerBound()), DivRoundUp(f, i.UpperBound()));
 }
 
 PBRT_CPU_GPU inline Interval operator+(Interval i, Float f) {
@@ -995,11 +1019,20 @@ PBRT_CPU_GPU inline Interval operator-(Interval i, Float f) {
 }
 
 PBRT_CPU_GPU inline Interval operator*(Interval i, Float f) {
-    return i * Interval(f);
+    if (f > 0)
+        return Interval(MulRoundDown(f, i.LowerBound()), MulRoundUp(f, i.UpperBound()));
+    else
+        return Interval(MulRoundDown(f, i.UpperBound()), MulRoundUp(f, i.LowerBound()));
 }
 
 PBRT_CPU_GPU inline Interval operator/(Interval i, Float f) {
-    return i / Interval(f);
+    if (f == 0)
+        return Interval(-Infinity, Infinity);
+
+    if (f > 0)
+        return Interval(DivRoundDown(i.LowerBound(), f), DivRoundUp(i.UpperBound(), f));
+    else
+        return Interval(DivRoundDown(i.UpperBound(), f), DivRoundUp(i.LowerBound(), f));
 }
 
 PBRT_CPU_GPU inline Float Floor(Interval i) {
@@ -1568,25 +1601,25 @@ PBRT_CPU_GPU inline pstd::optional<SquareMatrix<4>> Inverse(const SquareMatrix<4
         return {};
     Float s = 1 / determinant;
 
-    Float inv[4][4] = {s * InnerProduct(m[1][1], c5, m[1][3], c3, -m[1][2], c4),
-                       s * InnerProduct(-m[0][1], c5, m[0][2], c4, -m[0][3], c3),
-                       s * InnerProduct(m[3][1], s5, m[3][3], s3, -m[3][2], s4),
-                       s * InnerProduct(-m[2][1], s5, m[2][2], s4, -m[2][3], s3),
+    Float inv[4][4] = {{s * InnerProduct(m[1][1], c5, m[1][3], c3, -m[1][2], c4),
+                        s * InnerProduct(-m[0][1], c5, m[0][2], c4, -m[0][3], c3),
+                        s * InnerProduct(m[3][1], s5, m[3][3], s3, -m[3][2], s4),
+                        s * InnerProduct(-m[2][1], s5, m[2][2], s4, -m[2][3], s3)},
 
-                       s * InnerProduct(-m[1][0], c5, m[1][2], c2, -m[1][3], c1),
-                       s * InnerProduct(m[0][0], c5, m[0][3], c1, -m[0][2], c2),
-                       s * InnerProduct(-m[3][0], s5, m[3][2], s2, -m[3][3], s1),
-                       s * InnerProduct(m[2][0], s5, m[2][3], s1, -m[2][2], s2),
+                       {s * InnerProduct(-m[1][0], c5, m[1][2], c2, -m[1][3], c1),
+                        s * InnerProduct(m[0][0], c5, m[0][3], c1, -m[0][2], c2),
+                        s * InnerProduct(-m[3][0], s5, m[3][2], s2, -m[3][3], s1),
+                        s * InnerProduct(m[2][0], s5, m[2][3], s1, -m[2][2], s2)},
 
-                       s * InnerProduct(m[1][0], c4, m[1][3], c0, -m[1][1], c2),
-                       s * InnerProduct(-m[0][0], c4, m[0][1], c2, -m[0][3], c0),
-                       s * InnerProduct(m[3][0], s4, m[3][3], s0, -m[3][1], s2),
-                       s * InnerProduct(-m[2][0], s4, m[2][1], s2, -m[2][3], s0),
+                       {s * InnerProduct(m[1][0], c4, m[1][3], c0, -m[1][1], c2),
+                        s * InnerProduct(-m[0][0], c4, m[0][1], c2, -m[0][3], c0),
+                        s * InnerProduct(m[3][0], s4, m[3][3], s0, -m[3][1], s2),
+                        s * InnerProduct(-m[2][0], s4, m[2][1], s2, -m[2][3], s0)},
 
-                       s * InnerProduct(-m[1][0], c3, m[1][1], c1, -m[1][2], c0),
-                       s * InnerProduct(m[0][0], c3, m[0][2], c0, -m[0][1], c1),
-                       s * InnerProduct(-m[3][0], s3, m[3][1], s1, -m[3][2], s0),
-                       s * InnerProduct(m[2][0], s3, m[2][2], s0, -m[2][1], s1)};
+                       {s * InnerProduct(-m[1][0], c3, m[1][1], c1, -m[1][2], c0),
+                        s * InnerProduct(m[0][0], c3, m[0][2], c0, -m[0][1], c1),
+                        s * InnerProduct(-m[3][0], s3, m[3][1], s1, -m[3][2], s0),
+                        s * InnerProduct(m[2][0], s3, m[2][2], s0, -m[2][1], s1)}};
 
     return SquareMatrix<4>(inv);
 }

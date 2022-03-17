@@ -967,7 +967,7 @@ PBRT_CPU_GPU inline T Dot(Vector3<T> v, Vector3<T> w) {
 }
 
 // Equivalent to std::acos(Dot(a, b)), but more numerically stable.
-// via http://www.plunk.org/~hatch/rightway.php
+// via http://www.plunk.org/~hatch/rightway.html
 template <typename T>
 PBRT_CPU_GPU inline Float AngleBetween(Vector3<T> v1, Vector3<T> v2) {
     if (Dot(v1, v2) < 0)
@@ -1142,7 +1142,7 @@ PBRT_CPU_GPU inline Float AngleBetween(Quaternion q1, Quaternion q2) {
         return 2 * SafeASin(Length(q2 - q1) / 2);
 }
 
-// http://www.plunk.org/~hatch/rightway.php
+// http://www.plunk.org/~hatch/rightway.html
 PBRT_CPU_GPU inline Quaternion Slerp(Float t, Quaternion q1, Quaternion q2) {
     Float theta = AngleBetween(q1, q2);
     Float sinThetaOverTheta = SinXOverX(theta);
@@ -1799,10 +1799,12 @@ class DirectionCone {
     // DirectionCone Public Methods
     DirectionCone() = default;
     PBRT_CPU_GPU
-    DirectionCone(Vector3f w, Float cosTheta)
-        : w(Normalize(w)), cosTheta(cosTheta), empty(false) {}
+    DirectionCone(Vector3f w, Float cosTheta) : w(Normalize(w)), cosTheta(cosTheta) {}
     PBRT_CPU_GPU
     explicit DirectionCone(Vector3f w) : DirectionCone(w, 1) {}
+
+    PBRT_CPU_GPU
+    bool IsEmpty() const { return cosTheta == Infinity; }
 
     PBRT_CPU_GPU
     static DirectionCone EntireSphere() { return DirectionCone(Vector3f(0, 0, 1), -1); }
@@ -1814,13 +1816,12 @@ class DirectionCone {
 
     // DirectionCone Public Members
     Vector3f w;
-    Float cosTheta;
-    bool empty = true;
+    Float cosTheta = Infinity;
 };
 
 // DirectionCone Inline Functions
 PBRT_CPU_GPU inline bool Inside(const DirectionCone &d, Vector3f w) {
-    return !d.empty && Dot(d.w, Normalize(w)) >= d.cosTheta;
+    return !d.IsEmpty() && Dot(d.w, Normalize(w)) >= d.cosTheta;
 }
 
 PBRT_CPU_GPU inline DirectionCone BoundSubtendedDirections(const Bounds3f &b, Point3f p) {
@@ -1828,7 +1829,7 @@ PBRT_CPU_GPU inline DirectionCone BoundSubtendedDirections(const Bounds3f &b, Po
     Float radius;
     Point3f pCenter;
     b.BoundingSphere(&pCenter, &radius);
-    if (DistanceSquared(p, pCenter) < radius * radius)
+    if (DistanceSquared(p, pCenter) < Sqr(radius))
         return DirectionCone::EntireSphere();
 
     // Compute and return _DirectionCone_ for bounding sphere
@@ -1840,7 +1841,7 @@ PBRT_CPU_GPU inline DirectionCone BoundSubtendedDirections(const Bounds3f &b, Po
 
 PBRT_CPU_GPU
 inline Vector3f DirectionCone::ClosestVectorInCone(Vector3f wp) const {
-    DCHECK(!empty);
+    DCHECK(!IsEmpty());
     wp = Normalize(wp);
     // Return provided vector if it is inside the cone
     if (Dot(wp, w) > cosTheta)
@@ -1945,6 +1946,126 @@ inline Frame::Frame(Vector3f x, Vector3f y, Vector3f z) : x(x), y(y), z(z) {
     DCHECK_LT(std::abs(Dot(y, z)), 1e-4);
     DCHECK_LT(std::abs(Dot(z, x)), 1e-4);
 }
+
+// Moved by ZL from V3 (2022-02-05)
+// Added by MM (2019-05-30)
+// Used in OmniCamera for Microlens bounds.
+// Could easily be generalized to generic number of points
+// If converted to arbitrary number of points, a convex hull algorithm would be useful.
+// Could precompute edges to accelerate contains queries
+template <typename T>
+class ConvexQuad {
+private:
+    PBRT_CPU_GPU
+    Vector2f TriAreas() const {
+        const Point2<T>& p = pCorners[0];
+        const Vector2<T> edge0 = pCorners[1] - p;
+        const Vector2<T> edge1 = pCorners[2] - p;
+        const Vector2<T> edge2 = pCorners[3] - p;
+        // Cross product embedding points in 3D gives twice the 
+        // signed area of the triangle.
+        const Float area0 = 0.5f*(edge0.x * edge1.y - edge0.y * edge1.x);
+        const Float area1 = 0.5f*(edge1.x * edge2.y - edge1.y * edge2.x);
+        return { area0,area1 };
+    }
+public:
+    // ConvexQuad Public Methods
+    PBRT_CPU_GPU
+    ConvexQuad() {
+        T minNum = std::numeric_limits<T>::lowest();
+        T maxNum = std::numeric_limits<T>::max();
+        pCorners[0] = Point2<T>(minNum, minNum);
+        pCorners[1] = Point2<T>(maxNum, minNum);
+        pCorners[2] = Point2<T>(maxNum, maxNum);
+        pCorners[3] = Point2<T>(minNum, maxNum);
+    }
+
+    PBRT_CPU_GPU
+    ConvexQuad(const Point2<T> &p1, const Point2<T> &p2, const Point2<T> &p3, const Point2<T> &p4) {
+        DCHECK(p1 != p2 && p1 != p3 && p1 != p4 && p2 != p3 && p2 != p4 && p3 != p4 );
+        Point2<T> temp[] = { p1,p2,p3,p4 };
+        std::copy(temp, temp + 4, pCorners);
+
+        Point2<T> C = Centroid();
+        auto ccwWinding = [&C](const Point2<T>& p0, const Point2<T>& p1) {
+            const Vector2<T> e0 = p0 - C;
+            const Vector2<T> e1 = p1 - C;
+            return atan2((double)e0.y,(double)e0.x) < atan2((double)e1.y, (double)e1.x);
+        };
+        std::sort(pCorners, pCorners + 4, ccwWinding);
+    }
+
+    PBRT_CPU_GPU
+    Point2<T> Centroid() const {
+        return (pCorners[0] + pCorners[1] + pCorners[2] + pCorners[3])*Float(0.25);
+    }
+
+    PBRT_CPU_GPU
+    Float Area() const {
+        if (*this == ConvexQuad()) {
+            return INFINITY;
+        }
+        // Compute area of triangles formed by p0,p1,p2 and p0,p2,p3, and sum
+        Vector2f areas = TriAreas();
+        return (areas.x + areas.y);
+    }
+    // Counter-clockwise winding
+    PBRT_CPU_GPU
+    inline const Point2<T> &operator[](int i) const {
+        DCHECK(i >= 0 || i < 4);
+        return pCorners[i];
+    }
+    // Counter-clockwise winding
+    PBRT_CPU_GPU
+    inline Point2<T> &operator[](int i) {
+        DCHECK(i >= 0 || i < 4);
+        return pCorners[i];
+    }
+
+    PBRT_CPU_GPU
+    bool operator==(const ConvexQuad<T> &b) const {
+        for (int i = 0; i < 4; ++i) {
+            if (pCorners[i] != b.pCorners[i])
+                return false;
+        }
+        return true;
+    }
+
+    PBRT_CPU_GPU
+    bool operator!=(const Bounds2<T> &b) const {
+        for (int i = 0; i < 4; ++i) {
+            if (pCorners[i] == b.pCorners[i])
+                return true;
+        }
+        return false;
+    }
+    // In real arithmetic, would be an inclusive contains (points on edge counted as inside)
+    PBRT_CPU_GPU
+    bool Contains(const Point2<T> &p) const {
+        // Compute the signed area of each polygon from p to an edge.  
+        // If the area is non-negative for all polygons then p is inside 
+        // the polygon.
+        for (int i = 0; i < 4; ++i) {
+            const Vector2<T> edge0 = pCorners[i] - p;
+            const Vector2<T> edge1 = pCorners[(i + 1) % 4] - p;
+
+            // Let z=0 for both vectors and take cross product to get
+            // double the (signed) area.
+            const float doublearea = (edge0.x * edge1.y) - (edge0.y * edge1.x);
+            if (doublearea < 0) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // ConvexQuad Public Data
+    PBRT_CPU_GPU
+    Point2<T> pCorners[4];
+};
+
+typedef ConvexQuad<Float> ConvexQuadf;
 
 }  // namespace pbrt
 

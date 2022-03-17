@@ -396,7 +396,7 @@ int main() {
    fstat(fd, &s);
    size_t len = s.st_size;
    void *ptr = mmap(0, len, PROT_READ, MAP_FILE | MAP_SHARED, fd, 0);
-   munmap(ptr, len);   
+   munmap(ptr, len);
 }
 " HAVE_MMAP)
 
@@ -551,7 +551,7 @@ set (PBRT_SOURCE_HEADERS
   src/pbrt/scene.h
   src/pbrt/shapes.h
   src/pbrt/textures.h
-  )  
+  )
 
 SET (PBRT_CPU_SOURCE
   src/pbrt/cpu/aggregates.cpp
@@ -836,6 +836,7 @@ target_include_directories (pbrt_lib PUBLIC
   ${DOUBLE_CONVERSION_INCLUDE}
   ${NANOVDB_INCLUDE}
   ${CMAKE_CURRENT_BINARY_DIR}
+  ${GSL_INCLUDE_DIR}
 )
 if (PBRT_CUDA_ENABLED AND PBRT_OPTIX7_PATH)
     target_include_directories (pbrt_lib SYSTEM PUBLIC ${PBRT_OPTIX7_PATH}/include)
@@ -858,6 +859,7 @@ set (ALL_PBRT_LIBS
   ${OPENEXR_LIBS}
   Ptex_static
   ${ZLIB_LIBRARIES}
+  ${GSL_LIBRARIES}
   ${LIBDEFLATE_LIBRARIES}
   double-conversion
   ${PBRT_CUDA_LIB}
@@ -895,7 +897,7 @@ target_link_libraries (rgb2spec_opt PRIVATE ${CMAKE_THREAD_LIBS_INIT} pbrt_opt p
 
 if (NOT PBRT_USE_PREGENERATED_RGB_TO_SPECTRUM_TABLES)
   add_custom_command (OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_aces.cpp
-      COMMAND rgb2spec_opt 64 ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_aces.cpp ACES2065_1 
+      COMMAND rgb2spec_opt 64 ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_aces.cpp ACES2065_1
       DEPENDS rgb2spec_opt)
 
   add_custom_command (OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/rgbspectrum_dci_p3.cpp
@@ -984,6 +986,16 @@ target_link_libraries (cyhair2pbrt PRIVATE pbrt_opt pbrt_warnings)
 add_sanitizers (cyhair2pbrt)
 
 ##################
+# lenstool
+add_executable(lenstool src/pbrt/cmd/lenstool.cpp)
+
+target_compile_definitions (lenstool PRIVATE ${PBRT_DEFINITIONS})
+target_compile_options (lenstool PRIVATE ${PBRT_CXX_FLAGS})
+target_include_directories (lenstool PUBLIC src src/ext)
+target_link_libraries (lenstool PRIVATE ${ALL_PBRT_LIBS} pbrt_warnings pbrt_opt)
+
+add_sanitizers (lenstool)
+##################
 # Unit tests
 
 set (PBRT_TEST_SOURCE
@@ -1035,6 +1047,7 @@ add_test (pbrt_unit_test pbrt_test)
 install (TARGETS
   pbrt_exe
   imgtool
+  lenstool
   pspec
   plytool
   cyhair2pbrt

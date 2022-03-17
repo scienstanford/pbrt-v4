@@ -856,10 +856,17 @@ std::string Tensor::ToString() const {
     return oss.str();
 }
 
-// MeasuredBRDF Definition
-class MeasuredBRDF {
-  public:
-    MeasuredBRDF(Allocator alloc)
+// MeasuredBxDFData Definition
+struct MeasuredBxDFData {
+    // MeasuredBxDFData Public Members
+    pstd::vector<float> wavelengths;
+    PiecewiseLinear2D<3> spectra;
+    PiecewiseLinear2D<0> ndf;
+    PiecewiseLinear2D<2> vndf;
+    PiecewiseLinear2D<0> sigma;
+    bool isotropic;
+    PiecewiseLinear2D<2> luminance;
+    MeasuredBxDFData(Allocator alloc)
         : ndf(alloc),
           sigma(alloc),
           vndf(alloc),
@@ -867,30 +874,18 @@ class MeasuredBRDF {
           spectra(alloc),
           wavelengths(alloc) {}
 
-    static MeasuredBRDF *Create(const std::string &filename, Allocator alloc);
+    static MeasuredBxDFData *Create(const std::string &filename, Allocator alloc);
 
     std::string ToString() const {
-        return StringPrintf("[ MeasuredBRDF filename: %s ]", filename);
+        return StringPrintf("[ MeasuredBxDFData filename: %s ]", filename);
     }
 
-    using Warp2D0 = PiecewiseLinear2D<0>;
-    using Warp2D2 = PiecewiseLinear2D<2>;
-    using Warp2D3 = PiecewiseLinear2D<3>;
-
-    Warp2D0 ndf;
-    Warp2D0 sigma;
-    Warp2D2 vndf;
-    Warp2D2 luminance;
-    Warp2D3 spectra;
-    pstd::vector<float> wavelengths;
-    bool isotropic;
-    bool jacobian;
     std::string filename;
 };
 
 STAT_MEMORY_COUNTER("Memory/Measured BRDF data", measuredBRDFBytes);
 
-MeasuredBRDF *MeasuredBRDF::Create(const std::string &filename, Allocator alloc) {
+MeasuredBxDFData *MeasuredBxDFData::Create(const std::string &filename, Allocator alloc) {
     Tensor tf = Tensor(filename);
     auto &theta_i = tf.field("theta_i");
     auto &phi_i = tf.field("phi_i");
@@ -937,10 +932,9 @@ MeasuredBRDF *MeasuredBRDF::Create(const std::string &filename, Allocator alloc)
         return nullptr;
     }
 
-    MeasuredBRDF *brdf = alloc.new_object<MeasuredBRDF>(alloc);
+    MeasuredBxDFData *brdf = alloc.new_object<MeasuredBxDFData>(alloc);
     brdf->filename = filename;
     brdf->isotropic = phi_i.shape[0] <= 2;
-    brdf->jacobian = ((uint8_t *)jacobian.data.get())[0];
 
     if (!brdf->isotropic) {
         float *phi_i_data = (float *)phi_i.data.get();
@@ -951,24 +945,24 @@ MeasuredBRDF *MeasuredBRDF::Create(const std::string &filename, Allocator alloc)
     }
 
     /* Construct NDF interpolant data structure */
-    brdf->ndf = Warp2D0(alloc, (float *)ndf.data.get(), ndf.shape[1], ndf.shape[0], {},
-                        {}, false, false);
+    brdf->ndf = PiecewiseLinear2D<0>(alloc, (float *)ndf.data.get(), ndf.shape[1],
+                                     ndf.shape[0], {}, {}, false, false);
 
     /* Construct projected surface area interpolant data structure */
-    brdf->sigma = Warp2D0(alloc, (float *)sigma.data.get(), sigma.shape[1],
-                          sigma.shape[0], {}, {}, false, false);
+    brdf->sigma = PiecewiseLinear2D<0>(alloc, (float *)sigma.data.get(), sigma.shape[1],
+                                       sigma.shape[0], {}, {}, false, false);
 
     /* Construct VNDF warp data structure */
-    brdf->vndf =
-        Warp2D2(alloc, (float *)vndf.data.get(), vndf.shape[3], vndf.shape[2],
-                {{(int)phi_i.shape[0], (int)theta_i.shape[0]}},
-                {{(const float *)phi_i.data.get(), (const float *)theta_i.data.get()}});
+    brdf->vndf = PiecewiseLinear2D<2>(
+        alloc, (float *)vndf.data.get(), vndf.shape[3], vndf.shape[2],
+        {{(int)phi_i.shape[0], (int)theta_i.shape[0]}},
+        {{(const float *)phi_i.data.get(), (const float *)theta_i.data.get()}});
 
     /* Construct Luminance warp data structure */
-    brdf->luminance =
-        Warp2D2(alloc, (float *)luminance.data.get(), luminance.shape[3],
-                luminance.shape[2], {{(int)phi_i.shape[0], (int)theta_i.shape[0]}},
-                {{(const float *)phi_i.data.get(), (const float *)theta_i.data.get()}});
+    brdf->luminance = PiecewiseLinear2D<2>(
+        alloc, (float *)luminance.data.get(), luminance.shape[3], luminance.shape[2],
+        {{(int)phi_i.shape[0], (int)theta_i.shape[0]}},
+        {{(const float *)phi_i.data.get(), (const float *)theta_i.data.get()}});
 
     /* Copy wavelength information */
     size_t size = wavelengths.shape[0];
@@ -977,14 +971,14 @@ MeasuredBRDF *MeasuredBRDF::Create(const std::string &filename, Allocator alloc)
         brdf->wavelengths[i] = ((const float *)wavelengths.data.get())[i];
 
     /* Construct spectral interpolant */
-    brdf->spectra =
-        Warp2D3(alloc, (float *)spectra.data.get(), spectra.shape[4], spectra.shape[3],
-                {{(int)phi_i.shape[0], (int)theta_i.shape[0], (int)wavelengths.shape[0]}},
-                {{(const float *)phi_i.data.get(), (const float *)theta_i.data.get(),
-                  (const float *)wavelengths.data.get()}},
-                false, false);
+    brdf->spectra = PiecewiseLinear2D<3>(
+        alloc, (float *)spectra.data.get(), spectra.shape[4], spectra.shape[3],
+        {{(int)phi_i.shape[0], (int)theta_i.shape[0], (int)wavelengths.shape[0]}},
+        {{(const float *)phi_i.data.get(), (const float *)theta_i.data.get(),
+          (const float *)wavelengths.data.get()}},
+        false, false);
 
-    measuredBRDFBytes += sizeof(MeasuredBRDF) + 4 * brdf->wavelengths.size() +
+    measuredBRDFBytes += sizeof(MeasuredBxDFData) + 4 * brdf->wavelengths.size() +
                          brdf->ndf.BytesUsed() + brdf->sigma.BytesUsed() +
                          brdf->vndf.BytesUsed() + brdf->luminance.BytesUsed() +
                          brdf->spectra.BytesUsed();
@@ -992,109 +986,100 @@ MeasuredBRDF *MeasuredBRDF::Create(const std::string &filename, Allocator alloc)
     return brdf;
 }
 
-MeasuredBRDF *MeasuredBxDF::BRDFDataFromFile(const std::string &filename,
-                                             Allocator alloc) {
-    static std::map<std::string, MeasuredBRDF *> loadedData;
+MeasuredBxDFData *MeasuredBxDF::BRDFDataFromFile(const std::string &filename,
+                                                 Allocator alloc) {
+    static std::map<std::string, MeasuredBxDFData *> loadedData;
     if (loadedData.find(filename) == loadedData.end())
-        loadedData[filename] = MeasuredBRDF::Create(filename, alloc);
+        loadedData[filename] = MeasuredBxDFData::Create(filename, alloc);
     return loadedData[filename];
 }
 
 // MeasuredBxDF Method Definitions
 SampledSpectrum MeasuredBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const {
+    // Check for valid reflection configurations
     if (!SameHemisphere(wo, wi))
-        return SampledSpectrum(0.);
+        return SampledSpectrum(0);
     if (wo.z < 0) {
         wo = -wo;
         wi = -wi;
     }
 
+    // Determine half-direction vector $\wm$
     Vector3f wm = wi + wo;
     if (LengthSquared(wm) == 0)
         return SampledSpectrum(0);
     wm = Normalize(wm);
 
-    /* Cartesian -> spherical coordinates */
-    Float theta_i = SphericalTheta(wi), phi_i = std::atan2(wi.y, wi.x);
+    // Map $\wo$ and $\wm$ to the unit square $[0, 1]^2$
+    Float theta_o = SphericalTheta(wo), phi_o = std::atan2(wo.y, wo.x);
     Float theta_m = SphericalTheta(wm), phi_m = std::atan2(wm.y, wm.x);
+    Point2f u_wo(theta2u(theta_o), phi2u(phi_o));
+    Point2f u_wm(theta2u(theta_m), phi2u(brdf->isotropic ? (phi_m - phi_o) : phi_m));
+    u_wm[1] = u_wm[1] - pstd::floor(u_wm[1]);
 
-    /* Spherical coordinates -> unit coordinate system */
-    Vector2f u_wi(theta2u(theta_i), phi2u(phi_i));
-    Vector2f u_wm(theta2u(theta_m), phi2u(brdf->isotropic ? (phi_m - phi_i) : phi_m));
-    u_wm.y = u_wm.y - pstd::floor(u_wm.y);
+    // Evaluate inverse parameterization $R^{-1}$
+    PLSample ui = brdf->vndf.Invert(u_wm, phi_o, theta_o);
 
-    Float params[2] = {phi_i, theta_i};
-    auto ui = brdf->vndf.Invert(u_wm, params);
-    Vector2f sample = ui.p;
-    Float vndfPDF = ui.pdf;
+    // Evaluate spectral 5D interpolant
+    SampledSpectrum fr;
+    for (int i = 0; i < NSpectrumSamples; ++i)
+        fr[i] =
+            std::max<Float>(0, brdf->spectra.Evaluate(ui.p, phi_o, theta_o, lambda[i]));
 
-    SampledSpectrum fr(0);
-    for (int i = 0; i < pbrt::NSpectrumSamples; ++i) {
-        Float params_fr[3] = {phi_i, theta_i, lambda[i]};
-        fr[i] = brdf->spectra.Evaluate(sample, params_fr);
-        CHECK_RARE(1e-5f, fr[i] < 0);
-        fr[i] = std::max<Float>(0, fr[i]);
-    }
-
-    return fr * brdf->ndf.Evaluate(u_wm, params) /
-           (4 * brdf->sigma.Evaluate(u_wi, params) * AbsCosTheta(wi));
+    // Return measured BRDF value
+    return fr * brdf->ndf.Evaluate(u_wm) /
+           (4 * brdf->sigma.Evaluate(u_wo) * CosTheta(wi));
 }
 
 pstd::optional<BSDFSample> MeasuredBxDF::Sample_f(Vector3f wo, Float uc, Point2f u,
                                                   TransportMode mode,
                                                   BxDFReflTransFlags sampleFlags) const {
+    // Check flags and detect interactions in lower hemisphere
     if (!(sampleFlags & BxDFReflTransFlags::Reflection))
         return {};
-
     bool flipWi = false;
     if (wo.z <= 0) {
         wo = -wo;
         flipWi = true;
     }
 
-    Float theta_i = SphericalTheta(wo), phi_i = std::atan2(wo.y, wo.x);
+    // Initialize parameters of conditional distribution
+    Float theta_o = SphericalTheta(wo), phi_o = std::atan2(wo.y, wo.x);
 
-    Vector2f sample = Vector2f(u.y, u.x);
-    Float params[2] = {phi_i, theta_i};
-    auto s = brdf->luminance.Sample(sample, params);
-    sample = s.p;
-    Float lumPDF = s.pdf;
+    // Warp sample using luminance distribution
+    auto s = brdf->luminance.Sample(u, phi_o, theta_o);
+    u = s.p;
+    Float lum_pdf = s.pdf;
 
-    s = brdf->vndf.Sample(sample, params);
-    Vector2f u_wm = s.p;
-    Float ndfPDF = s.pdf;
+    // Sample visible normal distribution of measured BRDF
+    s = brdf->vndf.Sample(u, phi_o, theta_o);
+    Point2f u_wm = s.p;
+    Float pdf = s.pdf;
 
+    // Map from microfacet normal to incident direction
     Float phi_m = u2phi(u_wm.y), theta_m = u2theta(u_wm.x);
     if (brdf->isotropic)
-        phi_m += phi_i;
-
-    /* Spherical -> Cartesian coordinates */
+        phi_m += phi_o;
     Float sinTheta_m = std::sin(theta_m), cosTheta_m = std::cos(theta_m);
     Vector3f wm = SphericalDirection(sinTheta_m, cosTheta_m, phi_m);
-
     Vector3f wi = Reflect(wo, wm);
     if (wi.z <= 0)
         return {};
 
+    // Interpolate spectral BRDF
     SampledSpectrum fr(0);
-    for (int i = 0; i < pbrt::NSpectrumSamples; ++i) {
-        Float params_fr[3] = {phi_i, theta_i, lambda[i]};
-        fr[i] = brdf->spectra.Evaluate(sample, params_fr);
-        CHECK_RARE(1e-5f, fr[i] < 0);
-        fr[i] = std::max<Float>(0, fr[i]);
-    }
+    for (int i = 0; i < NSpectrumSamples; ++i)
+        fr[i] = std::max<Float>(0, brdf->spectra.Evaluate(u, phi_o, theta_o, lambda[i]));
 
-    Vector2f u_wo = Vector2f(theta2u(theta_i), phi2u(phi_i));
-    fr *= brdf->ndf.Evaluate(u_wm, params) /
-          (4 * brdf->sigma.Evaluate(u_wo, params) * AbsCosTheta(wi));
+    Point2f u_wo(theta2u(theta_o), phi2u(phi_o));
+    fr *= brdf->ndf.Evaluate(u_wm) / (4 * brdf->sigma.Evaluate(u_wo) * AbsCosTheta(wi));
+    pdf /= 4 * Dot(wo, wm) * std::max<Float>(2 * Sqr(Pi) * u_wm.x * sinTheta_m, 1e-6f);
 
-    Float jacobian =
-        4 * Dot(wo, wm) * std::max<Float>(2 * Sqr(Pi) * u_wm.x * sinTheta_m, 1e-6f);
-    Float pdf = ndfPDF * lumPDF / jacobian;
-
+    // Handle interactions in lower hemisphere
     if (flipWi)
         wi = -wi;
-    return BSDFSample(fr, wi, pdf, BxDFFlags::GlossyReflection);
+
+    return BSDFSample(fr, wi, pdf * lum_pdf, BxDFFlags::GlossyReflection);
 }
 
 Float MeasuredBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
@@ -1114,22 +1099,21 @@ Float MeasuredBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
     wm = Normalize(wm);
 
     /* Cartesian -> spherical coordinates */
-    Float theta_i = SphericalTheta(wi), phi_i = std::atan2(wi.y, wi.x);
+    Float theta_o = SphericalTheta(wo), phi_o = std::atan2(wo.y, wo.x);
     Float theta_m = SphericalTheta(wm), phi_m = std::atan2(wm.y, wm.x);
 
     /* Spherical coordinates -> unit coordinate system */
-    Vector2f u_wm(theta2u(theta_m), phi2u(brdf->isotropic ? (phi_m - phi_i) : phi_m));
+    Point2f u_wm(theta2u(theta_m), phi2u(brdf->isotropic ? (phi_m - phi_o) : phi_m));
     u_wm.y = u_wm.y - pstd::floor(u_wm.y);
 
-    Float params[2] = {phi_i, theta_i};
-    auto ui = brdf->vndf.Invert(u_wm, params);
-    Vector2f sample = ui.p;
+    auto ui = brdf->vndf.Invert(u_wm, phi_o, theta_o);
+    Point2f sample = ui.p;
     Float vndfPDF = ui.pdf;
 
-    Float pdf = brdf->luminance.Evaluate(sample, params);
+    Float pdf = brdf->luminance.Evaluate(sample, phi_o, theta_o);
     Float sinTheta_m = std::sqrt(Sqr(wm.x) + Sqr(wm.y));
     Float jacobian =
-        4.f * Dot(wi, wm) * std::max<Float>(2 * Sqr(Pi) * u_wm.x * sinTheta_m, 1e-6f);
+        4.f * Dot(wo, wm) * std::max<Float>(2 * Sqr(Pi) * u_wm.x * sinTheta_m, 1e-6f);
     return vndfPDF * pdf / jacobian;
 }
 

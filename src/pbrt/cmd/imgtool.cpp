@@ -152,6 +152,15 @@ static std::map<std::string, CommandUsage> commandUsage = {
     --scale <scale>    Scale pixel values by given amount
     --tonemap          Apply tonemapping to the image (Reinhard et al.'s
                        photographic tone mapping operator)
+   --exr2bin [<ch1,ch2...>|<chx:chy>]
+                      Convert input .exr file to binary file according to channels specified.
+                      --outfile <path\to\output\dir\filename> can be specifiled for output path.
+                      e.g. imgtool convert --exr2bin 1,2,3,5 pbrt.exr
+                      e.g. imgtool convert --exr2bin 1:5 pbrt.exr
+                      e.g. imgtool convert --exr2bin B,G,R,Radiance.C05 pbrt.exr
+                      e.g. imgtool convert --exr2bin Radiance --outfile /path/to/dir/ pbrt.exr
+                      e.g. imgtool convert --exr2bin Radiance --outfile /path/to/dir/filename pbrt.exr
+                      Default: all channels at the same directory with pbrt.exr
 )")}},
     {"diff",
      {"diff [options] <filename>",
@@ -373,7 +382,6 @@ int makesky(std::vector<std::string> args) {
         arhosekskymodelstate_alloc_init(elevation, turbidity, albedo);
 
     const RGBColorSpace *colorSpace = RGBColorSpace::ACES2065_1;
-    XYZ illumXYZ = SpectrumToXYZ(&colorSpace->illuminant);
 
     ParallelFor(0, resolution, [&](int64_t start, int64_t end) {
         std::vector<Float> skyv(lambda.size());
@@ -1687,17 +1695,18 @@ int convert(std::vector<std::string> args) {
     int repeat = 1;
     bool flipy = false;
     bool tonemap = false;
+    bool exr2bin = false;
     Float maxY = 1.;
     Float despikeLimit = Infinity;
     bool preserveColors = false;
     bool bw = false;
-    bool exr2bin = false;
+
     std::string inFile, outFile;
     std::string colorspace;
     std::string channelNames;
     std::vector<std::string> targetChannelNames;
     std::vector<int> exr2mat_channels;
-    std::array<int, 4> cropWindow = { -1, 0, -1, 0 };
+    std::array<int, 4> cropWindow = {-1, 0, -1, 0};
     Float clamp = Infinity;
 
     for (auto iter = args.begin(); iter != args.end(); ++iter) {
@@ -1722,26 +1731,27 @@ int convert(std::vector<std::string> args) {
             ParseArg(&iter, args.end(), "scale", &scale, onError) ||
             ParseArg(&iter, args.end(), "tonemap", &tonemap, onError)) {
             // success
-        } else if (normalizeArg(*iter) == normalizeArg("exr2bin")) {
-            exr2bin = true;
-            std::string::size_type n;
-            if (((*(iter + 1)).find(".exr") == std::string::npos) && ((*(iter + 1)).find("outfile") == std::string::npos)) {
-                ++iter;
-                if ((n = (*iter).find(':')) != std::string::npos) {
-                    int start = std::stoi((*iter).substr(0, n));
-                    int end = std::stoi((*iter).substr(n + 1, std::string::npos));
-                    for (int i = start; i != end + 1; i++) {
-                        exr2mat_channels.push_back(i);
-                    }
-                } else if (isdigit((*iter)[0])) {
-                    exr2mat_channels = SplitStringToInts((*iter), ',');
-                } else {
-                    targetChannelNames =
-                        SplitString((*iter), ',');
-                }
-            }
-        }
-        else if ((*iter)[0] != '-' && inFile.empty()) {
+
+          } else if (normalizeArg(*iter) == normalizeArg("exr2bin")) {
+              exr2bin = true;
+              std::string::size_type n;
+              if (((*(iter + 1)).find(".exr") == std::string::npos) && ((*(iter + 1)).find("outfile") == std::string::npos)) {
+                  ++iter;
+                  if ((n = (*iter).find(':')) != std::string::npos) {
+                      int start = std::stoi((*iter).substr(0, n));
+                      int end = std::stoi((*iter).substr(n + 1, std::string::npos));
+                      for (int i = start; i != end + 1; i++) {
+                          exr2mat_channels.push_back(i);
+                      }
+                  } else if (isdigit((*iter)[0])) {
+                      exr2mat_channels = SplitStringToInts((*iter), ',');
+                  } else {
+                      targetChannelNames =
+                          SplitString((*iter), ',');
+                  }
+              }
+        } else if ((*iter)[0] != '-' && inFile.empty()) {
+
             inFile = *iter;
         } else
             usage("convert", "%s: unknown command flag", iter->c_str());
@@ -1761,6 +1771,76 @@ int convert(std::vector<std::string> args) {
     ImageAndMetadata imRead = Image::Read(inFile);
     Image image = std::move(imRead.image);
     ImageMetadata metadata = std::move(imRead.metadata);
+
+    if (exr2bin) {
+        Point2i res = image.Resolution();
+        int nc = image.NChannels();
+        std::vector<std::string> exrChannelNames = image.ChannelNames();
+        if (exr2mat_channels.empty() && targetChannelNames.empty())
+            for (int i = 0; i != nc; ++i) {
+                exr2mat_channels.push_back(i + 1);
+            }
+        else if (exr2mat_channels.empty() && !targetChannelNames.empty()) {
+            for (auto target : targetChannelNames) {
+                for (int i = 0; i < exrChannelNames.size(); ++i) {
+                    auto name = exrChannelNames.at(i);
+                    if ((!name.compare(target)) ||
+                        ((name.find(target) != std::string::npos) &&
+                         (name.at(name.find(target) + target.size()) == '.'))) {
+                        exr2mat_channels.push_back(i + 1);
+                    }
+                }
+            }
+        }
+        int mc = exr2mat_channels.size();
+        size_t datasize = res.x * res.y;
+
+        if (inFile.find(".exr") == inFile.npos ||
+            inFile.find(".exr") != (inFile.size() - 4)) {
+            fprintf(stderr, "Wrong input filename: %s  \n", inFile.c_str());
+            return 1;
+        }
+        for (int c = 0; c < mc; ++c) {
+            float *buf_exr = new float[datasize];
+            for (int y = 0; y < res.y; ++y)
+                for (int x = 0; x < res.x; ++x) {
+                    buf_exr[x * res.y + y] =
+                        image.GetChannel({x, y}, exr2mat_channels.at(c) - 1);
+                }
+            std::size_t dirOffset;
+            std::string outDir;
+            std::string fileName;
+            if (!outFile.empty()) {
+                dirOffset = outFile.find_last_of("/\\");
+                outDir = outFile.substr(0, dirOffset + 1);
+                fileName = outFile.substr(dirOffset + 1);
+                if (fileName.empty())
+                    fileName = inFile.substr(0, inFile.size() - 4);
+                else if ((fileName.find(".bin") != fileName.npos) ||
+                         (fileName.find(".dat") != fileName.npos))
+                    fileName = fileName.substr(0, fileName.size() - 4);
+                else
+                    fileName = outDir + fileName;
+            }
+            else
+                fileName = inFile.substr(0, inFile.size() - 4);
+            std::string binaryName = fileName + '_' +
+                                     std::to_string(res.y) + '_' + std::to_string(res.x) +
+                                     '_' + exrChannelNames.at(exr2mat_channels.at(c)-1);
+            //'_' + std::to_string(exr2mat_channels.at(c));
+            std::fstream file(binaryName, std::ios::out | std::ios::binary);
+            if (!file) {
+                fprintf(stderr, "Failed opening binary file.  \n");
+                return 1;
+            }
+            file.write((char *)buf_exr, datasize * sizeof(float));
+            file.close();
+            delete[] buf_exr;
+            buf_exr = NULL;
+        }
+        printf("exr2bin done.");
+        return 0;
+    }
 
     if (exr2bin) {
         Point2i res = image.Resolution();
@@ -2398,7 +2478,7 @@ Image denoiseImage(const Image &in, const ImageChannelDesc &Ldesc,
                                     continue;
 
                                 Float zp = z + dx * dzdx + dy * dzdy;
-                                Float dz = (z - zp) / ((z + zp) * 0.5f);
+                                Float dz = (zo - zp) / ((zo + zp) * 0.5f);
 
                                 // Assume camera space position...
                                 Float wp = Gaussian(dz, 0, sigma_z) *
