@@ -3225,7 +3225,8 @@ bool RTFCamera::TraceLensesFromFilm(
     // STEP 1. Rotating so that the origin of the ray lies on the y axis.
     Vector2f radiusAndRotation = Pos2RadiusRotation(rLens.o);
     Ray rotatedRay = RotateRays(rLens, 90 - radiusAndRotation.y);
-    std::cout <<  "rotatedRay" << rotatedRay <<"\n";    
+    //std::cout <<  "rotatedRay" << rotatedRay <<"\n";    
+    
     // STEP 2. Determine whether the ray will be vignetted or not
     auto passnopass = passNoPassPerWavelength[wlIndex];
     if (!passnopass->isValidRay(rotatedRay)){
