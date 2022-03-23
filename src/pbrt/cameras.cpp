@@ -3242,12 +3242,12 @@ bool RTFCamera::TraceLensesFromFilm(
     pstd::vector<RTFCamera::LensPolynomialTerm> polynomialMap = polynomialMaps[wlIndex];
 
     rLens = ApplyPolynomial(radiusAndRotation.x, dir, polynomialMap);
-         std::cout <<  "rlens" << rLens <<"\n";    
+    //std::cout <<  "rlens" << rLens <<"\n";    
     
     // Rotate the output ray back
     
     rLens = RotateRays(rLens, radiusAndRotation.y - 90);
-    std::cout <<  "roteded rlens" << rLens <<"\n";    
+    //std::cout <<  "roteded rlens" << rLens <<"\n";    
 
     if ((rOut != nullptr)) {
         *rOut = (rLens);
