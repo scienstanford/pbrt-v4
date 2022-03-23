@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <iostream>
 #include <vector>
 #include <gsl/gsl_randist.h>
 
