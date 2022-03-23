@@ -3048,7 +3048,7 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
         // This is done by calculating a bounding box for 64 offaxis position on the film. 
         // The function SampleExitPupil then, during tracing, uses these bounding boxes to generate a ray which is then intersected with the actual inputplane
 
-    std::cout << "Compute exit pupil bounds" << "\n";
+    //std::cout << "Compute exit pupil bounds" << "\n";
     // Compute film's physical extent
     Float diagonal = film.Diagonal();
     Float aspect = (Float)film.FullResolution().y / (Float)film.FullResolution().x;
@@ -3237,7 +3237,6 @@ bool RTFCamera::TraceLensesFromFilm(
     // I think it should be normalized already
     Vector3f dir = Normalize(rotatedRay.d);
 
-
     // Select polynomial for given wavelength and apply it
     pstd::vector<RTFCamera::LensPolynomialTerm> polynomialMap = polynomialMaps[wlIndex];
 
@@ -3294,10 +3293,10 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
     const int nSamples = 1024 * 1024;
     int nExitingRays = 0;
 
-    std::cout <<"Nsamples " << nSamples << "\n";
+    //(std::cout <<"Nsamples " << nSamples << "\n";
     // Compute bounding box of projection of rear element on sampling plane
     Float rearRadius = passnopass->getOnAxisRadiusEstimate(); // Fix rear readius obtaining
-    std::cout <<"Rear Radius " << rearRadius << "\n";
+    //std::cout <<"Rear Radius " << rearRadius << "\n";
 
     // Film distance is measured from the actual rear element
     // CirclePlaneZ is measured from the input plane of the RTF
@@ -3306,14 +3305,14 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
 
     
     Float pupilPlaneZFromFilm = (filmDistance-planeOffsetInput)+passnopass->distanceInputToIntersectPlane();
-    std::cout <<"PupilPlaneFromFilm " << pupilPlaneZFromFilm << "\n";
+    //std::cout <<"PupilPlaneFromFilm " << pupilPlaneZFromFilm << "\n";
 
     // This is the default region. I make it twice as large in the hope that it will be enough to accomodate possible pupil walking
     // Make radius large enough so it covers 40   degrees half cone angle.
     
     // Create a margin of pupil bounds. The margin is chosen to get a 40 deg half cone pupil
     Float scale = pupilPlaneZFromFilm *std::tan(40*Pi/180) / rearRadius;
-    std::cout <<"Scale " << scale << "\n";
+    //std::cout <<"Scale " << scale << "\n";
 
     //std::cout << "Scale " <<scale <<"\n";
     Bounds2f projRearBounds(Point2f(-scale * rearRadius, -scale * rearRadius),
@@ -3736,7 +3735,7 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
             // TG: so after this loop exitpupilBounds = Point2f  (0, pupilRadii[pupilIndex])
 
 
-            std::cout << "Loop over all wavelengths" <<"\n";
+           // std::cout << "Loop over all wavelengths" <<"\n";
             // Loop over all wavelengths
             int wlIndex = 0; // index counter for forloop
             auto polynomials = j["polynomials"];
@@ -3770,7 +3769,7 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
                 }
 
 
-            std::cout << "Loop over polynomials" <<"\n";
+           // std::cout << "Loop over polynomials" <<"\n";
             // nbTerms is used to initialize the vector of this length
             polynomialMaps = pstd::vector<pstd::vector<RTFCamera::LensPolynomialTerm>>(polynomials.size(), pstd::vector<RTFCamera::LensPolynomialTerm>(nbTerms));
             
