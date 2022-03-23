@@ -3229,10 +3229,10 @@ bool RTFCamera::TraceLensesFromFilm(
     // STEP 2. Determine whether the ray will be vignetted or not
     auto passnopass = passNoPassPerWavelength[wlIndex];
     if (!passnopass->isValidRay(rotatedRay)){
-        std::cout <<  "nopass" <<"\n";    
+        //std::cout <<  "nopass" <<"\n";    
         return false;
     }
-        std::cout <<  "Pass" <<"\n";    
+       // std::cout <<  "Pass" <<"\n";    
     
     // I think it should be normalized already
     Vector3f dir = Normalize(rotatedRay.d);
