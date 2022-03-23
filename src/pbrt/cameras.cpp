@@ -3442,14 +3442,14 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
     /// SAMPLING STRATEGY 1 : Use precomputed bounding pboxes (defective at the moment, but this will become the preferred way )
     pOnInputPlane = SampleExitPupil(Point2f(pFilm.x, pFilm.y), sample.pLens, &exitPupilBoundsArea);
     Float pupilArea=exitPupilBoundsArea;
-    std::cout << "poninputplane" <<pOnInputPlane <<"\n";
-    std::cout << "pupilarea" << pOnInputPlane <<"\n";
+    //std::cout << "poninputplane" <<pOnInputPlane <<"\n";
+    //std::cout << "pupilarea" << pOnInputPlane <<"\n";
 
 
     // Construct the ray coming from the film to the point on the input plane
     Ray rFilm(pFilm, pOnInputPlane - pFilm);
     Ray rOriginOnInputPlane = Ray(pOnInputPlane, pOnInputPlane - pFilm);
-    std::cout <<  "roriigninput" << rOriginOnInputPlane <<"\n";    
+    //std::cout <<  "roriigninput" << rOriginOnInputPlane <<"\n";    
 
     // CHoose which wavelength to use (and hence which polynomial)
     // The wavelengths provided by the lens file might not be equal to the wavelenth of the ray
@@ -3469,7 +3469,7 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
         
     }
     bool result = TraceLensesFromFilm(rFilm, &ray, wlIndex);
-    std::cout <<  "Tracelensfromfilm" << result <<"\n";    
+    //std::cout <<  "Tracelensfromfilm" << result <<"\n";    
     if (result == 0)
         return {};
     // Finish initialization of _OmniCamera_ ray
