@@ -21,6 +21,7 @@
 #include <pbrt/util/stats.h>
 #include <ext/json.hpp> 
 #include <fstream> 
+#include <iostream>
 
 
 // RTF
