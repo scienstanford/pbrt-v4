@@ -3047,7 +3047,7 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
         // This is done by calculating a bounding box for 64 offaxis position on the film. 
         // The function SampleExitPupil then, during tracing, uses these bounding boxes to generate a ray which is then intersected with the actual inputplane
 
-    
+    std::cout << "Compute exit pupil bounds" << "\n";
     // Compute film's physical extent
     Float diagonal = film.Diagonal();
     Float aspect = (Float)film.FullResolution().y / (Float)film.FullResolution().x;
@@ -3224,12 +3224,14 @@ bool RTFCamera::TraceLensesFromFilm(
     // STEP 1. Rotating so that the origin of the ray lies on the y axis.
     Vector2f radiusAndRotation = Pos2RadiusRotation(rLens.o);
     Ray rotatedRay = RotateRays(rLens, 90 - radiusAndRotation.y);
-
+    std::cout <<  "rotatedRay" << rotatedRay <<"\n";    
     // STEP 2. Determine whether the ray will be vignetted or not
     auto passnopass = passNoPassPerWavelength[wlIndex];
     if (!passnopass->isValidRay(rotatedRay)){
+        std::cout <<  "nopass" <<"\n";    
         return false;
     }
+        std::cout <<  "Pass" <<"\n";    
     
     // I think it should be normalized already
     Vector3f dir = Normalize(rotatedRay.d);
@@ -3239,13 +3241,13 @@ bool RTFCamera::TraceLensesFromFilm(
     pstd::vector<RTFCamera::LensPolynomialTerm> polynomialMap = polynomialMaps[wlIndex];
 
     rLens = ApplyPolynomial(radiusAndRotation.x, dir, polynomialMap);
-    
+         std::cout <<  "rlens" << rLens <<"\n";    
     
     // Rotate the output ray back
     
     rLens = RotateRays(rLens, radiusAndRotation.y - 90);
+    std::cout <<  "roteded rlens" << rLens <<"\n";    
 
-    // Rotate rays back to camera space
     if ((rOut != nullptr)) {
         *rOut = (rLens);
     } else {
@@ -3291,8 +3293,10 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
     const int nSamples = 1024 * 1024;
     int nExitingRays = 0;
 
+    std::cout <<"Nsamples " << nSamples << "\n";
     // Compute bounding box of projection of rear element on sampling plane
     Float rearRadius = passnopass->getOnAxisRadiusEstimate(); // Fix rear readius obtaining
+    std::cout <<"Rear Radius " << rearRadius << "\n";
 
     // Film distance is measured from the actual rear element
     // CirclePlaneZ is measured from the input plane of the RTF
@@ -3300,16 +3304,15 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
     // Float circlePlaneZFromFilm = distanceCirclePlaneFromFilm();
 
     
-    // mm to meter
     Float pupilPlaneZFromFilm = (filmDistance-planeOffsetInput)+passnopass->distanceInputToIntersectPlane();
-    
+    std::cout <<"PupilPlaneFromFilm " << pupilPlaneZFromFilm << "\n";
 
     // This is the default region. I make it twice as large in the hope that it will be enough to accomodate possible pupil walking
     // Make radius large enough so it covers 40   degrees half cone angle.
     
-    // TG : Fix scale
+    // Create a margin of pupil bounds. The margin is chosen to get a 40 deg half cone pupil
     Float scale = pupilPlaneZFromFilm *std::tan(40*Pi/180) / rearRadius;
-    
+    std::cout <<"Scale " << scale << "\n";
 
     //std::cout << "Scale " <<scale <<"\n";
     Bounds2f projRearBounds(Point2f(-scale * rearRadius, -scale * rearRadius),
@@ -3438,12 +3441,14 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
     /// SAMPLING STRATEGY 1 : Use precomputed bounding pboxes (defective at the moment, but this will become the preferred way )
     pOnInputPlane = SampleExitPupil(Point2f(pFilm.x, pFilm.y), sample.pLens, &exitPupilBoundsArea);
     Float pupilArea=exitPupilBoundsArea;
+    std::cout << "poninputplane" <<pOnInputPlane <<"\n";
+    std::cout << "pupilarea" << pOnInputPlane <<"\n";
 
-    
+
     // Construct the ray coming from the film to the point on the input plane
     Ray rFilm(pFilm, pOnInputPlane - pFilm);
     Ray rOriginOnInputPlane = Ray(pOnInputPlane, pOnInputPlane - pFilm);
-    
+    std::cout <<  "roriigninput" << rOriginOnInputPlane <<"\n";    
 
     // CHoose which wavelength to use (and hence which polynomial)
     // The wavelengths provided by the lens file might not be equal to the wavelenth of the ray
@@ -3463,11 +3468,11 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
         
     }
     bool result = TraceLensesFromFilm(rFilm, &ray, wlIndex);
+    std::cout <<  "Tracelensfromfilm" << result <<"\n";    
     if (result == 0)
         return {};
     // Finish initialization of _OmniCamera_ ray
     ray.time = SampleTime(sample.time);
-
     ray.medium = medium;
     ray = RenderFromCamera(ray);
     ray.d = Normalize(ray.d);
@@ -3729,6 +3734,8 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
             
             // TG: so after this loop exitpupilBounds = Point2f  (0, pupilRadii[pupilIndex])
 
+
+            std::cout << "Loop over all wavelengths" <<"\n";
             // Loop over all wavelengths
             int wlIndex = 0; // index counter for forloop
             auto polynomials = j["polynomials"];
@@ -3760,6 +3767,9 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
                 if(useDZpolynomial){
                      nbTerms = 6; // Extra polynomial for dz
                 }
+
+
+            std::cout << "Loop over polynomials" <<"\n";
             // nbTerms is used to initialize the vector of this length
             polynomialMaps = pstd::vector<pstd::vector<RTFCamera::LensPolynomialTerm>>(polynomials.size(), pstd::vector<RTFCamera::LensPolynomialTerm>(nbTerms));
             
