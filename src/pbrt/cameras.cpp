@@ -3104,7 +3104,7 @@ Float RTFCamera::PolynomialCal(Float rho, Float dx, Float dy, LensPolynomialTerm
 Ray RTFCamera::ApplyPolynomial(Float rho, Vector3f dir, pstd::vector< RTFCamera::LensPolynomialTerm>  &polynomialMap) const{
 
     
-    // Evaluate polynomials 
+    // Evaluate polynomials  
     /// Position on output plane
     Float x = PolynomialCal(rho,dir.x,dir.y,polynomialMap[0]) * 0.001f; //mm to meter
     std::cout << "Applypoly X:" << x << "\n";
