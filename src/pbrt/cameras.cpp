@@ -3107,7 +3107,7 @@ Ray RTFCamera::ApplyPolynomial(Float rho, Vector3f dir, pstd::vector< RTFCamera:
     // Evaluate polynomials  
     /// Position on output plane
     Float x = PolynomialCal(rho,dir.x,dir.y,polynomialMap[0]) * 0.001f; //mm to meter
-    std::cout << "Applypoly X:" << x << "\n";
+    //std::cout << "Applypoly X:" << x << "\n";
     Float y = PolynomialCal(rho,dir.x,dir.y,polynomialMap[1]) * 0.001f; // mm to meter
     Float z = PolynomialCal(rho,dir.x,dir.y,polynomialMap[2]) * 0.001f; // mm to meter  Z measured from rear vertex of reverse lens (object side)
 
@@ -3226,7 +3226,7 @@ bool RTFCamera::TraceLensesFromFilm(
     // STEP 1. Rotating so that the origin of the ray lies on the y axis.
     Vector2f radiusAndRotation = Pos2RadiusRotation(rLens.o);
     Ray rotatedRay = RotateRays(rLens, 90 - radiusAndRotation.y);
-    std::cout <<  "rotatedRay" << rotatedRay <<"\n";    
+   // std::cout <<  "rotatedRay" << rotatedRay <<"\n";    
     
     // STEP 2. Determine whether the ray will be vignetted or not
     auto passnopass = passNoPassPerWavelength[wlIndex];
@@ -3243,7 +3243,7 @@ bool RTFCamera::TraceLensesFromFilm(
     pstd::vector<RTFCamera::LensPolynomialTerm> polynomialMap = polynomialMaps[wlIndex];
 
     rLens = ApplyPolynomial(radiusAndRotation.x, dir, polynomialMap);
-    std::cout <<  "rlens" << rLens <<"\n";    
+  //  std::cout <<  "rlens" << rLens <<"\n";    
     
     // Rotate the output ray back
     
