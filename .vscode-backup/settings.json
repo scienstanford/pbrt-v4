@@ -1,0 +1,42 @@
+
+{
+
+    "cmake.debugConfig": {
+
+        "args": [
+
+            "/home/thomas42/vistalab/pbrt-v4/scenes/cornell_box/cornell_pixel4a_pbrtv4.pbrt","-spp","512","--nthreads","1","--gpu"
+
+        ]
+
+},
+
+// Not sure what is this, we might not need this.
+
+    "files.associations": {
+
+        "chrono": "cpp",
+
+        "type_traits": "cpp",
+
+        "complex": "cpp",
+
+        "valarray": "cpp"
+
+},
+
+// Where the cmake args go:
+
+     "cmake.configureArgs": [
+
+         "-DPBRT_OPTIX7_PATH=/home/thomas42/pbrt-docker/NVIDIA-OptiX-SDK-7.3.0-linux64-x86_64"
+
+     ],
+
+    // Only if you have your own cmake, otherwise you can remove this line.
+
+    //"cmake.cmakePath":"/home/zhenyi/cmake/bin/cmake"
+
+}
+
+ 
