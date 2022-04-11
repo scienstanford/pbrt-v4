@@ -639,9 +639,15 @@ void GBufferFilm::AddSample(Point2i pFilm, SampledSpectrum L,
         p.rgbSum[c] += rgb[c] * weight;
     p.weightSum += weight;
 
+    Float lm = L.MaxComponentValue();
+    if (lm > maxComponentValue)
+        L *= maxComponentValue / lm;
+
+    L *= weight * CIE_Y_integral;
+
     // zhenyi: Add spectrum values into pixel
     for (int i = 0; i < NSpectrumSamples; ++i) {
-        p.L[i] += weight * L[i];
+        p.L[i] += L[i];
     }
     // zhenyi: add material ID;
     p.materialId = visibleSurface->materialId;
@@ -690,9 +696,16 @@ void GBufferFilm::AddSplat(Point2f p, SampledSpectrum v,
     if (m > maxComponentValue)
         rgb *= maxComponentValue / m;
 
+    // Spectral clamping and normalization.
+    Float lm = v.MaxComponentValue();
+    if (lm > maxComponentValue)
+        v *= maxComponentValue / lm;
+    v = SafeDiv(v, lambda.PDF()) / NSpectrumSamples;
+
     Point2f pDiscrete = p + Vector2f(0.5, 0.5);
     Bounds2i splatBounds(Point2i(Floor(pDiscrete - filter.Radius())),
                          Point2i(Floor(pDiscrete + filter.Radius())) + Vector2i(1, 1));
+
     splatBounds = Intersect(splatBounds, pixelBounds);
     for (Point2i pi : splatBounds) {
         Float wt = filter.Evaluate(Point2f(p - pi - Vector2f(0.5, 0.5)));
@@ -700,7 +713,12 @@ void GBufferFilm::AddSplat(Point2f p, SampledSpectrum v,
             Pixel &pixel = pixels[pi];
             for (int i = 0; i < 3; ++i)
                 pixel.rgbSplat[i].Add(wt * rgb[i]);
+
+            for (int i = 0; i < NSpectrumSamples; ++i){
+                pixel.LSplat[i].Add(wt * v[i]);
+            }
         }
+
     }
 }
 
@@ -800,35 +818,6 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
             channelNames.push_back(RelativeVarianceChannelNames[i]);
         }
     }
-/*
-    Image image(format, Point2i(pixelBounds.Diagonal()),
-                {"R",
-                 "G",
-                 "B",
-                 "Albedo.R",
-                 "Albedo.G",
-                 "Albedo.B",
-                 "Px",
-                 "Py",
-                 "Pz",
-                 "dzdx",
-                 "dzdy",
-                 "Nx",
-                 "Ny",
-                 "Nz",
-                 "Nsx",
-                 "Nsy",
-                 "Nsz",
-                 "u",
-                 "v",
-                 "Variance.R",
-                 "Variance.G",
-                 "Variance.B",
-                 "RelativeVariance.R",
-                 "RelativeVariance.G",
-                 "RelativeVariance.B"});
-               }
-*/
 
     Image image(format, Point2i(pixelBounds.Diagonal()), channelNames); // zhenyi
     ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
@@ -864,27 +853,38 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
         Point2f uv = pixel.uvSum;
         Float dzdx = pixel.dzdxSum, dzdy = pixel.dzdySum;
         SampledSpectrum L = pixel.L;
+        
         if (weightSum != 0) {
             rgb /= weightSum;
             albedoRgb /= weightSum;
+            L /=weightSum;
         }
         if (gBufferWeightSum != 0) {
             pt /= gBufferWeightSum;
             uv /= gBufferWeightSum;
             dzdx /= gBufferWeightSum;
             dzdy /= gBufferWeightSum;
-            L /=gBufferWeightSum;
+            
         }
 
         // Add splat value at pixel
+        
         for (int c = 0; c < 3; ++c)
             rgb[c] += splatScale * pixel.rgbSplat[c] / filterIntegral;
 
         rgb = outputRGBFromSensorRGB * rgb;
 
         // Add splat value at pixel for radiance
-        for (int c = 0; c < NSpectrumSamples; ++c)
-            L[c] += splatScale * pixel.L[c] / filterIntegral;
+        if (pixel.LSplat !=0) {
+            for (int c = 0; c < NSpectrumSamples; ++c){
+                L[c] += splatScale * pixel.LSplat[c] / filterIntegral;
+                // if (writeFP16 && L[c] > 65504) {
+                //     L[c] = 65504;
+                //     ++nClamped;
+                // }
+            }
+        }
+
 
         if (writeFP16 && std::max({rgb.r, rgb.g, rgb.b}) > 65504) {
             if (rgb.r > 65504)

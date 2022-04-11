@@ -389,6 +389,7 @@ class GBufferFilm : public FilmBase {
         double rgbAlbedoSum[3] = {0., 0., 0.};
         VarianceEstimator<Float> rgbVariance[3];
         SampledSpectrum L;
+        AtomicDouble *LSplat;
         float materialId; // zhenyi
         float instanceId; // zhenyi
     };
