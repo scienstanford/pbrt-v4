@@ -878,13 +878,15 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
         if (pixel.LSplat !=0) {
             for (int c = 0; c < NSpectrumSamples; ++c){
                 L[c] += splatScale * pixel.LSplat[c] / filterIntegral;
-                // if (writeFP16 && L[c] > 65504) {
-                //     L[c] = 65504;
-                //     ++nClamped;
-                // }
             }
         }
 
+        for (int c = 0; c < NSpectrumSamples; ++c){
+            if (writeFP16 && L[c] > 65504) {
+                L[c] = 65504;
+                ++nClamped;
+            }
+        }
 
         if (writeFP16 && std::max({rgb.r, rgb.g, rgb.b}) > 65504) {
             if (rgb.r > 65504)
