@@ -81,6 +81,115 @@ class DiffuseBxDF {
     SampledSpectrum R;
 };
 
+// RetroreflectiveBxDF Definition (Added by Zhenyi)
+// Adapted from conductorBxDF
+class RetroreflectiveBxDF {
+  public:
+    // RetroreflectiveBxDF Public Methods
+    RetroreflectiveBxDF() = default;
+    PBRT_CPU_GPU
+    RetroreflectiveBxDF(const TrowbridgeReitzDistribution &mfDistrib, SampledSpectrum eta,
+                  SampledSpectrum k)
+        : mfDistrib(mfDistrib), eta(eta), k(k) {}
+
+    PBRT_CPU_GPU
+    BxDFFlags Flags() const {
+        return mfDistrib.EffectivelySmooth() ? BxDFFlags::SpecularReflection
+                                             : BxDFFlags::GlossyReflection;
+    }
+
+    PBRT_CPU_GPU
+    pstd::optional<BSDFSample> Sample_f(
+        Vector3f wo, Float uc, Point2f u, TransportMode mode,
+        BxDFReflTransFlags sampleFlags = BxDFReflTransFlags::All) const {
+        if (!(sampleFlags & BxDFReflTransFlags::Reflection))
+            return {};
+            
+        // if (mfDistrib.EffectivelySmooth()) {
+        //     // Sample perfectly specular retroreflective BRDF
+        //     Vector3f wi(-wo.x, -wo.y, wo.z);
+        //     SampledSpectrum f = FrComplex(AbsCosTheta(wi), eta, k) / AbsCosTheta(wi);
+        //     return BSDFSample(f, wi, 1, BxDFFlags::SpecularReflection);
+        // }
+        // Sample rough conductor BRDF
+        // Sample microfacet normal $\wm$ and reflected direction $\wi$
+        if (wo.z == 0)
+            return {};
+        
+        // set normal to be incoming dirction (Zhenyi)
+        // Vector3f wm = mfDistrib.Sample_wm(wo, u);
+        Vector3f wm = wo;
+        Vector3f wi = Reflect(wo, wm);
+        if (!SameHemisphere(wo, wi))
+            return {};
+
+        // Compute PDF of _wi_ for microfacet reflection
+        Float pdf = mfDistrib.PDF(wo, wm) / (4 * AbsDot(wo, wm));
+
+        Float cosTheta_o = AbsCosTheta(wo), cosTheta_i = AbsCosTheta(wi);
+        if (cosTheta_i == 0 || cosTheta_o == 0)
+            return {};
+        // Evaluate Fresnel factor _F_ for conductor BRDF
+        SampledSpectrum F = FrComplex(AbsDot(wo, wm), eta, k);
+
+        SampledSpectrum f =
+            mfDistrib.D(wm) * F * mfDistrib.G(wo, wi) / (4 * cosTheta_i * cosTheta_o);
+        return BSDFSample(f, wi, pdf, BxDFFlags::GlossyReflection);
+    }
+
+    PBRT_CPU_GPU
+    SampledSpectrum f(Vector3f wo, Vector3f wi, TransportMode mode) const {
+        if (!SameHemisphere(wo, wi))
+            return {};
+        if (mfDistrib.EffectivelySmooth())
+            return {};
+        // Evaluate rough conductor BRDF
+        // Compute cosines and $\wm$ for conductor BRDF
+        Float cosTheta_o = AbsCosTheta(wo), cosTheta_i = AbsCosTheta(wi);
+        if (cosTheta_i == 0 || cosTheta_o == 0)
+            return {};
+        Vector3f wm = wi + wo;
+        if (LengthSquared(wm) == 0)
+            return {};
+        wm = Normalize(wm);
+
+        // Evaluate Fresnel factor _F_ for conductor BRDF
+        SampledSpectrum F = FrComplex(AbsDot(wo, wm), eta, k);
+
+        return mfDistrib.D(wm) * F * mfDistrib.G(wo, wi) / (4 * cosTheta_i * cosTheta_o);
+    }
+
+    PBRT_CPU_GPU
+    Float PDF(Vector3f wo, Vector3f wi, TransportMode mode,
+              BxDFReflTransFlags sampleFlags) const {
+        if (!(sampleFlags & BxDFReflTransFlags::Reflection))
+            return 0;
+        if (!SameHemisphere(wo, wi))
+            return 0;
+        if (mfDistrib.EffectivelySmooth())
+            return 0;
+        // Evaluate sampling PDF of rough conductor BRDF
+        Vector3f wh = wo + wi;
+        CHECK_RARE(1e-5f, LengthSquared(wh) == 0);
+        if (LengthSquared(wh) == 0)
+            return 0;
+        wh = FaceForward(Normalize(wh), Normal3f(0, 0, 1));
+        return mfDistrib.PDF(wo, wh) / (4 * AbsDot(wo, wh));
+    }
+
+    PBRT_CPU_GPU
+    static constexpr const char *Name() { return "RetroreflectiveBxDF"; }
+    std::string ToString() const;
+
+    PBRT_CPU_GPU
+    void Regularize() { mfDistrib.Regularize(); }
+
+  private:
+    // RetroreflectiveBxDF Private Members
+    TrowbridgeReitzDistribution mfDistrib;
+    SampledSpectrum eta, k;
+};
+
 // DiffuseTransmissionBxDF Definition
 class DiffuseTransmissionBxDF {
   public:
