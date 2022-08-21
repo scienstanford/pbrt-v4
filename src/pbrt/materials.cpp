@@ -247,6 +247,52 @@ ConductorMaterial *ConductorMaterial::Create(const TextureParameterDictionary &p
                                                remapRoughness);
 }
 
+// RetroreflectiveMaterial Method Definitions (Adapted from conductorMaterial)
+std::string RetroreflectiveMaterial::ToString() const {
+    return StringPrintf("[ RetroreflectiveMaterial displacement: %s normalMap: %s eta: %s "
+                        "k: %s reflectance: %s uRoughness: %s vRoughness: %s "
+                        "remapRoughness: %s ]",
+                        displacement,
+                        normalMap ? normalMap->ToString() : std::string("(nullptr)"),
+                        eta, k, reflectance, uRoughness, vRoughness, remapRoughness);
+}
+
+RetroreflectiveMaterial *RetroreflectiveMaterial::Create(const TextureParameterDictionary &parameters,
+                                             Image *normalMap, const FileLoc *loc,
+                                             Allocator alloc) {
+    SpectrumTexture eta =
+        parameters.GetSpectrumTextureOrNull("eta", SpectrumType::Unbounded, alloc);
+    SpectrumTexture k =
+        parameters.GetSpectrumTextureOrNull("k", SpectrumType::Unbounded, alloc);
+    SpectrumTexture reflectance =
+        parameters.GetSpectrumTextureOrNull("reflectance", SpectrumType::Albedo, alloc);
+
+    if (reflectance && (eta || k))
+        ErrorExit(loc, "For the conductor material, both \"reflectance\" "
+                       "and \"eta\" and \"k\" can't be provided.");
+    if (!reflectance) {
+        if (!eta)
+            eta = alloc.new_object<SpectrumConstantTexture>(
+                GetNamedSpectrum("metal-Cu-eta"));
+        if (!k)
+            k = alloc.new_object<SpectrumConstantTexture>(GetNamedSpectrum("metal-Cu-k"));
+    }
+
+    FloatTexture uRoughness = parameters.GetFloatTextureOrNull("uroughness", alloc);
+    FloatTexture vRoughness = parameters.GetFloatTextureOrNull("vroughness", alloc);
+    if (!uRoughness)
+        uRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
+    if (!vRoughness)
+        vRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
+
+    FloatTexture displacement = parameters.GetFloatTextureOrNull("displacement", alloc);
+    bool remapRoughness = parameters.GetOneBool("remaproughness", true);
+
+    return alloc.new_object<RetroreflectiveMaterial>(eta, k, reflectance, uRoughness,
+                                               vRoughness, displacement, normalMap,
+                                               remapRoughness);
+}
+
 // CoatedDiffuseMaterial Method Definitions
 template <typename TextureEvaluator>
 CoatedDiffuseBxDF CoatedDiffuseMaterial::GetBxDF(TextureEvaluator texEval,
@@ -653,6 +699,8 @@ Material Material::Create(const std::string &name,
         material = HairMaterial::Create(parameters, loc, alloc);
     else if (name == "conductor")
         material = ConductorMaterial::Create(parameters, normalMap, loc, alloc);
+    else if (name == "retroreflective")
+        material = RetroreflectiveMaterial::Create(parameters, normalMap, loc, alloc);
     else if (name == "measured")
         material = MeasuredMaterial::Create(parameters, normalMap, loc, alloc);
     else if (name == "subsurface")

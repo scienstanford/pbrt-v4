@@ -1969,18 +1969,27 @@ public:
     }
 
     PBRT_CPU_GPU
-    ConvexQuad(const Point2<T> &p1, const Point2<T> &p2, const Point2<T> &p3, const Point2<T> &p4) {
-        DCHECK(p1 != p2 && p1 != p3 && p1 != p4 && p2 != p3 && p2 != p4 && p3 != p4 );
-        Point2<T> temp[] = { p1,p2,p3,p4 };
-        std::copy(temp, temp + 4, pCorners);
+    ConvexQuad(const Point2<T> p1, const Point2<T> p2, const Point2<T> p3, const Point2<T> p4) {
 
+    // ConvexQuad(const Point2<T> pCorners) {
+        // Point2<T> p1 = pCorners[0];
+        // Point2<T> p2 = pCorners[1];
+        // Point2<T> p3 = pCorners[2];
+        // Point2<T> p4 = pCorners[3];
+
+        DCHECK(p1 != p2 && p1 != p3 && p1 != p4 && p2 != p3 && p2 != p4 && p3 != p4 );
+        
+        // Point2<T> temp[] = { p1,p2,p3,p4 };
+        pCorners[0] = p1;pCorners[1] = p2;pCorners[2] = p3;pCorners[3] = p4;
+
+        // std::copy(temp, temp + 4, pCorners);
         Point2<T> C = Centroid();
         auto ccwWinding = [&C](const Point2<T>& p0, const Point2<T>& p1) {
             const Vector2<T> e0 = p0 - C;
             const Vector2<T> e1 = p1 - C;
             return atan2((double)e0.y,(double)e0.x) < atan2((double)e1.y, (double)e1.x);
         };
-        std::sort(pCorners, pCorners + 4, ccwWinding);
+        std::sort(pCorners, pCorners + 4, ccwWinding); 
     }
 
     PBRT_CPU_GPU
@@ -2049,7 +2058,7 @@ public:
     }
 
     // ConvexQuad Public Data
-    PBRT_CPU_GPU
+    //PBRT_CPU_GPU
     Point2<T> pCorners[4];
 };
 
