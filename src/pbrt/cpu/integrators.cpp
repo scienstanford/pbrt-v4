@@ -1162,7 +1162,7 @@ SampledSpectrum VolPathIntegrator::Li(RayDifferential ray, SampledWavelengths &l
         if (!bs)
             break;
         // Update _beta_ and rescaled path probabilities for BSDF scattering
-        beta *= bs->f * AbsDot(bs->wi, isect.shading.n) / bs->pdf;
+        beta *= bs->f * AbsDot(bs->wi, isect.shading.n) / bs->pdf; 
         if (bs->pdfIsProportional)
             r_l = r_u / bsdf.PDF(wo, bs->wi);
         else
@@ -1305,7 +1305,7 @@ SampledSpectrum VolPathIntegrator::SampleLd(const Interaction &intr, const BSDF 
     Vector3f wo = intr.wo, wi = ls->wi;
     if (bsdf) {
         // Update _f_hat_ and _scatterPDF_ accounting for the BSDF
-        f_hat = bsdf->f(wo, wi) * AbsDot(wi, intr.AsSurface().shading.n);
+        f_hat = bsdf->f(wo, wi) * AbsDot(wi, intr.AsSurface().shading.n); 
         scatterPDF = bsdf->PDF(wo, wi);
 
     } else {

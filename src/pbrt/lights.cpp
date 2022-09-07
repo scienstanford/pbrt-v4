@@ -685,6 +685,7 @@ DiffuseAreaLight::DiffuseAreaLight(const Transform &renderFromLight,
                                    const MediumInterface &mediumInterface, Spectrum Le,
                                    Float scale, const Shape shape, FloatTexture alpha,
                                    Image im, const RGBColorSpace *imageColorSpace,
+                                   Float spreadAngle,
                                    bool twoSided)
     : LightBase(
           [](FloatTexture alpha) {
@@ -711,6 +712,9 @@ DiffuseAreaLight::DiffuseAreaLight(const Transform &renderFromLight,
       twoSided(twoSided),
       Lemit(LookupSpectrum(Le)),
       scale(scale),
+      cosFalloffEnd(std::cos(Radians(spreadAngle))),
+      tanFalloffEnd(std::tan((Pi/2 - Radians(spreadAngle)))),
+      normalize_falloffEnd(2.0f /(2.0f +(2.0f * (Pi/2 - Radians(spreadAngle)) - Pi)*tanFalloffEnd)),
       image(std::move(im)),
       imageColorSpace(imageColorSpace) {
     ++numAreaLights;
@@ -755,6 +759,15 @@ pstd::optional<LightLiSample> DiffuseAreaLight::SampleLi(LightSampleContext ctx,
     // Return _LightLiSample_ for sampled point on shape
     Vector3f wi = Normalize(ss->intr.p() - ctx.p());
     SampledSpectrum Le = L(ss->intr.p(), ss->intr.n, ss->intr.uv, -wi, lambda);
+    if (cosFalloffEnd >0){
+        // Calculate area light spread angle attenuation
+        Float cos_a = -Dot(wi, ss->intr.n);
+        Float sin_a = SafeSqrt(1 - Sqr(cos_a));
+        Float tan_a = sin_a / cos_a;
+        Float spread_attenuation_factor = std::max((1.0f - (tanFalloffEnd * tan_a)) * normalize_falloffEnd, 0.0f);
+
+        Le *= spread_attenuation_factor;
+    }
     if (!Le)
         return {};
     return LightLiSample(Le, wi, ss->pdf, ss->intr);
@@ -809,6 +822,7 @@ pstd::optional<LightBounds> DiffuseAreaLight::Bounds() const {
 pstd::optional<LightLeSample> DiffuseAreaLight::SampleLe(Point2f u1, Point2f u2,
                                                          SampledWavelengths &lambda,
                                                          Float time) const {
+
     // Sample a point on the area light's _Shape_
     pstd::optional<ShapeSample> ss = shape.Sample(u1);
     if (!ss)
@@ -874,7 +888,8 @@ DiffuseAreaLight *DiffuseAreaLight::Create(const Transform &renderFromLight,
     Spectrum L = parameters.GetOneSpectrum("L", nullptr, SpectrumType::Illuminant, alloc);
     Float scale = parameters.GetOneFloat("scale", 1);
     bool twoSided = parameters.GetOneBool("twosided", false);
-
+    // Add spread angle for area light -- Zhenyi
+    Float spread_angle = parameters.GetOneFloat("spread", 90);
     std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
     Image image(alloc);
     const RGBColorSpace *imageColorSpace = nullptr;
@@ -934,13 +949,13 @@ DiffuseAreaLight *DiffuseAreaLight::Create(const Transform &renderFromLight,
         }
 
         k_e *= (twoSided ? 2 : 1) * shape.Area() * Pi;
-
         // now multiply up scale to hit the target power
         scale *= phi_v / k_e;
     }
 
     return alloc.new_object<DiffuseAreaLight>(renderFromLight, medium, L, scale, shape,
                                               alphaTex, std::move(image), imageColorSpace,
+                                              spread_angle,
                                               twoSided);
 }
 

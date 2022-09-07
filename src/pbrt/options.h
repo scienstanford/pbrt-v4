@@ -51,7 +51,7 @@ struct PBRTOptions : BasicPBRTOptions {
     pstd::optional<Bounds2i> pixelBounds;
     pstd::optional<Point2i> pixelMaterial;
     Float displacementEdgeScale = 1;
-
+    std::vector<std::vector<float>> multipleFrames; 
     std::string ToString() const;
 };
 

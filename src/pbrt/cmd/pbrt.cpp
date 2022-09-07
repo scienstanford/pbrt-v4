@@ -25,6 +25,11 @@
 #include <string>
 #include <vector>
 
+#include <ext/json.hpp>  // zhenyi
+#include <fstream>       // zhenyi
+
+using json = nlohmann::json;
+
 using namespace pbrt;
 
 static void usage(const std::string &msg = {}) {
@@ -97,7 +102,6 @@ Reformatting options:
             NSpectrumSamples);
     exit(msg.empty() ? 0 : 1);
 }
-
 // main program
 int main(int argc, char *argv[]) {
     // Convert command-line arguments to vector of strings
@@ -122,7 +126,7 @@ int main(int argc, char *argv[]) {
             exit(1);
         };
 
-        std::string cropWindow, pixelBounds, pixel, pixelMaterial;
+        std::string cropWindow, pixelBounds, pixel, pixelMaterial, frameOptsJson;
         if (ParseArg(&iter, args.end(), "cropwindow", &cropWindow, onError)) {
             std::vector<Float> c = SplitStringToFloats(cropWindow, ',');
             if (c.size() != 4) {
@@ -196,6 +200,12 @@ int main(int argc, char *argv[]) {
                      &options.writePartialImages, onError) ||
             ParseArg(&iter, args.end(), "upgrade", &options.upgrade, onError)) {
             // success
+        } else if (ParseArg(&iter, args.end(), "multiple-frames", &frameOptsJson, onError)){
+            std::ifstream i(frameOptsJson);
+            json j; i >> j; 
+            for (auto &elem : j)
+                options.multipleFrames.push_back(elem["camera"]);
+
         } else if (*iter == "--help" || *iter == "-help" || *iter == "-h") {
             usage();
             return 0;
@@ -203,6 +213,7 @@ int main(int argc, char *argv[]) {
             usage(StringPrintf("argument \"%s\" unknown", *iter));
             return 1;
         }
+
     }
 
     // Print welcome banner

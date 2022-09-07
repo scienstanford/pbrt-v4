@@ -621,10 +621,11 @@ class OmniCamera : public CameraBase {
         Float zMax;
         std::string ToString() const;
     };
+
     struct MicrolensData {
         pstd::vector<LensElementInterface> elementInterfaces;
         float offsetFromSensor;
-        std::vector<Vector2f> offsets;
+        pstd::vector<Float> offsets;
         Vector2i dimensions;
         // Non-physical term
         int simulationRadius;
@@ -636,7 +637,7 @@ class OmniCamera : public CameraBase {
                     Float focusDistance, Float filmDistance,
                     bool caFlag, bool diffractionEnabled,
                     pstd::vector<OmniCamera::LensElementInterface>& microlensData,
-                    Vector2i microlensDims, std::vector<Vector2f> & microlensOffsets, Float microlensSensorOffset,
+                    Vector2i microlensDims, pstd::vector<Float> & microlensOffsets, Float microlensSensorOffset,
                     int microlensSimulationRadius,
                     Float apertureDiameter, Image apertureImage, Allocator alloc);
 
@@ -685,8 +686,8 @@ class OmniCamera : public CameraBase {
     struct MicrolensElement {
         Point2f center;
         ConvexQuadf centeredBounds;
-        Point2i index;
-        Transform ComputeCameraToMicrolens() const;
+        Point2f index;
+        // Transform ComputeCameraToMicrolens() const;
     };
 
     PBRT_CPU_GPU
@@ -703,11 +704,14 @@ class OmniCamera : public CameraBase {
     PBRT_CPU_GPU
     Float RearElementRadius() const { return elementInterfaces.back().apertureRadius.x; }
 
-    
-    // Float TraceLensesFromFilm(const Ray &ray, const std::vector<LensElementInterface>& interfaces, Ray *rOut,
-    //     const Transform CameraToLens, const ConvexQuadf& bounds) const;
     PBRT_CPU_GPU
-    Float TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const;
+    Float TToBackLens(const Ray &ray, const pstd::vector<LensElementInterface>& interfaces,
+        const Transform LensFromCamera, const ConvexQuadf& bounds) const;    
+   
+    PBRT_CPU_GPU
+    Float TraceLensesFromFilm(const Ray &rCamera, const pstd::vector<LensElementInterface>& interfaces, Ray *rOut,
+        const Transform LensFromCamera, const ConvexQuadf& bounds) const;
+    // Float TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const;
 
     PBRT_CPU_GPU
     static bool IntersectSphericalElement(Float radius, Float zCenter, const Ray &ray,
@@ -764,13 +768,37 @@ class OmniCamera : public CameraBase {
 
     void TestExitPupilBounds() const;
 
-    Point2i MicrolensIndex(const Point2f &p) const;
-    Point2f MicrolensCenterFromIndex(const Point2i &idx) const;
-    MicrolensElement MicrolensElementFromIndex(const Point2i &idx) const;
-    MicrolensElement ComputeMicrolensElement(const Ray &filmRay) const;
+    // static Vector2f mapMul(Vector2f v0, Vector2f v1) {
+    // return Vector2f(v0.x*v1.x, v0.y*v1.y);
+    // };
+    // static Vector2f mapDiv(Vector2f v0, Vector2f v1) {
+    //     return Vector2f(v0.x/v1.x, v0.y/v1.y);
+    // }
+    // static Vector2f mapDiv(Vector2f v0, Vector2i v1) {
+    //     return Vector2f(v0.x / (pbrt::Float)v1.x, v0.y / (pbrt::Float)v1.y);
+    // }
+    // static Point2f mapDiv(Point2f v0, Vector2f v1) {
+    //     return Point2f(v0.x / v1.x, v0.y / v1.y);
+    // }
+
+    PBRT_CPU_GPU
+    Point2f MicrolensIndex(const Point2f p) const;
+
+    PBRT_CPU_GPU
+    Point2f MicrolensCenterFromIndex(const Point2f idx) const;
+
+    PBRT_CPU_GPU
+    MicrolensElement MicrolensElementFromIndex(const Point2f idx) const;
+
+    PBRT_CPU_GPU
+    MicrolensElement ComputeMicrolensElement(const Ray filmRay) const;
+
+    PBRT_CPU_GPU
+    Float TraceFullLensSystemFromFilm(const Ray & rIn, Ray * rOut) const;
 
     PBRT_CPU_GPU
     pstd::optional<ExitPupilSample> SampleMicrolensPupil(Point2f pFilm, Point2f uLens) const;
+
 
     // bool HasMicrolens() const;
 

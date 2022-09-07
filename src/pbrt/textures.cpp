@@ -1182,9 +1182,10 @@ GPUSpectrumImageTexture *GPUSpectrumImageTexture::Create(
     cudaChannelFormatDesc channelDesc =
         cudaCreateChannelDesc(32, 0, 0, 0, cudaChannelFormatKindFloat);
     cudaMallocArray(&basisArray, &channelDesc, basis_width);
-    cudaMemcpyToArray(basisArray, 0, 0, basis.data(), basis_width * sizeof(float),
-                      cudaMemcpyHostToDevice);
-
+    // cudaMemcpyToArray(basisArray, 0, 0, basis.data(), basis_width * sizeof(float),
+    //                   cudaMemcpyHostToDevice); // deprecated
+    cudaMemcpy2DToArray(basisArray, 0, 0, basis.data(), basis_width * sizeof(basis.data()),
+                    basis_width * sizeof(basis.data()), 1, cudaMemcpyHostToDevice);
     cudaResourceDesc basisresDesc = {};
     memset(&basisresDesc, 0, sizeof(cudaResourceDesc));
     basisresDesc.resType = cudaResourceTypeArray;
