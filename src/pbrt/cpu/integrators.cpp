@@ -239,6 +239,7 @@ void RayIntegrator::EvaluatePixelSample(Point2i pPixel, int sampleIndex, Sampler
     // Generate camera ray for current sample
     pstd::optional<CameraRayDifferential> cameraRay =
         camera.GenerateRayDifferential(cameraSample, lambda);
+    
 
     // Trace _cameraRay_ if valid
     SampledSpectrum L(0.);
@@ -290,9 +291,25 @@ void RayIntegrator::EvaluatePixelSample(Point2i pPixel, int sampleIndex, Sampler
                                cameraSample.filterWeight);
 }
 
+
+
+
+
 // Integrator Utility Functions
 STAT_COUNTER("Intersections/Regular ray intersection tests", nIntersectionTests);
 STAT_COUNTER("Intersections/Shadow ray intersection tests", nShadowTests);
+
+
+
+
+
+
+
+
+
+
+
+
 
 // Integrator Method Definitions
 pstd::optional<ShapeIntersection> Integrator::Intersect(const Ray &ray,
@@ -811,6 +828,21 @@ std::unique_ptr<PathIntegrator> PathIntegrator::Create(
     std::string lightStrategy = parameters.GetOneString("lightsampler", "bvh");
     bool regularize = parameters.GetOneBool("regularize", false);
     return std::make_unique<PathIntegrator>(maxDepth, camera, sampler, aggregate, lights,
+                                            lightStrategy, regularize);
+}
+
+std::unique_ptr<LightfieldPathIntegrator> LightfieldPathIntegrator::Create(
+    const ParameterDictionary &parameters, Camera camera, Sampler sampler,
+    Primitive aggregate, std::vector<Light> lights, const FileLoc *loc) {
+    int maxDepth = parameters.GetOneInt("maxdepth", 5);
+    std::string lightStrategy = parameters.GetOneString("lightsampler", "bvh");
+    bool regularize = parameters.GetOneBool("regularize", false);
+
+    // Reause the pathintegrator from PBRTV4, there is no need to make redundant code at this moment.
+    std::unique_ptr<RayIntegrator> integrator = PathIntegrator::Create(parameters,camera,sampler,aggregate,lights,loc);
+    
+    
+    return std::make_unique<LightfieldPathIntegrator>(std::move(integrator),maxDepth, camera, sampler, aggregate, lights,
                                             lightStrategy, regularize);
 }
 
@@ -3603,6 +3635,109 @@ std::string FunctionIntegrator::ToString() const {
         outputFilename, camera, baseSampler);
 }
 
+
+
+// Lightfield path integrator
+LightfieldPathIntegrator::LightfieldPathIntegrator(std::unique_ptr<RayIntegrator> rayIntegrator, int maxDepth, Camera camera, Sampler sampler,
+                               Primitive aggregate, std::vector<Light> lights,
+                               const std::string &lightSampleStrategy, bool regularize)
+    : ImageTileIntegrator(camera, sampler, aggregate, lights),
+      rayIntegrator(std::move(rayIntegrator)),
+      maxDepth(maxDepth),
+      lightSampler(LightSampler::Create(lightSampleStrategy, lights, Allocator())),
+      regularize(regularize)
+      {};
+
+SampledSpectrum LightfieldPathIntegrator::Li(RayDifferential ray, SampledWavelengths &lambda,
+                               Sampler sampler, ScratchBuffer &scratchBuffer,
+                               VisibleSurface *visibleSurface) const {
+    std::cout << "Ray integrator run" << "\n";
+         return rayIntegrator->Li(ray,lambda,sampler,scratchBuffer,visibleSurface);
+   };
+
+
+
+void LightfieldPathIntegrator::EvaluatePixelSample(Point2i pPixel, int sampleIndex, Sampler sampler,
+                                        ScratchBuffer &scratchBuffer) {
+    // Sample wavelengths for the ray
+    Float lu = sampler.Get1D();
+    if (Options->disableWavelengthJitter)
+        lu = 0.5;
+    SampledWavelengths lambda = camera.GetFilm().SampleWavelengths(lu);
+
+    // Initialize _CameraSample_ for current sample
+    Filter filter = camera.GetFilm().GetFilter();
+    CameraSample cameraSample = GetCameraSample(sampler, pPixel, filter);
+
+    // Generate camera ray for current sample
+    pstd::optional<CameraRayDifferential> cameraRay =
+    camera.GenerateRayDifferential(cameraSample, lambda);
+
+
+    
+    // We know it is a 
+    //LightfieldCamera* lfCamera = (LightfieldCamera*) &camera;
+    //std::pair<CameraRay,CameraRay> ioRays = lfCamera->GenerateRayIO(cameraSample,lambda);
+
+    //CameraRayDifferential cameraRay = *ioRays.second;
+
+
+    // Trace _cameraRay_ if valid
+    SampledSpectrum L(0.);
+    VisibleSurface visibleSurface;
+    if (cameraRay) {
+        // Double check that the ray's direction is normalized.
+        DCHECK_GT(Length(cameraRay->ray.d), .999f);
+        DCHECK_LT(Length(cameraRay->ray.d), 1.001f);
+        // Scale camera ray differentials based on image sampling rate
+        Float rayDiffScale =
+            std::max<Float>(.125f, 1 / std::sqrt((Float)sampler.SamplesPerPixel()));
+        if (!Options->disablePixelJitter)
+            cameraRay->ray.ScaleDifferentials(rayDiffScale);
+
+        ++nCameraRays;
+        // Evaluate radiance along camera ray
+        bool initializeVisibleSurface = camera.GetFilm().UsesVisibleSurface();
+        L = cameraRay->weight * Li(cameraRay->ray, lambda, sampler, scratchBuffer,
+                                   initializeVisibleSurface ? &visibleSurface : nullptr);
+
+        // Issue warning if unexpected radiance value is returned
+        if (L.HasNaNs()) {
+            LOG_ERROR("Not-a-number radiance value returned for pixel (%d, "
+                      "%d), sample %d. Setting to black.",
+                      pPixel.x, pPixel.y, sampleIndex);
+            L = SampledSpectrum(0.f);
+        } else if (IsInf(L.y(lambda))) {
+            LOG_ERROR("Infinite radiance value returned for pixel (%d, %d), "
+                      "sample %d. Setting to black.",
+                      pPixel.x, pPixel.y, sampleIndex);
+            L = SampledSpectrum(0.f);
+        }
+
+        if (cameraRay)
+            PBRT_DBG(
+                "%s\n",
+                StringPrintf("Camera sample: %s -> ray %s -> L = %s, visibleSurface %s",
+                             cameraSample, cameraRay->ray, L,
+                             (visibleSurface ? visibleSurface.ToString() : "(none)"))
+                    .c_str());
+        else
+            PBRT_DBG("%s\n",
+                     StringPrintf("Camera sample: %s -> no ray generated", cameraSample)
+                         .c_str());
+    }
+
+    // Add camera ray's contribution to image
+    camera.GetFilm().AddSample(pPixel, L, lambda, &visibleSurface,
+                               cameraSample.filterWeight);
+}
+
+std::string LightfieldPathIntegrator::ToString() const {
+    return StringPrintf("[ LightfieldPathIntegrator maxDepth: %d lightSampler: %s regularize: %s ]",
+                        maxDepth, lightSampler, regularize);
+}
+
+
 std::unique_ptr<Integrator> Integrator::Create(
     const std::string &name, const ParameterDictionary &parameters, Camera camera,
     Sampler sampler, Primitive aggregate, std::vector<Light> lights,
@@ -3619,6 +3754,9 @@ std::unique_ptr<Integrator> Integrator::Create(
     else if (name == "lightpath")
         integrator = LightPathIntegrator::Create(parameters, camera, sampler, aggregate,
                                                  lights, loc);
+    else if (name == "lightfieldpath")
+        integrator = LightfieldPathIntegrator::Create(parameters, camera, sampler, aggregate,
+                                                lights, loc);
     else if (name == "simplevolpath")
         integrator = SimpleVolPathIntegrator::Create(parameters, camera, sampler,
                                                      aggregate, lights, loc);
@@ -3648,5 +3786,9 @@ std::unique_ptr<Integrator> Integrator::Create(
     parameters.ReportUnused();
     return integrator;
 }
+
+
+
+
 
 }  // namespace pbrt

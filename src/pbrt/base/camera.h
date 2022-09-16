@@ -78,6 +78,19 @@ class Camera : public TaggedPointer<PerspectiveCamera, OrthographicCamera,
                                             SampledWavelengths &lambda) const;
 };
 
+
+// Camera Definition
+class LightfieldCamera : public Camera {
+public:
+    PBRT_CPU_GPU 
+    inline pstd::optional<std::pair<CameraRay,CameraRay>> GenerateRayIO(
+        CameraSample sample, SampledWavelengths &lambda) const;
+
+    //PBRT_CPU_GPU
+   // std::pair<CameraRayDifferential,CameraRayDifferential> GenerateRayDifferentialIO(
+    //    CameraSample sample, SampledWavelengths &lambda) const;
+};
+
 }  // namespace pbrt
 
 #endif  // PBRT_BASE_CAMERA_H

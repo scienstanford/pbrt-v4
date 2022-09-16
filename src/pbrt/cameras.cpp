@@ -785,6 +785,7 @@ RealisticCamera::RealisticCamera(CameraBaseParameters baseParameters,
 
     // Compute exit pupil bounds at sampled points on the film
     int nSamples = 64;
+    
     exitPupilBounds.resize(nSamples);
     ParallelFor(0, nSamples, [&](int i) {
         Float r0 = (Float)i / nSamples * film.Diagonal() / 2;
@@ -1517,6 +1518,27 @@ static Float computeZOfLensElement(Float r, const OmniCamera::LensElementInterfa
         return z/1000.0f;
     }
 }
+
+
+//Lighfieldcamera method definitions
+LightfieldCameraBase::LightfieldCameraBase(CameraBaseParameters p)
+    : CameraBase(p){
+    if (cameraTransform.CameraFromRenderHasScale())
+        Warning("Scaling detected in rendering space to camera space transformation!\n"
+                "The system has numerous assumptions, implicit and explicit,\n"
+                "that this transform will have no scale factors in it.\n"
+                "Proceed at your own risk; your image may have errors or\n"
+                "the system may crash as a result of this.");
+    }
+
+ //pstd::optional<CameraRay> LightfieldCameraBase::GenerateRay(CameraSample sample,
+  //                                        SampledWavelengths &lambda) {
+   //             std::pair<CameraRay,CameraRay> IOray= GenerateRayIO(sample,lambda);
+    //          return IOray.second;
+     //                                     };
+
+
+
 // OmniCamera Method Definitions
 OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
                                  pstd::vector<OmniCamera::LensElementInterface> &lensInterfaceData,
@@ -1527,7 +1549,7 @@ OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
                                  int microlensSimulationRadius,                                
                                  Float setApertureDiameter, Image apertureImage,
                                  Allocator alloc)
-    : CameraBase(baseParameters),
+    : LightfieldCameraBase(baseParameters),
       elementInterfaces(alloc),
       exitPupilBounds(alloc),
       caFlag(caFlag),
@@ -2315,7 +2337,7 @@ Float OmniCamera::TraceFullLensSystemFromFilm(const Ray& rIn, Ray* rOut) const {
     }
 }
 
-pstd::optional<CameraRay> OmniCamera::GenerateRay(CameraSample sample,
+pstd::optional<std::pair<CameraRay,CameraRay>> OmniCamera::GenerateRayIO(CameraSample sample,
                                                        SampledWavelengths &lambda) const {
     // Find point on film, _pFilm_, corresponding to _sample.pFilm_
     Point2f s(sample.pFilm.x / film.FullResolution().x,
@@ -2357,8 +2379,24 @@ pstd::optional<CameraRay> OmniCamera::GenerateRay(CameraSample sample,
     }else{
         weight *= Pow<4>(cosTheta) / (eps->pdf * Sqr(LensRearZ()));
     }
-    return CameraRay{ray, SampledSpectrum(weight)};
+
+    auto raySensor= CameraRay{rFilm, SampledSpectrum(weight)};
+    auto rayScene= CameraRay{ray, SampledSpectrum(weight)};
+
+    return std::pair<CameraRay,CameraRay>(raySensor,rayScene);
 }
+
+
+// This function is supposed to generate the output ray
+pstd::optional<CameraRay> OmniCamera::GenerateRay(CameraSample sample,
+                                                       SampledWavelengths &lambda) const {
+   pstd::optional<std::pair<CameraRay,CameraRay>> IOray= GenerateRayIO(sample,lambda);
+   if(!IOray)
+    return {};
+   else
+    return IOray->second;
+}
+
 
 // STAT_PERCENT("Camera/Rays vignetted by lens system", vignettedRays, totalRays);
 
@@ -2367,6 +2405,7 @@ std::string OmniCamera::LensElementInterface::ToString() const {
                         "eta: %f apertureRadius: %f ]",
                         curvatureRadius.x, thickness, eta, apertureRadius.x);
 }
+
 
 Float OmniCamera::TraceLensesFromScene(const Ray &rCamera, Ray *rOut) const {
     Float elementZ = -LensFrontZ();
@@ -3124,7 +3163,7 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
                    pstd::vector<std::shared_ptr<PassNoPass>> passNoPassPerWavelength,
                     pstd::vector<Float> polyWavelengths_nm,
                     Allocator alloc)
-    : CameraBase(baseParameters),
+    : LightfieldCameraBase(baseParameters),
       exitPupilBounds(alloc),
       caFlag(caFlag), 
       filmDistance(filmDistance), 
@@ -3154,6 +3193,7 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
     physicalExtent = Bounds2f(Point2f(-x / 2, -y / 2), Point2f(x / 2, y / 2));
 
     int nSamples = 64; 
+    nSamples = 10;
     exitPupilBoundsRTF.resize(nSamples);
     
     ParallelFor(0, nSamples, [&](int64_t i) {
@@ -3176,6 +3216,9 @@ inline Vector2f RTFCamera::Pos2RadiusRotation(const Point3f pos) const{
     
     return res;
 }
+
+
+
 
 // This is much faster for small exponents than using std::pow
 // See https://baptiste-wicht.com/posts/2017/09/cpp11-performance-tip-when-to-use-std-pow.html
@@ -3522,7 +3565,7 @@ Point3f RTFCamera::SampleExitPupil(const Point2f &pFilm,
 
 
 // This function is supposed to generate the output ray
-pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
+pstd::optional<std::pair<CameraRay,CameraRay>> RTFCamera::GenerateRayIO(CameraSample sample,
                                                        SampledWavelengths &lambda) const {
     // Find point on film, _pFilm_, corresponding to _sample.pFilm_
     Point2f s(sample.pFilm.x / film.FullResolution().x,
@@ -3582,10 +3625,23 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
     // weight *= Pow<4>(cosTheta) / (eps->pdf * Sqr(LensRearZ()));
     weight *=Pow<4>(cosTheta) * pupilArea / (filmDistance*filmDistance);
 
-    return CameraRay{ray, SampledSpectrum(weight)};
+    auto raySensor= CameraRay{rFilm, SampledSpectrum(weight)};
+    auto rayScene= CameraRay{ray, SampledSpectrum(weight)};
+
+    return std::pair<CameraRay,CameraRay>(raySensor,rayScene);
 }
 
 
+
+// This function is supposed to generate the output ray
+pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
+                                                       SampledWavelengths &lambda) const {
+   pstd::optional<std::pair<CameraRay,CameraRay>> IOray= GenerateRayIO(sample,lambda);
+   if(!IOray)
+    return {};
+   else
+    return IOray->second;
+}
 
 std::string RTFCamera::ToString() const
 {

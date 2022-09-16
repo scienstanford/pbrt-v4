@@ -246,6 +246,24 @@ class CameraBase {
     void FindMinimumDifferentials(Camera camera);
 };
 
+
+class LightfieldCameraBase : public CameraBase{
+public:
+   
+    LightfieldCameraBase() = default;
+    LightfieldCameraBase(CameraBaseParameters p);
+
+ 
+    PBRT_CPU_GPU
+    virtual pstd::optional<std::pair<CameraRay,CameraRay>> GenerateRayIO(CameraSample sample,
+                                          SampledWavelengths &lambda) const = 0;
+
+  // PBRT_CPU_GPU
+   //pstd::optional<CameraRay> GenerateRay(CameraSample sample,
+     //                                     SampledWavelengths &lambda);
+
+};
+
 // ProjectiveCamera Definition
 class ProjectiveCamera : public CameraBase {
   public:
@@ -595,7 +613,7 @@ class RealisticCamera : public CameraBase {
 };
 
 // OmniCamera Definition
-class OmniCamera : public CameraBase {
+class OmniCamera : public LightfieldCameraBase {
   public:
     // OmniCamera Public Declarations
     struct LensElementInterface {
@@ -655,6 +673,11 @@ class OmniCamera : public CameraBase {
         CameraSample sample, SampledWavelengths &lambda) const {
         return CameraBase::GenerateRayDifferential(this, sample, lambda);
     }
+
+    PBRT_CPU_GPU
+    pstd::optional<std::pair<CameraRay,CameraRay>> GenerateRayIO(CameraSample sample,
+                                          SampledWavelengths &lambda) const;
+
 
     PBRT_CPU_GPU
     SampledSpectrum We(const Ray &ray, SampledWavelengths &lambda,
@@ -813,7 +836,7 @@ class OmniCamera : public CameraBase {
 };
 
 // RTFCamera Definition
-class RTFCamera : public CameraBase {
+class RTFCamera : public LightfieldCameraBase {
   public:
     // RTFCamera Public Declarations
     struct LensPolynomialTerm {
@@ -878,8 +901,13 @@ class RTFCamera : public CameraBase {
                                    Medium medium, const FileLoc *loc,
                                    Allocator alloc = {});
 
-    PBRT_CPU_GPU
+    // PBRT_CPU_GPU
     pstd::optional<CameraRay> GenerateRay(CameraSample sample,
+                                          SampledWavelengths &lambda) const;
+    
+
+    PBRT_CPU_GPU
+    pstd::optional<std::pair<CameraRay,CameraRay>> GenerateRayIO(CameraSample sample,
                                           SampledWavelengths &lambda) const;
 
     PBRT_CPU_GPU
@@ -1003,6 +1031,12 @@ class RTFCamera : public CameraBase {
 inline pstd::optional<CameraRay> Camera::GenerateRay(CameraSample sample,
                                                      SampledWavelengths &lambda) const {
     auto generate = [&](auto ptr) { return ptr->GenerateRay(sample, lambda); };
+    return Dispatch(generate);
+}
+
+inline pstd::optional<std::pair<CameraRay,CameraRay>> LightfieldCamera::GenerateRayIO(CameraSample sample,
+                                                     SampledWavelengths &lambda) const {
+    auto generate = [&](auto ptr) { return ((LightfieldCameraBase*)ptr)->GenerateRayIO(sample, lambda); };
     return Dispatch(generate);
 }
 

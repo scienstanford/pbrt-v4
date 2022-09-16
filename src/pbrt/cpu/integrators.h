@@ -111,6 +111,9 @@ class RayIntegrator : public ImageTileIntegrator {
                                VisibleSurface *visibleSurface) const = 0;
 };
 
+
+
+
 // RandomWalkIntegrator Definition
 class RandomWalkIntegrator : public RayIntegrator {
   public:
@@ -235,6 +238,37 @@ class PathIntegrator : public RayIntegrator {
     bool regularize;
 };
 
+// isetpixel PathIntegrator Definition
+class isetpixelPathIntegrator : public PathIntegrator {
+  public:
+    // PathIntegrator Public Methods
+    isetpixelPathIntegrator(int maxDepth, Camera camera, Sampler sampler, Primitive aggregate,
+                   std::vector<Light> lights,
+                   const std::string &lightSampleStrategy = "bvh",
+                   bool regularize = false);
+
+
+    static std::unique_ptr<isetpixelPathIntegrator> Create(const ParameterDictionary &parameters,
+                                                  Camera camera, Sampler sampler,
+                                                  Primitive aggregate,
+                                                  std::vector<Light> lights,
+                                                  const FileLoc *loc);
+
+    std::string ToString() const;
+  void Render();
+  private:
+    // PathIntegrator Private Methods
+    SampledSpectrum SampleLd(const SurfaceInteraction &intr, const BSDF *bsdf,
+                             SampledWavelengths &lambda, Sampler sampler) const;
+
+    // PathIntegrator Private Members
+    int maxDepth;
+    LightSampler lightSampler;
+    bool regularize;
+
+};
+
+
 // SimpleVolPathIntegrator Definition
 class SimpleVolPathIntegrator : public RayIntegrator {
   public:
@@ -317,7 +351,6 @@ class AOIntegrator : public RayIntegrator {
     Spectrum illuminant;
     Float illumScale;
 };
-
 // LightPathIntegrator Definition
 class LightPathIntegrator : public ImageTileIntegrator {
   public:
@@ -500,6 +533,45 @@ class FunctionIntegrator : public Integrator {
     bool skipBad;
     std::string imageFilename;
 };
+
+class LightfieldPathIntegrator : public ImageTileIntegrator {
+  public:
+
+    
+
+    // RayIntegrator Public Methods
+  LightfieldPathIntegrator(std::unique_ptr<RayIntegrator> rayIntegrator, int maxDepth, Camera camera, Sampler sampler, Primitive aggregate,
+                   std::vector<Light> lights,
+                   const std::string &lightSampleStrategy = "bvh",
+                   bool regularize = false);
+
+
+
+    void EvaluatePixelSample(Point2i pPixel, int sampleIndex, Sampler sampler,
+                             ScratchBuffer &scratchBuffer) final;
+
+    SampledSpectrum Li(RayDifferential ray, SampledWavelengths &lambda,
+                               Sampler sampler, ScratchBuffer &scratchBuffer,
+                               VisibleSurface *visibleSurface) const;
+
+
+    static std::unique_ptr<LightfieldPathIntegrator> Create(const ParameterDictionary &parameters,
+                                                  Camera camera, Sampler sampler,
+                                                  Primitive aggregate,
+                                                  std::vector<Light> lights,
+                                                  const FileLoc *loc);
+    std::string ToString() const;
+  private:
+      // PathIntegrator Private Members
+    int maxDepth;
+    LightSampler lightSampler;
+    bool regularize;
+    std::unique_ptr<RayIntegrator> rayIntegrator;
+
+};
+
+
+
 
 }  // namespace pbrt
 
