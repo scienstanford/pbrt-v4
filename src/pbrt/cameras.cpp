@@ -3193,7 +3193,7 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
     physicalExtent = Bounds2f(Point2f(-x / 2, -y / 2), Point2f(x / 2, y / 2));
 
     int nSamples = 64; 
-    nSamples = 10;
+    // nSamples = 10; // faster for debugging
     exitPupilBoundsRTF.resize(nSamples);
     
     ParallelFor(0, nSamples, [&](int64_t i) {
@@ -3637,11 +3637,15 @@ pstd::optional<std::pair<CameraRay,CameraRay>> RTFCamera::GenerateRayIO(CameraSa
 pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
                                                        SampledWavelengths &lambda) const {
    pstd::optional<std::pair<CameraRay,CameraRay>> IOray= GenerateRayIO(sample,lambda);
-   if(!IOray)
-    return {};
-   else
+  if(!IOray)
+   return {};
+  else
     return IOray->second;
 }
+
+
+
+
 
 std::string RTFCamera::ToString() const
 {
