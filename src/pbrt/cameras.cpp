@@ -3558,7 +3558,11 @@ Point3f RTFCamera::SampleExitPupil(const Point2f &pFilm,
     return pPointOnInputPlane;
 }
 
+pstd::optional<std::pair<CameraRay,CameraRay>> LightfieldCameraBase::GenerateRayIO(CameraSample sample,
+                                                       SampledWavelengths &lambda) const {
+                                                           return {};
 
+                                                       }
 // This function is supposed to generate the output ray
 pstd::optional<std::pair<CameraRay,CameraRay>> RTFCamera::GenerateRayIO(CameraSample sample,
                                                        SampledWavelengths &lambda) const {

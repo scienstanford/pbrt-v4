@@ -3675,8 +3675,10 @@ void LightfieldPathIntegrator::EvaluatePixelSample(Point2i pPixel, int sampleInd
 
     
     // We know it is a 
-    //LightfieldCamera* lfCamera = (LightfieldCamera*) &camera;
-    //std::pair<CameraRay,CameraRay> ioRays = lfCamera->GenerateRayIO(cameraSample,lambda);
+    LightfieldCamera* lfCamera = (LightfieldCamera*) &camera;
+    lfCamera->GenerateRay(cameraSample,lambda);
+    lfCamera->GenerateRayIO(cameraSample,lambda);
+    
 
     //CameraRayDifferential cameraRay = *ioRays.second;
 

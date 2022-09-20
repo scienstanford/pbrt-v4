@@ -83,7 +83,7 @@ class Camera : public TaggedPointer<PerspectiveCamera, OrthographicCamera,
 class LightfieldCamera : public Camera {
 public:
     PBRT_CPU_GPU 
-    inline pstd::optional<std::pair<CameraRay,CameraRay>> GenerateRayIO(
+    pstd::optional<std::pair<CameraRay,CameraRay>> GenerateRayIO(
         CameraSample sample, SampledWavelengths &lambda) const;
 
     //PBRT_CPU_GPU
