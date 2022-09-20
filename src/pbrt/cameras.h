@@ -250,13 +250,13 @@ class CameraBase {
 class LightfieldCameraBase : public CameraBase{
 public:
    
-    LightfieldCameraBase() = default;
+    //LightfieldCameraBase() = default;
     LightfieldCameraBase(CameraBaseParameters p);
 
  
     PBRT_CPU_GPU
-    virtual pstd::optional<std::pair<CameraRay,CameraRay>> GenerateRayIO(CameraSample sample,
-                                          SampledWavelengths &lambda) const = 0;
+    pstd::optional<std::pair<CameraRay,CameraRay>> GenerateRayIO(CameraSample sample,
+                                          SampledWavelengths &lambda) const;
 
   // PBRT_CPU_GPU
    //pstd::optional<CameraRay> GenerateRay(CameraSample sample,

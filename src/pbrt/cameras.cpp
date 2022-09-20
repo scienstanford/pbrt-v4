@@ -1523,12 +1523,7 @@ static Float computeZOfLensElement(Float r, const OmniCamera::LensElementInterfa
 //Lighfieldcamera method definitions
 LightfieldCameraBase::LightfieldCameraBase(CameraBaseParameters p)
     : CameraBase(p){
-    if (cameraTransform.CameraFromRenderHasScale())
-        Warning("Scaling detected in rendering space to camera space transformation!\n"
-                "The system has numerous assumptions, implicit and explicit,\n"
-                "that this transform will have no scale factors in it.\n"
-                "Proceed at your own risk; your image may have errors or\n"
-                "the system may crash as a result of this.");
+  
     }
 
  //pstd::optional<CameraRay> LightfieldCameraBase::GenerateRay(CameraSample sample,
@@ -3193,7 +3188,7 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
     physicalExtent = Bounds2f(Point2f(-x / 2, -y / 2), Point2f(x / 2, y / 2));
 
     int nSamples = 64; 
-    // nSamples = 10; // faster for debugging
+    
     exitPupilBoundsRTF.resize(nSamples);
     
     ParallelFor(0, nSamples, [&](int64_t i) {
@@ -3642,6 +3637,7 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
   else
     return IOray->second;
 }
+
 
 
 

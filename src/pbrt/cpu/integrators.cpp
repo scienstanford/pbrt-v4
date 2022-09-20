@@ -3651,7 +3651,6 @@ LightfieldPathIntegrator::LightfieldPathIntegrator(std::unique_ptr<RayIntegrator
 SampledSpectrum LightfieldPathIntegrator::Li(RayDifferential ray, SampledWavelengths &lambda,
                                Sampler sampler, ScratchBuffer &scratchBuffer,
                                VisibleSurface *visibleSurface) const {
-    std::cout << "Ray integrator run" << "\n";
          return rayIntegrator->Li(ray,lambda,sampler,scratchBuffer,visibleSurface);
    };
 
@@ -3746,6 +3745,9 @@ std::unique_ptr<Integrator> Integrator::Create(
     if (name == "path")
         integrator =
             PathIntegrator::Create(parameters, camera, sampler, aggregate, lights, loc);
+    else if (name == "lightfieldpath")
+        integrator = LightfieldPathIntegrator::Create(parameters, camera, sampler, aggregate,
+                                                lights, loc);
     else if (name == "function")
         integrator = FunctionIntegrator::Create(parameters, camera, sampler, loc);
     else if (name == "simplepath")
@@ -3754,9 +3756,7 @@ std::unique_ptr<Integrator> Integrator::Create(
     else if (name == "lightpath")
         integrator = LightPathIntegrator::Create(parameters, camera, sampler, aggregate,
                                                  lights, loc);
-    else if (name == "lightfieldpath")
-        integrator = LightfieldPathIntegrator::Create(parameters, camera, sampler, aggregate,
-                                                lights, loc);
+   
     else if (name == "simplevolpath")
         integrator = SimpleVolPathIntegrator::Create(parameters, camera, sampler,
                                                      aggregate, lights, loc);
