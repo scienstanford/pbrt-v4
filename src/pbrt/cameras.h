@@ -256,11 +256,11 @@ public:
  
     PBRT_CPU_GPU
     pstd::optional<std::pair<CameraRay,CameraRay>> GenerateRayIO(CameraSample sample,
-                                          SampledWavelengths &lambda) const;
-
-  // PBRT_CPU_GPU
-   //pstd::optional<CameraRay> GenerateRay(CameraSample sample,
-     //                                     SampledWavelengths &lambda);
+                                         SampledWavelengths &lambda) const {
+                                             std::cout << "GenerateRayIO Virtual : This should not run" <<"\n"; 
+                                             return{};
+                                             };
+                                         
 
 };
 
@@ -678,7 +678,6 @@ class OmniCamera : public LightfieldCameraBase {
     pstd::optional<std::pair<CameraRay,CameraRay>> GenerateRayIO(CameraSample sample,
                                           SampledWavelengths &lambda) const;
 
-
     PBRT_CPU_GPU
     SampledSpectrum We(const Ray &ray, SampledWavelengths &lambda,
                        Point2f *pRaster2 = nullptr) const {
@@ -1036,7 +1035,11 @@ inline pstd::optional<CameraRay> Camera::GenerateRay(CameraSample sample,
 
 inline pstd::optional<std::pair<CameraRay,CameraRay>> LightfieldCamera::GenerateRayIO(CameraSample sample,
                                                      SampledWavelengths &lambda) const {
-    auto generate = [&](auto ptr) { return ((LightfieldCameraBase*)ptr)->GenerateRayIO(sample, lambda); };
+// THomas: I want this to be LightFieldCameraBase. Which implies setting generateRayIO virtual in the base class
+// But then I get NAN errors my renderings which I cannot explain
+// So for now i will break the polymorphism . 
+// Only woskf or RTF Camera
+    auto generate = [&](auto ptr) { return ((RTFCamera*)ptr)->GenerateRayIO(sample, lambda); };
     return Dispatch(generate);
 }
 

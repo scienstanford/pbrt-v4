@@ -3188,7 +3188,7 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
     physicalExtent = Bounds2f(Point2f(-x / 2, -y / 2), Point2f(x / 2, y / 2));
 
     int nSamples = 64; 
-    
+    nSamples=1;
     exitPupilBoundsRTF.resize(nSamples);
     
     ParallelFor(0, nSamples, [&](int64_t i) {
@@ -3558,14 +3558,16 @@ Point3f RTFCamera::SampleExitPupil(const Point2f &pFilm,
     return pPointOnInputPlane;
 }
 
-pstd::optional<std::pair<CameraRay,CameraRay>> LightfieldCameraBase::GenerateRayIO(CameraSample sample,
-                                                       SampledWavelengths &lambda) const {
-                                                           return {};
+//pstd::optional<std::pair<CameraRay,CameraRay>> LightfieldCameraBase::GenerateRayIO(CameraSample sample,
+ //                                                      SampledWavelengths &lambda) const {
+  //                                                         return {};
 
-                                                       }
+                                                       //}//
 // This function is supposed to generate the output ray
 pstd::optional<std::pair<CameraRay,CameraRay>> RTFCamera::GenerateRayIO(CameraSample sample,
                                                        SampledWavelengths &lambda) const {
+
+    //sstd::cout << "GenerateRayIO" << "\n";
     // Find point on film, _pFilm_, corresponding to _sample.pFilm_
     Point2f s(sample.pFilm.x / film.FullResolution().x,
               sample.pFilm.y / film.FullResolution().y);
@@ -3626,11 +3628,12 @@ pstd::optional<std::pair<CameraRay,CameraRay>> RTFCamera::GenerateRayIO(CameraSa
 
     auto raySensor= CameraRay{rFilm, SampledSpectrum(weight)};
     auto rayScene= CameraRay{ray, SampledSpectrum(weight)};
-
+    //std::cout << "result: " << result << "\n";
+    //std::cout << "ray: " << ray << "\n";
+    //std::cout << "rFilm: " << rFilm << "\n";
+    
     return std::pair<CameraRay,CameraRay>(raySensor,rayScene);
 }
-
-
 
 // This function is supposed to generate the output ray
 pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,

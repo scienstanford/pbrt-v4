@@ -834,11 +834,12 @@ std::unique_ptr<PathIntegrator> PathIntegrator::Create(
 std::unique_ptr<LightfieldPathIntegrator> LightfieldPathIntegrator::Create(
     const ParameterDictionary &parameters, Camera camera, Sampler sampler,
     Primitive aggregate, std::vector<Light> lights, const FileLoc *loc) {
+ 
     int maxDepth = parameters.GetOneInt("maxdepth", 5);
     std::string lightStrategy = parameters.GetOneString("lightsampler", "bvh");
     bool regularize = parameters.GetOneBool("regularize", false);
 
-    // Reause the pathintegrator from PBRTV4, there is no need to make redundant code at this moment.
+    // Reuse (by means of composition) the pathintegrator from PBRTV4, there is no need to make redundant code
     std::unique_ptr<RayIntegrator> integrator = PathIntegrator::Create(parameters,camera,sampler,aggregate,lights,loc);
     
     
@@ -3676,9 +3677,9 @@ void LightfieldPathIntegrator::EvaluatePixelSample(Point2i pPixel, int sampleInd
     
     // We know it is a 
     LightfieldCamera* lfCamera = (LightfieldCamera*) &camera;
-    lfCamera->GenerateRay(cameraSample,lambda);
-    lfCamera->GenerateRayIO(cameraSample,lambda);
-    
+    auto ray1 = lfCamera->GenerateRay(cameraSample,lambda);
+    auto rays = lfCamera->GenerateRayIO(cameraSample,lambda);
+    //std::cout << rays->first.ray.d << "\n";
 
     //CameraRayDifferential cameraRay = *ioRays.second;
 

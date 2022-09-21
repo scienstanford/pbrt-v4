@@ -155,7 +155,7 @@ void CheckCallbackScope::Fail() {
     // it possible to continue past a LOG(FATAL) in the debugger
     __debugbreak();
 #else
-    abort();
+     abort();
 #endif
 }
 
