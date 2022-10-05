@@ -836,6 +836,7 @@ std::unique_ptr<LightfieldPathIntegrator> LightfieldPathIntegrator::Create(
     Primitive aggregate, std::vector<Light> lights, const FileLoc *loc) {
  
     int maxDepth = parameters.GetOneInt("maxdepth", 5);
+    auto integratorName = parameters.GetOneString("integrator","path");
     std::string lightStrategy = parameters.GetOneString("lightsampler", "bvh");
     bool regularize = parameters.GetOneBool("regularize", false);
 
@@ -3670,6 +3671,7 @@ void LightfieldPathIntegrator::EvaluatePixelSample(Point2i pPixel, int sampleInd
     CameraSample cameraSample = GetCameraSample(sampler, pPixel, filter);
 
     // Generate camera ray for current sample
+    // Thomas We should have e ray differnetial for for the IO version
     pstd::optional<CameraRayDifferential> cameraRay =
     camera.GenerateRayDifferential(cameraSample, lambda);
 
@@ -3677,9 +3679,10 @@ void LightfieldPathIntegrator::EvaluatePixelSample(Point2i pPixel, int sampleInd
     
     // We know it is a 
     LightfieldCamera* lfCamera = (LightfieldCamera*) &camera;
-    auto ray1 = lfCamera->GenerateRay(cameraSample,lambda);
+    //auto ray1 = lfCamera->GenerateRay(cameraSample,lambda);
+    
+    
     auto rays = lfCamera->GenerateRayIO(cameraSample,lambda);
-    //std::cout << rays->first.ray.d << "\n";
 
     //CameraRayDifferential cameraRay = *ioRays.second;
 
@@ -3730,8 +3733,15 @@ void LightfieldPathIntegrator::EvaluatePixelSample(Point2i pPixel, int sampleInd
     }
 
     // Add camera ray's contribution to image
-    camera.GetFilm().AddSample(pPixel, L, lambda, &visibleSurface,
-                               cameraSample.filterWeight);
+    
+    //camera.GetFilm().AddSample(pPixel, L, lambda, &visibleSurface,
+     //                          cameraSample.filterWeight);
+
+    if(rays){
+        camera.GetFilm().AddLightfieldSample(rays->first.ray,pPixel,L,lambda,&visibleSurface,cameraSample.filterWeight);
+                                        }
+
+    
 }
 
 std::string LightfieldPathIntegrator::ToString() const {
@@ -3745,10 +3755,13 @@ std::unique_ptr<Integrator> Integrator::Create(
     Sampler sampler, Primitive aggregate, std::vector<Light> lights,
     const RGBColorSpace *colorSpace, const FileLoc *loc) {
     std::unique_ptr<Integrator> integrator;
+
+    
     if (name == "path")
         integrator =
             PathIntegrator::Create(parameters, camera, sampler, aggregate, lights, loc);
     else if (name == "lightfieldpath")
+    
         integrator = LightfieldPathIntegrator::Create(parameters, camera, sampler, aggregate,
                                                 lights, loc);
     else if (name == "function")

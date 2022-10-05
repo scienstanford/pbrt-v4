@@ -27,7 +27,7 @@
 #include <atomic>
 #include <map>
 #include <string>
-#include <thread>
+#include <iostream>
 #include <vector>
 
 namespace pbrt {
@@ -219,6 +219,18 @@ class FilmBase {
     Bounds2f SampleBounds() const;
 
     std::string BaseToString() const;
+
+
+    //Thomas: Currently I add this method to all films because I did not find a good way to cast Film to LightfieldFilmWapper in the LIghtfield Integrator
+    // I hope to find a more backwards compatible way, but for now this is how it works.
+    PBRT_CPU_GPU
+    void AddLightfieldSample(Ray raySensor, Point2i pFilm, SampledSpectrum L,
+                            const SampledWavelengths &lambda,
+                            const VisibleSurface *visibleSurface, Float weight) {
+            std::cout << "AddLightfieldSample not implemented for this type of film"  << "\n"; // Default output
+   };
+
+
 
   protected:
     // FilmBase Protected Members
@@ -418,7 +430,68 @@ class GBufferFilm : public FilmBase {
     Float filterIntegral;
     SquareMatrix<3> outputRGBFromSensorRGB;
 };
+class LightfieldFilmWrapper : public GBufferFilm{
+    public:
 
+
+
+    // LightfieldFIlm (A pixel can have subpixels)
+    struct PixelComplex {
+        PixelComplex() = default;
+        double rgbSum[3] = {0., 0., 0.};
+        double weightSum = 0., gBufferWeightSum = 0.;
+        AtomicDouble rgbSplat[3];
+        Point3f pSum;
+        Float dzdxSum = 0, dzdySum = 0;
+        Normal3f nSum, nsSum;
+        Point2f uvSum;
+        double rgbAlbedoSum[3] = {0., 0., 0.};
+        VarianceEstimator<Float> rgbVariance[3];
+        SampledSpectrum L;
+        AtomicDouble *LSplat;
+        float materialId; // zhenyi
+        float instanceId; // zhenyi
+
+        std::vector<SubPixel> subpixels;
+
+    };
+
+     struct SubPixel {
+        SubPixel() = default;
+        AtomicDouble rgbSplat[3];
+        double weightSum = 0., gBufferWeightSum = 0.;
+        SampledSpectrum L;
+ 
+    };
+  //GBufferFilm Public Methods
+    LightfieldFilmWrapper(FilmBaseParameters p, const AnimatedTransform &outputFromRender,
+                bool applyInverse, const RGBColorSpace *colorSpace,
+                Float maxComponentValue = Infinity, bool writeFP16 = true,
+                bool writeRadiance = true, bool writeBasis = true, int nbasis = 3,
+                bool writeAlbedo = true, bool writePosition = true,
+                bool writeDz = true, bool writeMaterial = true, bool writeInstance = true,
+                bool writeNormal = true, bool writeNs = true, bool writeVariance = true,
+                bool writeRelativeVariance = true,
+                Allocator alloc = {});
+
+    
+
+    //static LightfieldFilmWrapper *Create(std::unique_ptr<FilmBase> filmBase);
+    static LightfieldFilmWrapper *Create(const ParameterDictionary &parameters,
+                                 Float exposureTime,
+                                 const CameraTransform &cameraTransform, Filter filter,
+                                 const RGBColorSpace *colorSpace, const FileLoc *loc,
+                                 Allocator alloc);
+
+                                     
+
+    PBRT_CPU_GPU
+    void AddLightfieldSample(Ray raySensor, Point2i pFilm, SampledSpectrum L, const SampledWavelengths &lambda,
+                   const VisibleSurface *visibleSurface, Float weight);
+
+
+
+};
 // SpectralFilm Definition
 class SpectralFilm : public FilmBase {
   public:
@@ -603,6 +676,18 @@ inline void Film::AddSample(Point2i pFilm, SampledSpectrum L,
     };
     return Dispatch(add);
 }
+
+PBRT_CPU_GPU
+inline void Film::AddLightfieldSample(Ray ray,Point2i pFilm, SampledSpectrum L,
+                            const SampledWavelengths &lambda,
+                            const VisibleSurface *visibleSurface, Float weight) {
+    auto add = [&](auto ptr) {
+        return ptr->AddLightfieldSample(ray,pFilm, L, lambda, visibleSurface, weight);
+    };
+    return Dispatch(add);
+}
+
+
 
 PBRT_CPU_GPU
 inline const PixelSensor *Film::GetPixelSensor() const {

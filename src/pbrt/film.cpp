@@ -687,6 +687,7 @@ GBufferFilm::GBufferFilm(FilmBaseParameters p, const AnimatedTransform &outputFr
     outputRGBFromSensorRGB = colorSpace->RGBFromXYZ * sensor->XYZFromSensorRGB;
 }
 
+
 void GBufferFilm::AddSplat(Point2f p, SampledSpectrum v,
                            const SampledWavelengths &lambda) {
     // NOTE: same code as RGBFilm::AddSplat()...
@@ -1102,6 +1103,87 @@ GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
                                          writeRelativeVariance, alloc);
 }
 
+LightfieldFilmWrapper::LightfieldFilmWrapper(FilmBaseParameters p, const AnimatedTransform &outputFromRender,
+                         bool applyInverse, const RGBColorSpace *colorSpace,
+                         Float maxComponentValue, bool writeFP16, bool writeRadiance,
+                         bool writeBasis, int nbasis,
+                         bool writeAlbedo, bool writePosition,
+                         bool writeDz, bool writeMaterial, bool writeInstance,
+                         bool writeNormal, bool writeNs, bool writeVariance,
+                         bool writeRelativeVariance,Allocator alloc)
+    : GBufferFilm(p,outputFromRender,applyInverse,colorSpace,maxComponentValue,
+    writeFP16,writeRadiance,writeBasis,nbasis,writeAlbedo,writePosition,writeDz,
+    writeMaterial,writeInstance,writeNormal,writeNs,writeVariance,writeRelativeVariance,alloc){}
+
+
+LightfieldFilmWrapper *LightfieldFilmWrapper::Create(const ParameterDictionary &parameters,
+                                 Float exposureTime,
+                                 const CameraTransform &cameraTransform, Filter filter,
+                                 const RGBColorSpace *colorSpace, const FileLoc *loc,
+                                 Allocator alloc) {
+    Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
+    bool writeFP16 = parameters.GetOneBool("savefp16", true);
+    // zhenyi
+    //---------------------------------------------------------------
+    bool writeRadiance = parameters.GetOneBool("saveRadiance", true);
+    bool writeBasis = parameters.GetOneBool("saveRadianceAsBasis", false);
+    int nbasis = parameters.GetOneInt("numBasis", 3);
+    bool writeAlbedo = parameters.GetOneBool("saveAlbedo", false);
+    bool writePosition = parameters.GetOneBool("saveDepth", false);
+    bool writeDz = parameters.GetOneBool("saveDz", false);
+    bool writeMaterial = parameters.GetOneBool("saveMaterial", false);
+    bool writeInstance = parameters.GetOneBool("saveInstance", false);
+    bool writeNormal = parameters.GetOneBool("saveNormal", false);
+    bool writeNs = parameters.GetOneBool("saveNs", false);
+    bool writeVariance = parameters.GetOneBool("saveVariance", false);
+    bool writeRelativeVariance = parameters.GetOneBool("saveRelativeVariance", false);
+    //-----------------------------------------------------------------
+
+    PixelSensor *sensor =
+        PixelSensor::Create(parameters, colorSpace, exposureTime, loc, alloc);
+
+    FilmBaseParameters filmBaseParameters(parameters, filter, sensor, loc);
+
+    if (!HasExtension(filmBaseParameters.filename, "exr"))
+        ErrorExit(loc, "%s: EXR is the only format supported by the GBufferFilm.",
+                  filmBaseParameters.filename);
+
+    std::string coordinateSystem = parameters.GetOneString("coordinatesystem", "camera");
+    AnimatedTransform outputFromRender;
+    bool applyInverse = false;
+    if (coordinateSystem == "camera") {
+        outputFromRender = cameraTransform.RenderFromCamera();
+        applyInverse = true;
+    } else if (coordinateSystem == "world")
+        outputFromRender = AnimatedTransform(cameraTransform.WorldFromRender());
+    else
+        ErrorExit(loc,
+                  "%s: unknown coordinate system for GBufferFilm. (Expecting \"camera\" "
+                  "or \"world\".)",
+                  coordinateSystem);
+
+    return alloc.new_object<LightfieldFilmWrapper>(filmBaseParameters, outputFromRender,
+                                         applyInverse, colorSpace, maxComponentValue,
+                                         writeFP16, writeRadiance, writeBasis, nbasis,
+                                         writeAlbedo, writePosition,
+                                         writeDz, writeMaterial, writeInstance,
+                                         writeNormal, writeNs, writeVariance,
+                                         writeRelativeVariance, alloc);
+}
+
+void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm, SampledSpectrum L,
+                            const SampledWavelengths &lambda,
+                            const VisibleSurface *visibleSurface, Float weight) {
+            //AddSample(pFilm,L,lambda,visibleSurface,weight);
+
+
+            auto dir = raySensor.d ;
+            dir = Normalize(dir);
+            std::cout << "Recorded angle of ray" << dir << "\n"; 
+            
+}
+
+
 // SpectralFilm Method Definitions
 SpectralFilm::SpectralFilm(FilmBaseParameters p, Float lambdaMin, Float lambdaMax,
                            int nBuckets, const RGBColorSpace *colorSpace,
@@ -1319,6 +1401,11 @@ Film Film::Create(const std::string &name, const ParameterDictionary &parameters
     else if (name == "gbuffer")
         film = GBufferFilm::Create(parameters, exposureTime, cameraTransform, filter,
                                    parameters.ColorSpace(), loc, alloc);
+    else if (name == "lightfieldgbuffer"){
+        std::cout << "Lightfield Gbuffer Film" << "\n";
+        film = LightfieldFilmWrapper::Create(parameters, exposureTime, cameraTransform, filter,
+                                   parameters.ColorSpace(), loc, alloc);
+    }
     else if (name == "spectral")
         film = SpectralFilm::Create(parameters, exposureTime, filter,
                                     parameters.ColorSpace(), loc, alloc);

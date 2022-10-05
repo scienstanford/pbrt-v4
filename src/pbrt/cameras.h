@@ -146,6 +146,8 @@ class CameraBase {
     // CameraBase Public Methods
     PBRT_CPU_GPU
     Film GetFilm() const { return film; }
+        
+    
     PBRT_CPU_GPU
     const CameraTransform &GetCameraTransform() const { return cameraTransform; }
 
@@ -260,7 +262,9 @@ public:
                                              std::cout << "GenerateRayIO Virtual : This should not run" <<"\n"; 
                                              return{};
                                              };
-                                         
+
+    PBRT_CPU_GPU
+    //LightfieldFilmWrapper* GetLightfieldFilm() const { return (LightfieldFilmWrapper*)(&film); }
 
 };
 
@@ -1047,6 +1051,10 @@ inline Film Camera::GetFilm() const {
     auto getfilm = [&](auto ptr) { return ptr->GetFilm(); };
     return Dispatch(getfilm);
 }
+
+
+
+
 
 inline Float Camera::SampleTime(Float u) const {
     auto sample = [&](auto ptr) { return ptr->SampleTime(u); };

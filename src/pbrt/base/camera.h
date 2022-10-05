@@ -55,6 +55,7 @@ class Camera : public TaggedPointer<PerspectiveCamera, OrthographicCamera,
         CameraSample sample, SampledWavelengths &lambda) const;
 
     PBRT_CPU_GPU inline Film GetFilm() const;
+    
 
     PBRT_CPU_GPU inline Float SampleTime(Float u) const;
 
@@ -85,6 +86,8 @@ public:
     PBRT_CPU_GPU 
     pstd::optional<std::pair<CameraRay,CameraRay>> GenerateRayIO(
         CameraSample sample, SampledWavelengths &lambda) const;
+
+    //PBRT_CPU_GPU inline LightfieldFilmWrapper* GetLightfieldFilm() const;
 
     //PBRT_CPU_GPU
    // std::pair<CameraRayDifferential,CameraRayDifferential> GenerateRayDifferentialIO(

@@ -19,17 +19,22 @@ class VisibleSurface;
 class RGBFilm;
 class GBufferFilm;
 class SpectralFilm;
+class LightfieldFilmWrapper;
 class PixelSensor;
 
 // Film Definition
-class Film : public TaggedPointer<RGBFilm, GBufferFilm, SpectralFilm> {
+class Film : public TaggedPointer<RGBFilm, GBufferFilm, SpectralFilm,LightfieldFilmWrapper> {
   public:
     // Film Interface
     PBRT_CPU_GPU inline void AddSample(Point2i pFilm, SampledSpectrum L,
                                        const SampledWavelengths &lambda,
                                        const VisibleSurface *visibleSurface,
                                        Float weight);
-
+  PBRT_CPU_GPU inline void AddLightfieldSample(Ray sensorRay,Point2i pFilm, SampledSpectrum L,
+                                       const SampledWavelengths &lambda,
+                                       const VisibleSurface *visibleSurface,
+                                       Float weight);
+                                       
     PBRT_CPU_GPU inline Bounds2f SampleBounds() const;
 
     PBRT_CPU_GPU
@@ -64,6 +69,17 @@ class Film : public TaggedPointer<RGBFilm, GBufferFilm, SpectralFilm> {
                        Filter filter, const FileLoc *loc, Allocator alloc);
 
     std::string ToString() const;
+};
+
+class LightfieldFilm : public Film{
+  public:
+      // Film Interface
+
+
+    static LightfieldFilm Create(const std::string &name, const ParameterDictionary &parameters,
+                       Float exposureTime, const CameraTransform &cameraTransform,
+                       Filter filter, const FileLoc *loc, Allocator alloc);
+
 };
 
 }  // namespace pbrt
