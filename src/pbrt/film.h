@@ -430,68 +430,9 @@ class GBufferFilm : public FilmBase {
     Float filterIntegral;
     SquareMatrix<3> outputRGBFromSensorRGB;
 };
-class LightfieldFilmWrapper : public GBufferFilm{
-    public:
 
 
 
-    // LightfieldFIlm (A pixel can have subpixels)
-    struct PixelComplex {
-        PixelComplex() = default;
-        double rgbSum[3] = {0., 0., 0.};
-        double weightSum = 0., gBufferWeightSum = 0.;
-        AtomicDouble rgbSplat[3];
-        Point3f pSum;
-        Float dzdxSum = 0, dzdySum = 0;
-        Normal3f nSum, nsSum;
-        Point2f uvSum;
-        double rgbAlbedoSum[3] = {0., 0., 0.};
-        VarianceEstimator<Float> rgbVariance[3];
-        SampledSpectrum L;
-        AtomicDouble *LSplat;
-        float materialId; // zhenyi
-        float instanceId; // zhenyi
-
-        std::vector<SubPixel> subpixels;
-
-    };
-
-     struct SubPixel {
-        SubPixel() = default;
-        AtomicDouble rgbSplat[3];
-        double weightSum = 0., gBufferWeightSum = 0.;
-        SampledSpectrum L;
- 
-    };
-  //GBufferFilm Public Methods
-    LightfieldFilmWrapper(FilmBaseParameters p, const AnimatedTransform &outputFromRender,
-                bool applyInverse, const RGBColorSpace *colorSpace,
-                Float maxComponentValue = Infinity, bool writeFP16 = true,
-                bool writeRadiance = true, bool writeBasis = true, int nbasis = 3,
-                bool writeAlbedo = true, bool writePosition = true,
-                bool writeDz = true, bool writeMaterial = true, bool writeInstance = true,
-                bool writeNormal = true, bool writeNs = true, bool writeVariance = true,
-                bool writeRelativeVariance = true,
-                Allocator alloc = {});
-
-    
-
-    //static LightfieldFilmWrapper *Create(std::unique_ptr<FilmBase> filmBase);
-    static LightfieldFilmWrapper *Create(const ParameterDictionary &parameters,
-                                 Float exposureTime,
-                                 const CameraTransform &cameraTransform, Filter filter,
-                                 const RGBColorSpace *colorSpace, const FileLoc *loc,
-                                 Allocator alloc);
-
-                                     
-
-    PBRT_CPU_GPU
-    void AddLightfieldSample(Ray raySensor, Point2i pFilm, SampledSpectrum L, const SampledWavelengths &lambda,
-                   const VisibleSurface *visibleSurface, Float weight);
-
-
-
-};
 // SpectralFilm Definition
 class SpectralFilm : public FilmBase {
   public:
@@ -565,7 +506,7 @@ class SpectralFilm : public FilmBase {
     void AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths &lambda);
 
     void WriteImage(ImageMetadata metadata, Float splatScale = 1);
-
+    
     // Returns an image with both RGB and spectral components, following
     // the layout proposed in "An OpenEXR Layout for Sepctral Images" by
     // Fichet et al., https://jcgt.org/published/0010/03/01/.
@@ -612,6 +553,73 @@ class SpectralFilm : public FilmBase {
     Array2D<Pixel> pixels;
     SquareMatrix<3> outputRGBFromSensorRGB;
 };
+
+
+class LightfieldFilmWrapper : public SpectralFilm {
+  public:
+ 
+
+    PBRT_CPU_GPU
+    void AddLightfieldSample(Ray raySensor, Point2i pFilm, SampledSpectrum L, const SampledWavelengths &lambda,
+                   const VisibleSurface *visibleSurface, Float weight);
+
+    LightfieldFilmWrapper(FilmBaseParameters p, Float lambdaMin, Float lambdaMax,
+                 int nBuckets, const RGBColorSpace *colorSpace,
+                 Float maxComponentValue = Infinity, bool writeFP16 = true,
+                 Allocator alloc = {});
+
+    static LightfieldFilmWrapper *Create(const ParameterDictionary &parameters, Float exposureTime,
+                                Filter filter, const RGBColorSpace *colorSpace,
+                                const FileLoc *loc, Allocator alloc);
+
+    RGB GetSubPixelRGB(Point2i p, int subpixel_index, Float splatScale) const;
+    void WriteImage(ImageMetadata metadata, Float splatScale);
+    Image GetImage(ImageMetadata *metadata, Float splatScale);
+    Image GetSubImage(ImageMetadata *metadata, int subpixel_index, Float splatScale);
+    
+  private:
+    // LightfieldFilm:: Subpixel complex Definition
+    struct SubPixel {
+        SubPixel() = default;
+        // Continue to store RGB, both to include in the final image as
+        // well as for previews during rendering.
+        double rgbSum[3] = {0., 0., 0.};
+        double rgbWeightSum = 0.;
+        AtomicDouble rgbSplat[3];
+        // The following will all have nBuckets entries.
+        double *bucketSums, *weightSums;
+        AtomicDouble *bucketSplats;
+    };
+
+    struct PixelComplex {
+        PixelComplex() = default;
+        std::vector<SubPixel> subpixels;
+    };
+
+    PBRT_CPU_GPU
+    int LambdaToBucket(Float lambda) const {
+        DCHECK_RARE(1e6f, lambda < lambdaMin || lambda > lambdaMax);
+        int bucket = nBuckets * (lambda - lambdaMin) / (lambdaMax - lambdaMin);
+        return Clamp(bucket, 0, nBuckets - 1);
+    }
+
+
+    // SpectralFilm Private Members
+    Array2D<PixelComplex> pixelcomplexes;
+
+     // SpectralFilm Private Members
+    const RGBColorSpace *colorSpace;
+    Float lambdaMin, lambdaMax;
+    int nBuckets;
+    Float maxComponentValue;
+    bool writeFP16;
+    Float filterIntegral;
+
+    SquareMatrix<3> outputRGBFromSensorRGB;
+
+};
+
+
 
 PBRT_CPU_GPU
 inline SampledWavelengths Film::SampleWavelengths(Float u) const {

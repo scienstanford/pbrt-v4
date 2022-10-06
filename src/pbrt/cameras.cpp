@@ -1604,6 +1604,7 @@ OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
     }
     // Compute exit pupil bounds at sampled points on the film
     int nSamples = 64;
+    nSamples = 1; // Thomas: remove this (debug)
     exitPupilBounds.resize(nSamples);
     ParallelFor(0, nSamples, [&](int i) {
         Float r0 = (Float)i / nSamples * film.Diagonal() / 2;
@@ -3188,7 +3189,7 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
     physicalExtent = Bounds2f(Point2f(-x / 2, -y / 2), Point2f(x / 2, y / 2));
 
     int nSamples = 64; 
-    nSamples=1;
+    nSamples=20;
     exitPupilBoundsRTF.resize(nSamples);
     
     ParallelFor(0, nSamples, [&](int64_t i) {

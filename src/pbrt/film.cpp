@@ -27,13 +27,11 @@
 #include <pbrt/util/spectrum.h>
 #include <pbrt/util/stats.h>
 #include <pbrt/util/transform.h>
+#include <Eigen/Dense>
 #include <iostream>
 #include <vector>
-#include <Eigen/Dense>
-
 
 using namespace std;
-
 
 #include <algorithm>
 #include <cstring>
@@ -199,8 +197,8 @@ VisibleSurface::VisibleSurface(const SurfaceInteraction &si, SampledSpectrum alb
     time = si.time;
     dpdx = si.dpdx;
     dpdy = si.dpdy;
-    materialId  = si.material.materialId; // zhenyi
-    instanceId  = si.instanceId; // zhenyi
+    materialId = si.material.materialId;  // zhenyi
+    instanceId = si.instanceId;           // zhenyi
 }
 
 std::string VisibleSurface::ToString() const {
@@ -528,7 +526,7 @@ void RGBFilm::WriteImage(ImageMetadata metadata, Float splatScale) {
     Image image = GetImage(&metadata, splatScale);
     LOG_VERBOSE("Writing image %s with bounds %s", filename, pixelBounds);
     image.Write(filename, metadata);
-    }
+}
 
 Image RGBFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     // Convert image to RGB and compute final pixel values
@@ -657,11 +655,10 @@ void GBufferFilm::AddSample(Point2i pFilm, SampledSpectrum L,
 GBufferFilm::GBufferFilm(FilmBaseParameters p, const AnimatedTransform &outputFromRender,
                          bool applyInverse, const RGBColorSpace *colorSpace,
                          Float maxComponentValue, bool writeFP16, bool writeRadiance,
-                         bool writeBasis, int nbasis,
-                         bool writeAlbedo, bool writePosition,
-                         bool writeDz, bool writeMaterial, bool writeInstance,
-                         bool writeNormal, bool writeNs, bool writeVariance,
-                         bool writeRelativeVariance,Allocator alloc)
+                         bool writeBasis, int nbasis, bool writeAlbedo,
+                         bool writePosition, bool writeDz, bool writeMaterial,
+                         bool writeInstance, bool writeNormal, bool writeNs,
+                         bool writeVariance, bool writeRelativeVariance, Allocator alloc)
     : FilmBase(p),
       outputFromRender(outputFromRender),
       applyInverse(applyInverse),
@@ -686,7 +683,6 @@ GBufferFilm::GBufferFilm(FilmBaseParameters p, const AnimatedTransform &outputFr
     filmPixelMemory += pixelBounds.Area() * sizeof(Pixel);
     outputRGBFromSensorRGB = colorSpace->RGBFromXYZ * sensor->XYZFromSensorRGB;
 }
-
 
 void GBufferFilm::AddSplat(Point2f p, SampledSpectrum v,
                            const SampledWavelengths &lambda) {
@@ -715,11 +711,10 @@ void GBufferFilm::AddSplat(Point2f p, SampledSpectrum v,
             for (int i = 0; i < 3; ++i)
                 pixel.rgbSplat[i].Add(wt * rgb[i]);
 
-            for (int i = 0; i < NSpectrumSamples; ++i){
+            for (int i = 0; i < NSpectrumSamples; ++i) {
                 pixel.LSplat[i].Add(wt * v[i]);
             }
         }
-
     }
 }
 
@@ -737,16 +732,19 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     // Only RGB is exported by default; Others are optional;
     vector<string> channelNames = {"R", "G", "B"};
     // zhenyi
-    //---------------------Provide options to select output type---------------------------------
+    //---------------------Provide options to select output
+    //type---------------------------------
     // create channel names
-    string RadianceChannelNames[31] = {"Radiance.C01", "Radiance.C02","Radiance.C03", "Radiance.C04", "Radiance.C05",
-                                    "Radiance.C06", "Radiance.C07", "Radiance.C08", "Radiance.C09", "Radiance.C10",
-                                    "Radiance.C11", "Radiance.C12", "Radiance.C13", "Radiance.C14", "Radiance.C15",
-                                    "Radiance.C16", "Radiance.C17", "Radiance.C18", "Radiance.C19", "Radiance.C20",
-                                    "Radiance.C21", "Radiance.C22", "Radiance.C23", "Radiance.C24", "Radiance.C25",
-                                    "Radiance.C26", "Radiance.C27", "Radiance.C28", "Radiance.C29", "Radiance.C30",
-                                    "Radiance.C31"};
-    string BasisChannelNames[5] = {"Coef.C01", "Coef.C02", "Coef.C03", "Coef.C04", "Coef.C05"};
+    string RadianceChannelNames[31] = {
+        "Radiance.C01", "Radiance.C02", "Radiance.C03", "Radiance.C04", "Radiance.C05",
+        "Radiance.C06", "Radiance.C07", "Radiance.C08", "Radiance.C09", "Radiance.C10",
+        "Radiance.C11", "Radiance.C12", "Radiance.C13", "Radiance.C14", "Radiance.C15",
+        "Radiance.C16", "Radiance.C17", "Radiance.C18", "Radiance.C19", "Radiance.C20",
+        "Radiance.C21", "Radiance.C22", "Radiance.C23", "Radiance.C24", "Radiance.C25",
+        "Radiance.C26", "Radiance.C27", "Radiance.C28", "Radiance.C29", "Radiance.C30",
+        "Radiance.C31"};
+    string BasisChannelNames[5] = {"Coef.C01", "Coef.C02", "Coef.C03", "Coef.C04",
+                                   "Coef.C05"};
     string AlbedoChannelNames[3] = {"Albedo.R", "Albedo.G", "Albedo.B"};
     string PositionChannelNames[3] = {"Px", "Py", "Pz"};
     string MaterialChannelNames[1] = {"MaterialId"};
@@ -755,72 +753,62 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     string NsChannelNames[3] = {"Nsx", "Nsy", "Nxz"};
     string DzChannelNames[2] = {"Dzx", "Dzy"};
     string VarianceChannelNames[3] = {"Variance.R", "Variance.G", "Variance.B"};
-    string RelativeVarianceChannelNames[3] = {"RelativeVariance.R", "RelativeVariance.G", "RelativeVariance.B"};
+    string RelativeVarianceChannelNames[3] = {"RelativeVariance.R", "RelativeVariance.G",
+                                              "RelativeVariance.B"};
     // check channel flag;
-    if (writeRadiance)
-    {
+    if (writeRadiance) {
         for (int i = 0; i < 31; i++) {
             channelNames.push_back(RadianceChannelNames[i]);
         }
     }
-    if (writeBasis)
-    {
+    if (writeBasis) {
         for (int i = 0; i < 5; i++) {
             channelNames.push_back(BasisChannelNames[i]);
         }
     }
-    if (writeAlbedo)
-    {
+    if (writeAlbedo) {
         for (int i = 0; i < 3; i++) {
             channelNames.push_back(AlbedoChannelNames[i]);
         }
     }
-    if (writePosition)
-    {
+    if (writePosition) {
         for (int i = 0; i < 3; i++) {
             channelNames.push_back(PositionChannelNames[i]);
         }
     }
-    if (writeMaterial)
-    {
+    if (writeMaterial) {
         channelNames.push_back(MaterialChannelNames[0]);
     }
-    if (writeInstance)
-    {
+    if (writeInstance) {
         channelNames.push_back(InstanceChannelNames[0]);
     }
-    if (writeDz)
-    {
+    if (writeDz) {
         for (int i = 0; i < 2; i++) {
             channelNames.push_back(DzChannelNames[i]);
         }
     }
-    if (writeNs)
-    {
+    if (writeNs) {
         for (int i = 0; i < 3; i++) {
             channelNames.push_back(NsChannelNames[i]);
         }
     }
-    if (writeNormal)
-    {
+    if (writeNormal) {
         for (int i = 0; i < 3; i++) {
             channelNames.push_back(NormalChannelNames[i]);
         }
     }
-    if (writeVariance)
-    {
+    if (writeVariance) {
         for (int i = 0; i < 3; i++) {
             channelNames.push_back(VarianceChannelNames[i]);
         }
     }
-    if (writeRelativeVariance)
-    {
+    if (writeRelativeVariance) {
         for (int i = 0; i < 3; i++) {
             channelNames.push_back(RelativeVarianceChannelNames[i]);
         }
     }
 
-    Image image(format, Point2i(pixelBounds.Diagonal()), channelNames); // zhenyi
+    Image image(format, Point2i(pixelBounds.Diagonal()), channelNames);  // zhenyi
     ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
 
     // initialize a matrix for storing spectral data
@@ -854,35 +842,34 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
         Point2f uv = pixel.uvSum;
         Float dzdx = pixel.dzdxSum, dzdy = pixel.dzdySum;
         SampledSpectrum L = pixel.L;
-        
+
         if (weightSum != 0) {
             rgb /= weightSum;
             albedoRgb /= weightSum;
-            L /=weightSum;
+            L /= weightSum;
         }
         if (gBufferWeightSum != 0) {
             pt /= gBufferWeightSum;
             uv /= gBufferWeightSum;
             dzdx /= gBufferWeightSum;
             dzdy /= gBufferWeightSum;
-            
         }
 
         // Add splat value at pixel
-        
+
         for (int c = 0; c < 3; ++c)
             rgb[c] += splatScale * pixel.rgbSplat[c] / filterIntegral;
 
         rgb = outputRGBFromSensorRGB * rgb;
 
         // Add splat value at pixel for radiance
-        if (pixel.LSplat !=0) {
-            for (int c = 0; c < NSpectrumSamples; ++c){
+        if (pixel.LSplat != 0) {
+            for (int c = 0; c < NSpectrumSamples; ++c) {
                 L[c] += splatScale * pixel.LSplat[c] / filterIntegral;
             }
         }
 
-        for (int c = 0; c < NSpectrumSamples; ++c){
+        for (int c = 0; c < NSpectrumSamples; ++c) {
             if (writeFP16 && L[c] > 65504) {
                 L[c] = 65504;
                 ++nClamped;
@@ -901,7 +888,6 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
 
         Point2i pOffset(p.x - pixelBounds.pMin.x, p.y - pixelBounds.pMin.y);
 
-
         Normal3f n =
             LengthSquared(pixel.nSum) > 0 ? Normalize(pixel.nSum) : Normal3f(0, 0, 0);
         Normal3f ns =
@@ -909,84 +895,70 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
 
         image.SetChannels(pOffset, rgbDesc, {rgb[0], rgb[1], rgb[2]});
         //  set channels values based on users options --zhenyi
-        if (writeAlbedo)
-        {
+        if (writeAlbedo) {
             ImageChannelDesc albedoRgbDesc = image.GetChannelDesc(AlbedoChannelNames);
             image.SetChannels(pOffset, albedoRgbDesc,
-                            {albedoRgb[0], albedoRgb[1], albedoRgb[2]});
+                              {albedoRgb[0], albedoRgb[1], albedoRgb[2]});
         }
-        if (writeRadiance)
-        {
+        if (writeRadiance) {
             ImageChannelDesc radianceDesc = image.GetChannelDesc(RadianceChannelNames);
-            if (NSpectrumSamples==31)
-            {
-                image.SetChannels(pOffset, radianceDesc, {L[0], L[1], L[2], L[3], L[4], L[5],
-                                L[6], L[7], L[8], L[9], L[10], L[11],
-                                L[12], L[13], L[14], L[15],L[16], L[17], L[18], L[19], L[20],
-                                L[21], L[22], L[23], L[24], L[25], L[26],
-                                L[27], L[28], L[29], L[30]});
+            if (NSpectrumSamples == 31) {
+                image.SetChannels(pOffset, radianceDesc,
+                                  {L[0],  L[1],  L[2],  L[3],  L[4],  L[5],  L[6],  L[7],
+                                   L[8],  L[9],  L[10], L[11], L[12], L[13], L[14], L[15],
+                                   L[16], L[17], L[18], L[19], L[20], L[21], L[22], L[23],
+                                   L[24], L[25], L[26], L[27], L[28], L[29], L[30]});
             }
-            if (NSpectrumSamples==16)
-            {
-                image.SetChannels(pOffset, radianceDesc, {L[0], L[1], L[2], L[3], L[4], L[5],
-                                L[6], L[7], L[8], L[9], L[10], L[11],
-                                L[12], L[13], L[14], L[15]});
+            if (NSpectrumSamples == 16) {
+                image.SetChannels(pOffset, radianceDesc,
+                                  {L[0], L[1], L[2], L[3], L[4], L[5], L[6], L[7], L[8],
+                                   L[9], L[10], L[11], L[12], L[13], L[14], L[15]});
             }
-
         }
-        if (writeBasis)
-        {
+        if (writeBasis) {
             int thisIndex = pOffset.y + num_y * pOffset.x;
-            for (int wave = 0; wave <NSpectrumSamples; wave++)
-            {
+            for (int wave = 0; wave < NSpectrumSamples; wave++) {
                 spectralData(thisIndex, wave) = L[wave];
             }
         }
-        if (writePosition)
-        {
+        if (writePosition) {
             ImageChannelDesc pDesc = image.GetChannelDesc(PositionChannelNames);
             image.SetChannels(pOffset, pDesc, {pt.x, pt.y, pt.z});
         }
-        if (writeMaterial)
-        {
+        if (writeMaterial) {
             ImageChannelDesc materialDesc = image.GetChannelDesc(MaterialChannelNames);
             image.SetChannels(pOffset, materialDesc, {pixel.materialId});
         }
-        if (writeInstance)
-        {
+        if (writeInstance) {
             ImageChannelDesc instanceDesc = image.GetChannelDesc(InstanceChannelNames);
             image.SetChannels(pOffset, instanceDesc, {pixel.instanceId});
         }
-        if (writeDz)
-        {
+        if (writeDz) {
             ImageChannelDesc dzDesc = image.GetChannelDesc(DzChannelNames);
             image.SetChannels(pOffset, dzDesc, {std::abs(dzdx), std::abs(dzdy)});
         }
-        if (writeNs)
-        {
+        if (writeNs) {
             ImageChannelDesc nsDesc = image.GetChannelDesc(NsChannelNames);
             image.SetChannels(pOffset, nsDesc, {ns.x, ns.y, ns.z});
         }
-        if (writeNormal)
-        {
+        if (writeNormal) {
             ImageChannelDesc nDesc = image.GetChannelDesc(NormalChannelNames);
             image.SetChannels(pOffset, nDesc, {n.x, n.y, n.z});
         }
-        if (writeVariance)
-        {
+        if (writeVariance) {
             ImageChannelDesc varianceDesc = image.GetChannelDesc(VarianceChannelNames);
             image.SetChannels(
                 pOffset, varianceDesc,
                 {pixel.rgbVariance[0].Variance(), pixel.rgbVariance[1].Variance(),
-                pixel.rgbVariance[2].Variance()});
+                 pixel.rgbVariance[2].Variance()});
         }
-        if (writeRelativeVariance)
-        {
-            ImageChannelDesc relVarianceDesc = image.GetChannelDesc(RelativeVarianceChannelNames);
+        if (writeRelativeVariance) {
+            ImageChannelDesc relVarianceDesc =
+                image.GetChannelDesc(RelativeVarianceChannelNames);
             image.SetChannels(pOffset, relVarianceDesc,
-                            {pixel.rgbVariance[0].RelativeVariance(),
-                            pixel.rgbVariance[1].RelativeVariance(),
-                            pixel.rgbVariance[2].RelativeVariance()});
+                              {pixel.rgbVariance[0].RelativeVariance(),
+                               pixel.rgbVariance[1].RelativeVariance(),
+                               pixel.rgbVariance[2].RelativeVariance()});
         }
     });
     // if writeSpectralBasis is enabled, coefficients file needs to written out seperately
@@ -999,13 +971,12 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
             new_basis.col(i) = basis.col(i);
         }
 
-
         Eigen::MatrixXf coef = spectralData * new_basis;
 
         // write basis and coef out in a binary file
         int extPos = filename.find_last_of(".");
-        string basisFilename = filename.substr(0,extPos) + "_basis.dat";
-        FILE * basisData;
+        string basisFilename = filename.substr(0, extPos) + "_basis.dat";
+        FILE *basisData;
         basisData = fopen(basisFilename.c_str(), "wb");
 
         ParallelFor2D(pixelBounds, [&](Point2i p) {
@@ -1018,11 +989,9 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
             }
         });
 
-        //Write binary basis
-        for (int col = 0; col < nbasis; col++)
-        {
-            for (int b_row = 0; b_row < new_basis.rows(); b_row++)
-            {
+        // Write binary basis
+        for (int col = 0; col < nbasis; col++) {
+            for (int b_row = 0; b_row < new_basis.rows(); b_row++) {
                 float b = new_basis(b_row, col);
                 fwrite(&b, 1, sizeof(b), basisData);
             }
@@ -1032,7 +1001,6 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
 
     if (nClamped.load() > 0)
         Warning("%d pixel values clamped to maximum fp16 value.", nClamped.load());
-
 
     metadata->pixelBounds = pixelBounds;
     metadata->fullResolution = fullResolution;
@@ -1094,95 +1062,327 @@ GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
                   "or \"world\".)",
                   coordinateSystem);
 
-    return alloc.new_object<GBufferFilm>(filmBaseParameters, outputFromRender,
-                                         applyInverse, colorSpace, maxComponentValue,
-                                         writeFP16, writeRadiance, writeBasis, nbasis,
-                                         writeAlbedo, writePosition,
-                                         writeDz, writeMaterial, writeInstance,
-                                         writeNormal, writeNs, writeVariance,
-                                         writeRelativeVariance, alloc);
+    return alloc.new_object<GBufferFilm>(
+        filmBaseParameters, outputFromRender, applyInverse, colorSpace, maxComponentValue,
+        writeFP16, writeRadiance, writeBasis, nbasis, writeAlbedo, writePosition, writeDz,
+        writeMaterial, writeInstance, writeNormal, writeNs, writeVariance,
+        writeRelativeVariance, alloc);
 }
 
-LightfieldFilmWrapper::LightfieldFilmWrapper(FilmBaseParameters p, const AnimatedTransform &outputFromRender,
-                         bool applyInverse, const RGBColorSpace *colorSpace,
-                         Float maxComponentValue, bool writeFP16, bool writeRadiance,
-                         bool writeBasis, int nbasis,
-                         bool writeAlbedo, bool writePosition,
-                         bool writeDz, bool writeMaterial, bool writeInstance,
-                         bool writeNormal, bool writeNs, bool writeVariance,
-                         bool writeRelativeVariance,Allocator alloc)
-    : GBufferFilm(p,outputFromRender,applyInverse,colorSpace,maxComponentValue,
-    writeFP16,writeRadiance,writeBasis,nbasis,writeAlbedo,writePosition,writeDz,
-    writeMaterial,writeInstance,writeNormal,writeNs,writeVariance,writeRelativeVariance,alloc){}
+LightfieldFilmWrapper::LightfieldFilmWrapper(FilmBaseParameters p, Float lambdaMin,
+                                             Float lambdaMax, int nBuckets,
+                                             const RGBColorSpace *colorSpace,
+                                             Float maxComponentValue, bool writeFP16,
+                                             Allocator alloc)
+    : SpectralFilm(p, lambdaMin, lambdaMax, nBuckets, colorSpace, maxComponentValue,
+                   writeFP16, alloc),
+      pixelcomplexes(p.pixelBounds, alloc),
+      colorSpace(colorSpace),
+      lambdaMin(lambdaMin),
+      lambdaMax(lambdaMax),
+      nBuckets(nBuckets),
+      maxComponentValue(maxComponentValue),
+      writeFP16(writeFP16) {
+    filterIntegral = filter.Integral();
+    // Compute _outputRGBFromSensorRGB_ matrix
 
+    CHECK(!pixelBounds.IsEmpty());
+    filmPixelMemory +=
+        pixelBounds.Area() * (sizeof(PixelComplex) + 3 * nBuckets * sizeof(double));
 
-LightfieldFilmWrapper *LightfieldFilmWrapper::Create(const ParameterDictionary &parameters,
-                                 Float exposureTime,
-                                 const CameraTransform &cameraTransform, Filter filter,
-                                 const RGBColorSpace *colorSpace, const FileLoc *loc,
-                                 Allocator alloc) {
-    Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
-    bool writeFP16 = parameters.GetOneBool("savefp16", true);
-    // zhenyi
-    //---------------------------------------------------------------
-    bool writeRadiance = parameters.GetOneBool("saveRadiance", true);
-    bool writeBasis = parameters.GetOneBool("saveRadianceAsBasis", false);
-    int nbasis = parameters.GetOneInt("numBasis", 3);
-    bool writeAlbedo = parameters.GetOneBool("saveAlbedo", false);
-    bool writePosition = parameters.GetOneBool("saveDepth", false);
-    bool writeDz = parameters.GetOneBool("saveDz", false);
-    bool writeMaterial = parameters.GetOneBool("saveMaterial", false);
-    bool writeInstance = parameters.GetOneBool("saveInstance", false);
-    bool writeNormal = parameters.GetOneBool("saveNormal", false);
-    bool writeNs = parameters.GetOneBool("saveNs", false);
-    bool writeVariance = parameters.GetOneBool("saveVariance", false);
-    bool writeRelativeVariance = parameters.GetOneBool("saveRelativeVariance", false);
-    //-----------------------------------------------------------------
+    int nbSubpixels = 2;
 
+    // Allocate memory for the pixel buffers in big arrays. Note that it's
+    // wasteful (but convenient) to be storing three pointers in each
+    // SpectralFilm::Pixel structure since the addresses could be computed
+    // based on the base pointers and pixel coordinates.
+    int nPixels = pixelBounds.Area();
+    double *bucketWeightBuffer = alloc.allocate_object<double>(2 * nBuckets * nPixels*nbSubpixels);
+    std::memset(
+        bucketWeightBuffer, 0,
+        2 * nBuckets * nPixels * nbSubpixels * sizeof(double));  // include subpixels
+    AtomicDouble *splatBuffer =
+        alloc.allocate_object<AtomicDouble>(nBuckets * nPixels * nbSubpixels);
+    std::memset(splatBuffer, 0, nBuckets * nbSubpixels *nPixels * sizeof(double));
+
+    for (Point2i p : pixelBounds) {
+        PixelComplex &pixel = pixelcomplexes[p];
+
+        pixel.subpixels = std::vector<SubPixel>(nbSubpixels);
+
+        // Allocoate resources for subpixels
+        for (int sp = 0; sp < pixel.subpixels.size(); sp++) {
+            pixel.subpixels[sp].bucketSums = bucketWeightBuffer;
+            bucketWeightBuffer += nBuckets;
+
+            pixel.subpixels[sp].weightSums = bucketWeightBuffer;
+            bucketWeightBuffer += nBuckets;
+
+            pixel.subpixels[sp].bucketSplats = splatBuffer;
+            splatBuffer += NSpectrumSamples;
+        }
+        auto aa = pixel.subpixels[1].bucketSums;
+        int bb = 2;
+    }
+}
+void LightfieldFilmWrapper::WriteImage(ImageMetadata metadata, Float splatScale) {
+    for (int sp = 0; sp < 2; sp++) {
+        Image image = GetSubImage(&metadata, sp, splatScale);
+        LOG_VERBOSE("Writing image %s with bounds %s", filename, pixelBounds);
+        std::cout << filename;
+        image.Write("pbrt" + std::to_string(sp) + ".exr", metadata);
+    }
+}
+RGB LightfieldFilmWrapper::GetSubPixelRGB(Point2i p, int subpixel_index,
+                                          Float splatScale) const {
+    // Note: this is effectively the same as RGBFilm::GetPixelRGB
+
+    const PixelComplex &pixel = pixelcomplexes[p];
+    RGB rgb(pixel.subpixels[subpixel_index].rgbSum[0],
+            pixel.subpixels[subpixel_index].rgbSum[1],
+            pixel.subpixels[subpixel_index].rgbSum[2]);
+    // Normalize _rgb_ with weight sum
+    Float weightSum = pixel.subpixels[subpixel_index].rgbWeightSum;
+    if (weightSum != 0)
+        rgb /= weightSum;
+
+    // Add splat value at pixel //
+    for (int c = 0; c < 3; ++c)
+        rgb[c] +=
+            splatScale * pixel.subpixels[subpixel_index].rgbSplat[c] / filterIntegral;
+
+    // Convert _rgb_ to output RGB color space
+    rgb = outputRGBFromSensorRGB * rgb;
+
+    return rgb;
+}
+
+Image LightfieldFilmWrapper::GetSubImage(ImageMetadata *metadata, int subpixel_index,
+                                         Float splatScale) {
+    // Convert image to RGB and compute final pixel values
+    LOG_VERBOSE("Computing final weighted pixel values");
+    PixelFormat format = writeFP16 ? PixelFormat::Half : PixelFormat::Float;
+
+    std::vector<std::string> imageChannels{{"R", "G", "B"}};
+    for (int i = 0; i < nBuckets; ++i) {
+        // The OpenEXR spectral layout takes the bucket center (and then
+        // determines bucket widths based on the neighbor wavelengths).
+        std::string lambda =
+            StringPrintf("%.3fnm", Lerp((i + 0.5f) / nBuckets, lambdaMin, lambdaMax));
+        // Convert any '.' to ',' in the number since OpenEXR uses '.' for
+        // separating layers.
+        std::replace(lambda.begin(), lambda.end(), '.', ',');
+
+        imageChannels.push_back("S0." + lambda);
+    }
+    Image image(format, Point2i(pixelBounds.Diagonal()), imageChannels);
+
+    std::atomic<int> nClamped{0};
+    ParallelFor2D(pixelBounds, [&](Point2i p) {
+        PixelComplex &pixel = pixelcomplexes[p];
+        int sp = subpixel_index;
+        RGB rgb = GetSubPixelRGB(p, sp, splatScale);
+
+        // Clamp to max representable fp16 to avoid Infs
+        if (writeFP16) {
+            for (int c = 0; c < 3; ++c) {
+                if (rgb[c] > 65504) {
+                    rgb[c] = 65504;
+                    ++nClamped;
+                }
+            }
+        }
+
+        Point2i pOffset(p.x - pixelBounds.pMin.x, p.y - pixelBounds.pMin.y);
+        image.SetChannels(pOffset, {rgb[0], rgb[1], rgb[2]});
+
+        // Set spectral channels. Hardcoded assuming that they come
+        // immediately after RGB, as is currently specified above.
+        for (int i = 0; i < nBuckets; ++i) {
+            Float c = 0;
+            if (pixel.subpixels[sp].weightSums[i] > 0) {
+                c = pixel.subpixels[sp].bucketSums[i] /
+                        pixel.subpixels[sp].weightSums[i] +
+                    splatScale * pixel.subpixels[sp].bucketSplats[i] / filterIntegral;
+                if (writeFP16 && c > 65504) {
+                    c = 65504;
+                    ++nClamped;
+                }
+            }
+            image.SetChannel(pOffset, 3 + i, c);
+        }
+    });
+
+    if (nClamped.load() > 0)
+        Warning("%d pixel values clamped to maximum fp16 value.", nClamped.load());
+
+    metadata->pixelBounds = pixelBounds;
+    metadata->fullResolution = fullResolution;
+    metadata->colorSpace = colorSpace;
+    metadata->strings["spectralLayoutVersion"] = "1.0";
+    // FIXME: if the RealisticCamera is being used, then we're actually
+    // storing "J.m^-2", but that isn't a supported value for
+    // "emissiveUnits" in the spec.
+    metadata->strings["emissiveUnits"] = "W.m^-2.sr^-1";
+
+    return image;
+}
+
+Image LightfieldFilmWrapper::GetImage(ImageMetadata *metadata, Float splatScale) {
+    // Convert image to RGB and compute final pixel values
+    LOG_VERBOSE("Computing final weighted pixel values");
+    PixelFormat format = writeFP16 ? PixelFormat::Half : PixelFormat::Float;
+
+    std::vector<std::string> imageChannels{{"R", "G", "B"}};
+    for (int i = 0; i < nBuckets; ++i) {
+        // The OpenEXR spectral layout takes the bucket center (and then
+        // determines bucket widths based on the neighbor wavelengths).
+        std::string lambda =
+            StringPrintf("%.3fnm", Lerp((i + 0.5f) / nBuckets, lambdaMin, lambdaMax));
+        // Convert any '.' to ',' in the number since OpenEXR uses '.' for
+        // separating layers.
+        std::replace(lambda.begin(), lambda.end(), '.', ',');
+
+        imageChannels.push_back("S0." + lambda);
+    }
+    Image image(format, Point2i(pixelBounds.Diagonal()), imageChannels);
+
+    std::atomic<int> nClamped{0};
+    ParallelFor2D(pixelBounds, [&](Point2i p) {
+        PixelComplex &pixel = pixelcomplexes[p];
+        int sp = 0;
+        RGB rgb = GetSubPixelRGB(p, sp, splatScale);
+
+        // Clamp to max representable fp16 to avoid Infs
+        if (writeFP16) {
+            for (int c = 0; c < 3; ++c) {
+                if (rgb[c] > 65504) {
+                    rgb[c] = 65504;
+                    ++nClamped;
+                }
+            }
+        }
+
+        Point2i pOffset(p.x - pixelBounds.pMin.x, p.y - pixelBounds.pMin.y);
+        image.SetChannels(pOffset, {rgb[0], rgb[1], rgb[2]});
+
+        // Set spectral channels. Hardcoded assuming that they come
+        // immediately after RGB, as is currently specified above.
+        for (int i = 0; i < nBuckets; ++i) {
+            Float c = 0;
+            if (pixel.subpixels[sp].weightSums[i] > 0) {
+                c = pixel.subpixels[sp].bucketSums[i] /
+                        pixel.subpixels[sp].weightSums[i] +
+                    splatScale * pixel.subpixels[sp].bucketSplats[i] / filterIntegral;
+                if (writeFP16 && c > 65504) {
+                    c = 65504;
+                    ++nClamped;
+                }
+            }
+            image.SetChannel(pOffset, 3 + i, c);
+        }
+    });
+
+    if (nClamped.load() > 0)
+        Warning("%d pixel values clamped to maximum fp16 value.", nClamped.load());
+
+    metadata->pixelBounds = pixelBounds;
+    metadata->fullResolution = fullResolution;
+    metadata->colorSpace = colorSpace;
+    metadata->strings["spectralLayoutVersion"] = "1.0";
+    // FIXME: if the RealisticCamera is being used, then we're actually
+    // storing "J.m^-2", but that isn't a supported value for
+    // "emissiveUnits" in the spec.
+    metadata->strings["emissiveUnits"] = "W.m^-2.sr^-1";
+
+    return image;
+}
+
+void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
+                                                SampledSpectrum L,
+                                                const SampledWavelengths &lambda,
+                                                const VisibleSurface *visibleSurface,
+                                                Float weight) {
+    AddSample(pFilm, L, lambda, visibleSurface, weight);
+    auto dir = raySensor.d;
+    dir = Normalize(dir);
+
+    // Hard code distributor (index of subpixel)
+    double distributor[2] = {0.0, 1.0};
+    if (dir.x > 0) {
+        distributor[0] = 1.0;
+        distributor[1] = 0.0;
+    }
+
+    // Start by doing more or less what RGBFilm::AddSample() does so
+    // that we can maintain accurate RGB values.
+
+    // Convert sample radiance to _PixelSensor_ RGB
+    RGB rgb = sensor->ToSensorRGB(L, lambda);
+
+    // Optionally clamp sensor RGB value
+    Float m = std::max({rgb.r, rgb.g, rgb.b});
+    if (m > maxComponentValue)
+        rgb *= maxComponentValue / m;
+
+    DCHECK(InsideExclusive(pFilm, pixelBounds));
+    // Update RGB fields in Pixel structure.
+    PixelComplex &pixel = pixelcomplexes[pFilm];
+
+    for (int sp = 0; sp < pixel.subpixels.size(); ++sp) {
+        
+        for (int c = 0; c < 3; ++c)
+            pixel.subpixels[sp].rgbSum[c] += weight * rgb[c] * distributor[sp];
+        pixel.subpixels[sp].rgbWeightSum += weight;  // Thomas distributor also needed?
+
+        // Spectral processing starts here.
+        // Optionally clamp spectral value. (TODO: for spectral should we
+        // just clamp channels individually?)
+        Float lm = L.MaxComponentValue();
+        if (lm > maxComponentValue)
+            L *= maxComponentValue / lm;
+
+        // The CIE_Y_integral factor effectively cancels out the effect of
+        // the conversion of light sources to use photometric units for
+        // specification.  We then do *not* divide by the PDF in |lambda|
+        // but take advantage of the fact that we know that it is uniform
+        // in SampleWavelengths(), the fact that the buckets all have the
+        // same extend, and can then just average radiance in buckets
+        // below.
+        L *= weight * CIE_Y_integral;
+        
+        // Accumulate contributions in spectral buckets.
+        for (int i = 0; i < NSpectrumSamples; ++i) {
+            int b = LambdaToBucket(lambda[i]);
+            
+            auto t  =distributor[sp] * L[i];
+            pixel.subpixels[sp].bucketSums[b] += distributor[sp] * L[i];
+           // pixel.subpixels[sp].weightSums[b] += weight;  // Thomas: add distributor here?
+        }
+    }
+}
+
+LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
+    const ParameterDictionary &parameters, Float exposureTime, Filter filter,
+    const RGBColorSpace *colorSpace, const FileLoc *loc, Allocator alloc) {
     PixelSensor *sensor =
         PixelSensor::Create(parameters, colorSpace, exposureTime, loc, alloc);
-
     FilmBaseParameters filmBaseParameters(parameters, filter, sensor, loc);
+    bool writeFP16 = parameters.GetOneBool("savefp16", true);
 
     if (!HasExtension(filmBaseParameters.filename, "exr"))
-        ErrorExit(loc, "%s: EXR is the only format supported by the GBufferFilm.",
+        ErrorExit(loc, "%s: EXR is the only output format supported by the SpectralFilm.",
                   filmBaseParameters.filename);
 
-    std::string coordinateSystem = parameters.GetOneString("coordinatesystem", "camera");
-    AnimatedTransform outputFromRender;
-    bool applyInverse = false;
-    if (coordinateSystem == "camera") {
-        outputFromRender = cameraTransform.RenderFromCamera();
-        applyInverse = true;
-    } else if (coordinateSystem == "world")
-        outputFromRender = AnimatedTransform(cameraTransform.WorldFromRender());
-    else
-        ErrorExit(loc,
-                  "%s: unknown coordinate system for GBufferFilm. (Expecting \"camera\" "
-                  "or \"world\".)",
-                  coordinateSystem);
+    int nBuckets = parameters.GetOneInt("nbuckets", 16);
+    Float lambdaMin = parameters.GetOneFloat("lambdamin", Lambda_min);
+    Float lambdaMax = parameters.GetOneFloat("lambdamax", Lambda_max);
+    Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
 
-    return alloc.new_object<LightfieldFilmWrapper>(filmBaseParameters, outputFromRender,
-                                         applyInverse, colorSpace, maxComponentValue,
-                                         writeFP16, writeRadiance, writeBasis, nbasis,
-                                         writeAlbedo, writePosition,
-                                         writeDz, writeMaterial, writeInstance,
-                                         writeNormal, writeNs, writeVariance,
-                                         writeRelativeVariance, alloc);
+    return alloc.new_object<LightfieldFilmWrapper>(filmBaseParameters, lambdaMin,
+                                                   lambdaMax, nBuckets, colorSpace,
+                                                   maxComponentValue, writeFP16, alloc);
 }
-
-void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm, SampledSpectrum L,
-                            const SampledWavelengths &lambda,
-                            const VisibleSurface *visibleSurface, Float weight) {
-            //AddSample(pFilm,L,lambda,visibleSurface,weight);
-
-
-            auto dir = raySensor.d ;
-            dir = Normalize(dir);
-            std::cout << "Recorded angle of ray" << dir << "\n"; 
-            
-}
-
 
 // SpectralFilm Method Definitions
 SpectralFilm::SpectralFilm(FilmBaseParameters p, Float lambdaMin, Float lambdaMax,
@@ -1201,7 +1401,8 @@ SpectralFilm::SpectralFilm(FilmBaseParameters p, Float lambdaMin, Float lambdaMa
 
     filterIntegral = filter.Integral();
     CHECK(!pixelBounds.IsEmpty());
-    filmPixelMemory += pixelBounds.Area() * (sizeof(Pixel) + 3 * nBuckets * sizeof(double));
+    filmPixelMemory +=
+        pixelBounds.Area() * (sizeof(Pixel) + 3 * nBuckets * sizeof(double));
 
     // Allocate memory for the pixel buffers in big arrays. Note that it's
     // wasteful (but convenient) to be storing three pointers in each
@@ -1244,7 +1445,8 @@ RGB SpectralFilm::GetPixelRGB(Point2i p, Float splatScale) const {
     return rgb;
 }
 
-void SpectralFilm::AddSplat(Point2f p, SampledSpectrum L, const SampledWavelengths &lambda) {
+void SpectralFilm::AddSplat(Point2f p, SampledSpectrum L,
+                            const SampledWavelengths &lambda) {
     // This, too, is similar to RGBFilm::AddSplat(), with additions for
     // spectra.
 
@@ -1304,8 +1506,8 @@ Image SpectralFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     for (int i = 0; i < nBuckets; ++i) {
         // The OpenEXR spectral layout takes the bucket center (and then
         // determines bucket widths based on the neighbor wavelengths).
-        std::string lambda = StringPrintf("%.3fnm",
-                                          Lerp((i + 0.5f) / nBuckets, lambdaMin, lambdaMax));
+        std::string lambda =
+            StringPrintf("%.3fnm", Lerp((i + 0.5f) / nBuckets, lambdaMin, lambdaMax));
         // Convert any '.' to ',' in the number since OpenEXR uses '.' for
         // separating layers.
         std::replace(lambda.begin(), lambda.end(), '.', ',');
@@ -1365,14 +1567,16 @@ Image SpectralFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
 }
 
 std::string SpectralFilm::ToString() const {
-    return StringPrintf(
-        "[ SpectralFilm %s lambdaMin: %f lambdaMax: %f nBuckets: %d writeFP16: %s maxComponentValue: %f ]",
-        BaseToString(), lambdaMin, lambdaMax, nBuckets, writeFP16, maxComponentValue);
+    return StringPrintf("[ SpectralFilm %s lambdaMin: %f lambdaMax: %f nBuckets: %d "
+                        "writeFP16: %s maxComponentValue: %f ]",
+                        BaseToString(), lambdaMin, lambdaMax, nBuckets, writeFP16,
+                        maxComponentValue);
 }
 
-SpectralFilm *SpectralFilm::Create(const ParameterDictionary &parameters, Float exposureTime,
-                                   Filter filter, const RGBColorSpace *colorSpace,
-                                   const FileLoc *loc, Allocator alloc) {
+SpectralFilm *SpectralFilm::Create(const ParameterDictionary &parameters,
+                                   Float exposureTime, Filter filter,
+                                   const RGBColorSpace *colorSpace, const FileLoc *loc,
+                                   Allocator alloc) {
     PixelSensor *sensor =
         PixelSensor::Create(parameters, colorSpace, exposureTime, loc, alloc);
     FilmBaseParameters filmBaseParameters(parameters, filter, sensor, loc);
@@ -1387,8 +1591,9 @@ SpectralFilm *SpectralFilm::Create(const ParameterDictionary &parameters, Float 
     Float lambdaMax = parameters.GetOneFloat("lambdamax", Lambda_max);
     Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
 
-    return alloc.new_object<SpectralFilm>(filmBaseParameters, lambdaMin, lambdaMax, nBuckets,
-                                          colorSpace, maxComponentValue, writeFP16, alloc);
+    return alloc.new_object<SpectralFilm>(filmBaseParameters, lambdaMin, lambdaMax,
+                                          nBuckets, colorSpace, maxComponentValue,
+                                          writeFP16, alloc);
 }
 
 Film Film::Create(const std::string &name, const ParameterDictionary &parameters,
@@ -1401,12 +1606,12 @@ Film Film::Create(const std::string &name, const ParameterDictionary &parameters
     else if (name == "gbuffer")
         film = GBufferFilm::Create(parameters, exposureTime, cameraTransform, filter,
                                    parameters.ColorSpace(), loc, alloc);
-    else if (name == "lightfieldgbuffer"){
-        std::cout << "Lightfield Gbuffer Film" << "\n";
-        film = LightfieldFilmWrapper::Create(parameters, exposureTime, cameraTransform, filter,
-                                   parameters.ColorSpace(), loc, alloc);
-    }
-    else if (name == "spectral")
+    else if (name == "lightfield") {
+        std::cout << "Lightfield Gbuffer Film"
+                  << "\n";
+        film = LightfieldFilmWrapper::Create(parameters, exposureTime, filter,
+                                             parameters.ColorSpace(), loc, alloc);
+    } else if (name == "spectral")
         film = SpectralFilm::Create(parameters, exposureTime, filter,
                                     parameters.ColorSpace(), loc, alloc);
     else
