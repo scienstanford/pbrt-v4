@@ -1043,7 +1043,7 @@ inline pstd::optional<std::pair<CameraRay,CameraRay>> LightfieldCamera::Generate
 // But then I get NAN errors my renderings which I cannot explain
 // So for now i will break the polymorphism . 
 // Only woskf or RTF Camera
-    auto generate = [&](auto ptr) { return ((RTFCamera*)ptr)->GenerateRayIO(sample, lambda); };
+    auto generate = [&](auto ptr) { return ((OmniCamera*)ptr)->GenerateRayIO(sample, lambda); };
     return Dispatch(generate);
 }
 
