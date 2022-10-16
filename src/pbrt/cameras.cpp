@@ -1635,7 +1635,6 @@ Float OmniCamera::TToBackLens(const Ray &rCamera,
     bool isStop = false;
     Float elementZ = -element.thickness;
     IntersectResult result = TraceElement(element, rLens, elementZ, t, n, isStop, bounds);
-    // printf("isStop: %d \n", isStop);
     if (result != HIT)
         return Infinity;
     return t;
@@ -2244,7 +2243,6 @@ OmniCamera::MicrolensElement OmniCamera::MicrolensElementFromIndex(const Point2f
     }
     // A Rectangle is used to bound the area of the microlens
     element.centeredBounds = ConvexQuadf(corners[0], corners[1], corners[2], corners[3]);
-    // element.centeredBounds = ConvexQuadf(corners);
     return element;
 }
 
