@@ -1131,6 +1131,8 @@ void LightfieldFilmWrapper::WriteImage(ImageMetadata metadata, Float splatScale)
         LOG_VERBOSE("Writing image %s with bounds %s", filename, pixelBounds);
         std::cout << filename;
         image.Write("pbrt" + std::to_string(sp) + ".exr", metadata);
+        image.Write("pbrt" + std::to_string(sp) + ".png", metadata);
+        
     }
 }
 RGB LightfieldFilmWrapper::GetSubPixelRGB(Point2i p, int subpixel_index,

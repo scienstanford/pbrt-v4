@@ -227,7 +227,7 @@ class FilmBase {
     void AddLightfieldSample(Ray raySensor, Point2i pFilm, SampledSpectrum L,
                             const SampledWavelengths &lambda,
                             const VisibleSurface *visibleSurface, Float weight) {
-            std::cout << "AddLightfieldSample not implemented for this type of film"  << "\n"; // Default output
+            printf("AddLightfieldSample not implemented for this type of film");// Default output
    };
 
 

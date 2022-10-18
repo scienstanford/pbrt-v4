@@ -259,11 +259,11 @@ public:
     PBRT_CPU_GPU
     pstd::optional<std::pair<CameraRay,CameraRay>> GenerateRayIO(CameraSample sample,
                                          SampledWavelengths &lambda) const {
-                                             std::cout << "GenerateRayIO Virtual : This should not run" <<"\n"; 
+                                             printf("GenerateRayIO Virtual : This should not run"); 
                                              return{};
                                              };
 
-    PBRT_CPU_GPU
+    //PBRT_CPU_GPU
     //LightfieldFilmWrapper* GetLightfieldFilm() const { return (LightfieldFilmWrapper*)(&film); }
 
 };
