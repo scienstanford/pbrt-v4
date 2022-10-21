@@ -29,12 +29,17 @@
 #include <pbrt/util/transform.h>
 #include <Eigen/Dense>
 #include <iostream>
+#include <fstream> 
 #include <vector>
+
+#include <ext/json.hpp> 
+using json = nlohmann::json;
 
 using namespace std;
 
 #include <algorithm>
 #include <cstring>
+
 
 namespace pbrt {
 
@@ -1410,6 +1415,45 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     Float lambdaMin = parameters.GetOneFloat("lambdamin", Lambda_min);
     Float lambdaMax = parameters.GetOneFloat("lambdamax", Lambda_max);
     Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
+
+    // Extract DUal pixel data
+    std::string pdFile = ResolveFilename(parameters.GetOneString("pdsensitivity", ""));
+     if (pdFile.empty())
+    {
+        Error(loc, "No PD sensitivity file supplied!");
+        return nullptr;
+    }
+
+      // Load PD sensitivity data json
+        std::ifstream i(pdFile);
+        json j;
+
+        auto toTerms = [](json jterms)
+            {
+                std::vector<Float> res;
+                if (jterms.is_null())
+                {
+                    return res;
+                }
+
+                for (int i = 0; i < jterms.size(); ++i)
+                {
+                    json thisnum = jterms[i];
+                    if (!thisnum.is_number())
+                    {
+                        Error("Invalid polynomial in lens specification file must be an array of floats");
+                    }
+                    res.push_back((Float)thisnum);
+                }
+                return res;
+            };
+
+    // PD Sensitivity Data
+    std::vector<Float> angles = toTerms(j["angles"]);
+    std::vector<Float> propL = toTerms(j["[proportionL"]);
+    std::vector<Float> propR = toTerms(j["[proportionR"]);
+
+    std::cout << "Angles from json: " << angles  << "\n";
 
     return alloc.new_object<LightfieldFilmWrapper>(filmBaseParameters, lambdaMin,
                                                    lambdaMax, nBuckets, colorSpace,
