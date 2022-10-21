@@ -1427,7 +1427,7 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
       // Load PD sensitivity data json
         std::ifstream i(pdFile);
         json j;
-
+  if (i && (i>>j)) {
         auto toTerms = [](json jterms)
             {
                 std::vector<Float> res;
@@ -1454,7 +1454,7 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     std::vector<Float> propR = toTerms(j["proportionR"]);
 
     printf("Angles create: %f %f ",angles[0],propL[0]);
-
+  }
     return alloc.new_object<LightfieldFilmWrapper>(filmBaseParameters, lambdaMin,
                                                    lambdaMax, nBuckets, colorSpace,
                                                    maxComponentValue, writeFP16, alloc);
