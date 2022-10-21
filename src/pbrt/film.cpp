@@ -1318,12 +1318,20 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
     printf("%f\n",dir.x);
     printf("%f\n",dir.z);
     printf("Angle: %f\n",180/Pi*(Pi/2-angle));
+
     // Find first angle that fits
-    double distributor[2] = {0.0, 1.0};
-    if (dir.x > 0) {
-        distributor[0] = 1.0;
-        distributor[1] = 0.0;
+    int index=0;
+    while(angle>angles[index] && index<angles.size())
+        index=index+1;
     }
+    double distributor[2] = {proportionL[index], proportionR[index]};
+    
+
+    
+    //if (dir.x > 0) {
+      //  distributor[0] = 1.0;
+     //   distributor[1] = 0.0;
+    //}
 
     // Start by doing more or less what RGBFilm::AddSample() does so
     // that we can maintain accurate RGB values.
