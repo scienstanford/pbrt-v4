@@ -1328,16 +1328,15 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
      
 
 
-
+    // We want the angle w.r.t. the normal on the film, hence we subtract it from 90 deg (pi/2)
+    // we then convert it from radians to degrees.
     Float angle = 180/Pi*(Pi/2-atan2(dir.z,dir.x));
-    
-
-    // Find first angle that fits
+    // Find first angle which is at least equal in size
     int index=0;
     while(angle>angles[index] && index<angles.size()){
         index=index+1;
     }
-    printf("Angle: %f, %f\n",angle,angles[index]);
+
     Float distributor[2] = {proportionL[index], proportionR[index]};
     
 
