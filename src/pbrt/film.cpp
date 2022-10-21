@@ -1450,8 +1450,8 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
 
     // PD Sensitivity Data
     std::vector<Float> angles = toTerms(j["angles"]);
-    std::vector<Float> propL = toTerms(j["[proportionL"]);
-    std::vector<Float> propR = toTerms(j["[proportionR"]);
+    std::vector<Float> propL = toTerms(j["proportionL"]);
+    std::vector<Float> propR = toTerms(j["proportionR"]);
 
     printf("Angles create: %f %f ",angles[0],propL[0]);
 
