@@ -1427,6 +1427,9 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
       // Load PD sensitivity data json
         std::ifstream i(pdFile);
         json j;
+
+    //This is an obscure oneliner of code but the i>>j makes json read the file
+    // If reading fails it will return false and break out of the if statement.
   if (i && (i>>j)) {
         auto toTerms = [](json jterms)
             {
