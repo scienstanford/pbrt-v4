@@ -558,12 +558,18 @@ class SpectralFilm : public FilmBase {
 class LightfieldFilmWrapper : public SpectralFilm {
   public:
  
+    struct PDSensitivity {
+        PDSensitivity() = default;
+        std::vector<Float> angles;
+        std::vector<Float> proportionL;
+        std::vector<Float> proportionR;
+    };
 
     PBRT_CPU_GPU
     void AddLightfieldSample(Ray raySensor, Point2i pFilm, SampledSpectrum L, const SampledWavelengths &lambda,
                    const VisibleSurface *visibleSurface, Float weight);
 
-    LightfieldFilmWrapper(FilmBaseParameters p, Float lambdaMin, Float lambdaMax,
+    LightfieldFilmWrapper(FilmBaseParameters p, PDSensitivity pd, Float lambdaMin, Float lambdaMax,
                  int nBuckets, const RGBColorSpace *colorSpace,
                  Float maxComponentValue = Infinity, bool writeFP16 = true,
                  Allocator alloc = {});
@@ -596,6 +602,8 @@ class LightfieldFilmWrapper : public SpectralFilm {
         std::vector<SubPixel> subpixels;
     };
 
+
+
     PBRT_CPU_GPU
     int LambdaToBucket(Float lambda) const {
         DCHECK_RARE(1e6f, lambda < lambdaMin || lambda > lambdaMax);
@@ -614,6 +622,7 @@ class LightfieldFilmWrapper : public SpectralFilm {
     Float maxComponentValue;
     bool writeFP16;
     Float filterIntegral;
+    PDSensitivity pdsensitivity;
 
     SquareMatrix<3> outputRGBFromSensorRGB;
 
