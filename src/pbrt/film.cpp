@@ -1453,7 +1453,7 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     std::vector<Float> propL = toTerms(j["[proportionL"]);
     std::vector<Float> propR = toTerms(j["[proportionR"]);
 
-    std::cout << "Angles from json: " << angles  << "\n";
+    printf("Angles create: %f %f ",angles[0],propL[0]);
 
     return alloc.new_object<LightfieldFilmWrapper>(filmBaseParameters, lambdaMin,
                                                    lambdaMax, nBuckets, colorSpace,
