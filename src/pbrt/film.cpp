@@ -1321,10 +1321,10 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
 
     // Find first angle that fits
     int index=0;
-    while(angle>angles[index] && index<angles.size())
+    while(angle>angles[index] && index<angles.size()){
         index=index+1;
     }
-    double distributor[2] = {proportionL[index], proportionR[index]};
+    Float distributor[2] = {proportionL[index], proportionR[index]};
     
 
     
