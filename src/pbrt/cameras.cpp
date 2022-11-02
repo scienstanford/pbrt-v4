@@ -2234,7 +2234,10 @@ Point2f OmniCamera::MicrolensCenterFromIndex(const Point2f idx) const {
     // If the lens index has valid bounds (0 < index < maxnumber of elements)
     // Then apply the local offset as read from the JSON file. 
     if (idx.x >= 0 && idx.y >= 0 && idx.x < d.x && idx.y < d.y) {
+        // This code is supposed to be implemented to anble microlens offsets
+        // Zhenyi commented this out when porting
         // lensCenter += microlens.offsets[idx.y*d.x + idx.x]; // tmp Zhenyi
+        
         lensCenter += Vector2f(0.f, 0.f);
     } 
     return lensCenter;
@@ -2281,10 +2284,9 @@ OmniCamera::MicrolensElement OmniCamera::ComputeMicrolensElement(const Ray filmR
 Float OmniCamera::TraceFullLensSystemFromFilm(const Ray& rIn, Ray* rOut) const {
     
     if (microlens.elementInterfaces.size() > 0) {
-       // printf("GPU debug : Into IF %zu \n",microlens.elementInterfaces.size());
-        
+               
         MicrolensElement centerElement = ComputeMicrolensElement(rIn);
-         return 0 ;// GPU DEBUG
+         
         Float tMin = Infinity;
         int R = microlens.simulationRadius;
         Point2f cIdx = centerElement.index;
@@ -2294,16 +2296,26 @@ Float OmniCamera::TraceFullLensSystemFromFilm(const Ray& rIn, Ray* rOut) const {
         // R is here how far around the central micro lens we are looking for possible intersections.
         
         for (int y = -R; y <= R; ++y) {
-            for (int x = -R; x <= R; ++x) {
+                        for (int x = -R; x <= R; ++x) {
+                
                 const MicrolensElement el = MicrolensElementFromIndex(cIdx + Vector2i(x,y));
                 
+                
                 Transform CameraToMicrolens = Scale(1, 1, -1)*Translate({ -el.center.x, -el.center.y, 0.0f });
-                float newT = TToBackLens(rIn, microlens.elementInterfaces, CameraToMicrolens, el.centeredBounds);
+                
+                // Original , does not work on gpu float newT = TToBackLens(rIn, microlens.ElementInterfaces, CameraToMicrolens, el.centeredBounds);
+                float newT = TToBackLens(rIn, microlensElementInterfaces, CameraToMicrolens, el.centeredBounds);
+                                
+                
                 if (newT < tMin) {
                     tMin = newT;
                     toTrace = el;
                 }
+
             }
+            
+            
+            
         }
 
         // After choosing which microlens to trace from, trace it. This produce the ray after microlens 'rAfterMicroLens'.
@@ -2314,12 +2326,17 @@ Float OmniCamera::TraceFullLensSystemFromFilm(const Ray& rIn, Ray* rOut) const {
             Ray rAfterMicrolens;
             if (rOut) rAfterMicrolens = *rOut;
             Transform CameraToMicrolensToTrace = Scale(1, 1, -1)*Translate({ -toTrace.center.x, -toTrace.center.y, 0.0f });
-            if (!TraceLensesFromFilm(rIn, microlens.elementInterfaces, &rAfterMicrolens, CameraToMicrolensToTrace, toTrace.centeredBounds)) {
+            
+            
+            if (!TraceLensesFromFilm(rIn, microlensElementInterfaces, &rAfterMicrolens, CameraToMicrolensToTrace, toTrace.centeredBounds)) {
                 return false;
             }
-            //printf("GPU Debug: Ray traced through microlens chosen\n"); //TG
+            
+            
+            
             // 2. Trace the ray after microlens through the main lens;
             Float result = TraceLensesFromFilm(rAfterMicrolens, elementInterfaces, rOut); 
+            
             /*
             static int paths = 0;
             if (result && cIdx != toTrace.index) {
@@ -2995,7 +3012,7 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
                     return nullptr;
                 }
                 for (auto offset : mljOffsets) {
-                    // microlensOffsets.push_back(toVec2(offset)); 
+                    //microlensOffsets.push_back(toVec2(offset)); 
                     microlensOffsets.push_back(Float(0.f)); 
                 }
             }

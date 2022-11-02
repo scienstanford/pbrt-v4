@@ -12,6 +12,7 @@
 #include <cmath>
 #include <type_traits>
 
+
 namespace pbrt {
 
 template <>
