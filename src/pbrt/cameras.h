@@ -628,6 +628,15 @@ class OmniCamera : public CameraBase {
         int simulationRadius;
     };
 
+    // TG: Variables not in struct as experiment for GPU compatible code
+       pstd::vector<LensElementInterface> microlensElementInterfaces;
+        float microlensOffsetFromSensor;
+        pstd::vector<Float> microlensOffsets;
+        Vector2i microlensDimensions;
+        // Non-physical term
+        int microlensSimulationRadius;
+
+
     // OmniCamera Public Methods
     OmniCamera(CameraBaseParameters baseParameters,
                     pstd::vector<OmniCamera::LensElementInterface> &lensInterfaceData,
@@ -683,6 +692,10 @@ class OmniCamera : public CameraBase {
     struct MicrolensElement {
         Point2f center;
         ConvexQuadf centeredBounds;
+        Point2f corner1;
+        Point2f corner2;
+        Point2f corner3;
+        Point2f corner4;
         Point2f index;
         // Transform ComputeCameraToMicrolens() const;
     };

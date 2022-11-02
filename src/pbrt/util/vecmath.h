@@ -1988,12 +1988,14 @@ public:
             const Vector2<T> e0 = p0 - C;
             const Vector2<T> e1 = p1 - C;
             return atan2((double)e0.y,(double)e0.x) < atan2((double)e1.y, (double)e1.x);
+        
         };
-        // if (Options->useGPU){
+        // Commented by TG  ,std::sort cannot be called on gpu
+         //if (Options>useGPU){
             
-        // }else{
-        std::sort(pCorners, pCorners + 4, ccwWinding); 
-        // }
+         //}else{
+       // std::sort(pCorners, pCorners + 4, ccwWinding); 
+        //}
     }
 
     PBRT_CPU_GPU
