@@ -622,7 +622,7 @@ class OmniCamera : public CameraBase {
     struct MicrolensData {
         pstd::vector<LensElementInterface> elementInterfaces;
         float offsetFromSensor;
-        pstd::vector<Float> offsets;
+        pstd::vector<Vector2f> offsets;
         Vector2i dimensions;
         // Non-physical term
         int simulationRadius;
@@ -631,7 +631,7 @@ class OmniCamera : public CameraBase {
     // TG: Variables not in struct as experiment for GPU compatible code
        pstd::vector<LensElementInterface> microlensElementInterfaces;
         float microlensOffsetFromSensor;
-        pstd::vector<Float> microlensOffsets;
+        pstd::vector<Vector2f> microlensOffsets;
         Vector2i microlensDimensions;
         // Non-physical term
         int microlensSimulationRadius;
@@ -643,7 +643,7 @@ class OmniCamera : public CameraBase {
                     Float focusDistance, Float filmDistance,
                     bool caFlag, bool diffractionEnabled,
                     pstd::vector<OmniCamera::LensElementInterface>& microlensData,
-                    Vector2i microlensDims, pstd::vector<Float> & microlensOffsets, Float microlensSensorOffset,
+                    Vector2i microlensDims, pstd::vector<Vector2f> & microlensOffsets, Float microlensSensorOffset,
                     int microlensSimulationRadius,
                     Float apertureDiameter, Image apertureImage, Allocator alloc);
 

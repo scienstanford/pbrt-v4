@@ -1515,7 +1515,7 @@ OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
                                  Float focusDistance, Float filmDistance,
                                  bool caFlag, bool diffractionEnabled,
                                  pstd::vector<OmniCamera::LensElementInterface>& microlensData,
-                                 Vector2i microlensDims, pstd::vector<Float> & microlensOffsetsVec, Float microlensSensorOffset, 
+                                 Vector2i microlensDims, pstd::vector<Vector2f> & microlensOffsetsVec, Float microlensSensorOffset, 
                                  int microlensSimulationRadiusVar,                                
                                  Float setApertureDiameter, Image apertureImage,
                                  Allocator alloc)
@@ -1568,7 +1568,7 @@ OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
         
         microlens.elementInterfaces = microlensData;
 
-        microlens.offsets = pstd::vector<pbrt::Float>(alloc);
+        microlens.offsets = pstd::vector<pbrt::Vector2f>(alloc);
         microlens.offsets = microlensOffsetsVec;
         microlens.dimensions = microlensDims;
         microlens.offsetFromSensor = microlensSensorOffset;
@@ -2236,9 +2236,9 @@ Point2f OmniCamera::MicrolensCenterFromIndex(const Point2f idx) const {
     if (idx.x >= 0 && idx.y >= 0 && idx.x < d.x && idx.y < d.y) {
         // This code is supposed to be implemented to anble microlens offsets
         // Zhenyi commented this out when porting
-        // lensCenter += microlens.offsets[idx.y*d.x + idx.x]; // tmp Zhenyi
-        
-        lensCenter += Vector2f(0.f, 0.f);
+        //Original does not run on GPU 
+        lensCenter += microlensOffsets[idx.y*d.x + idx.x]; 
+        //lensCenter += Vector2f(0.f, 0.f);
     } 
     return lensCenter;
 }
@@ -2821,7 +2821,7 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
     // Load element data from lens description file: microlens
     pstd::vector<OmniCamera::LensElementInterface> microlensData;
 
-    pstd::vector<Float> microlensOffsets;
+    pstd::vector<Vector2f> microlensOffsets;
 
     Vector2i microlensDims;
 
@@ -3012,8 +3012,8 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
                     return nullptr;
                 }
                 for (auto offset : mljOffsets) {
-                    //microlensOffsets.push_back(toVec2(offset)); 
-                    microlensOffsets.push_back(Float(0.f)); 
+                    microlensOffsets.push_back(toVec2(offset)); 
+                    //microlensOffsets.push_back(Float(0.f)); 
                 }
             }
 
