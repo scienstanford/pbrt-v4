@@ -2236,7 +2236,8 @@ Point2f OmniCamera::MicrolensCenterFromIndex(const Point2f idx) const {
     if (idx.x >= 0 && idx.y >= 0 && idx.x < d.x && idx.y < d.y) {
         // This code is supposed to be implemented to anble microlens offsets
         // Zhenyi commented this out when porting
-        //Original does not run on GPU 
+        
+        // Original does not run onGPU lensCenter += microlens.offsets[idx.y*d.x + idx.x]; /
         lensCenter += microlensOffsets[idx.y*d.x + idx.x]; 
         //lensCenter += Vector2f(0.f, 0.f);
     } 
