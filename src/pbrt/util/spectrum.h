@@ -203,6 +203,40 @@ class SampledSpectrum {
     PBRT_CPU_GPU
     Float y(const SampledWavelengths &lambda) const;
 
+    PBRT_CPU_GPU
+    void GetValueAtWavelength(Float wavelength, Float *output) const{
+        
+        Float w0; Float w1; Float t;
+        *output = 0;
+        SampledSpectrum ret = *this;
+        // A rare case but let's catch it
+        if(wavelength == Lambda_max){
+   
+            *output = ret.values[NSpectrumSamples-1];
+        }
+        // Loop over the sampled spectrum segments
+        
+        for(int i = 0; i < NSpectrumSamples; i++){
+        
+            w0 = Lerp(Float(i) / Float(NSpectrumSamples),
+                                 Lambda_min, Lambda_max);
+            w1 = Lerp(Float(i + 1) / Float(NSpectrumSamples),
+                                 Lambda_min, Lambda_max);
+            
+            
+            // Find in which segment the requested wavelength lies and locally interpolate between the endpoints
+            if ((wavelength >= w0) && (wavelength < w1)){
+                t = (wavelength - w0)/(w1-w0);
+                *output = Lerp(t, ret.values[i], ret.values[i+1]);
+                return;
+            }
+        }
+        // Make sure we don't return 0. If we do, then we get NaN's!
+        // I commented this out, because what if the spectrum is zero?
+        //assert(*output != 0);
+        return;
+    }    
+
     SampledSpectrum() = default;
     PBRT_CPU_GPU
     explicit SampledSpectrum(Float c) { values.fill(c); }

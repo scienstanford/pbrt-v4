@@ -223,12 +223,12 @@ RGB MIPMap::Texel(int level, Point2i st) const {
 template <>
 SampledSpectrum MIPMap::Texel(int level, Point2i st) const {
     CHECK(level >= 0 && level < pyramid.size());
+    SampledSpectrum basiscoef;
     if (pyramid[level].NChannels() == 6) {
-        SampledSpectrum basiscoef;
         for (int c = 0; c < 6; ++c)
-            basiscoef[c] = pyramid[level].GetChannel(st, c, wrapMode);
-        return basiscoef;
+            basiscoef[c] = pyramid[level].GetChannel(st, c, wrapMode); 
     }
+    return basiscoef;
 }
 //-------------------------------------------------------------------
 

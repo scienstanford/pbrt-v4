@@ -13,7 +13,9 @@
 #include <pbrt/util/print.h>
 #include <pbrt/util/pstd.h>
 
+
 #include <algorithm>
+
 #include <cmath>
 #include <iterator>
 #include <string>
@@ -1636,20 +1638,8 @@ PBRT_CPU_GPU inline Bounds2<T> Union(const Bounds2<T> &b, Point2<T> p) {
 
 // Spherical Geometry Inline Functions
 PBRT_CPU_GPU inline Float SphericalTriangleArea(Vector3f a, Vector3f b, Vector3f c) {
-    // Compute normalized cross products of all direction pairs
-    Vector3f n_ab = Cross(a, b), n_bc = Cross(b, c), n_ca = Cross(c, a);
-    if (LengthSquared(n_ab) == 0 || LengthSquared(n_bc) == 0 || LengthSquared(n_ca) == 0)
-        return {};
-    n_ab = Normalize(n_ab);
-    n_bc = Normalize(n_bc);
-    n_ca = Normalize(n_ca);
-
-    // Find angles $\alpha$, $\beta$, and $\gamma$ at spherical triangle vertices
-    Float alpha = AngleBetween(n_ab, -n_ca);
-    Float beta = AngleBetween(n_bc, -n_ab);
-    Float gamma = AngleBetween(n_ca, -n_bc);
-
-    return std::abs(alpha + beta + gamma - Pi);
+    return std::abs(
+        2 * std::atan2(Dot(a, Cross(b, c)), 1 + Dot(a, b) + Dot(a, c) + Dot(b, c)));
 }
 
 PBRT_CPU_GPU inline Float SphericalQuadArea(Vector3f a, Vector3f b, Vector3f c,
@@ -1946,6 +1936,162 @@ inline Frame::Frame(Vector3f x, Vector3f y, Vector3f z) : x(x), y(y), z(z) {
     DCHECK_LT(std::abs(Dot(y, z)), 1e-4);
     DCHECK_LT(std::abs(Dot(z, x)), 1e-4);
 }
+
+// Moved by ZL from V3 (2022-02-05)
+// Added by MM (2019-05-30)
+// Used in OmniCamera for Microlens bounds.
+// Could easily be generalized to generic number of points
+// If converted to arbitrary number of points, a convex hull algorithm would be useful.
+// Could precompute edges to accelerate contains queries
+template <typename T>
+class ConvexQuad {
+private:
+    PBRT_CPU_GPU
+    Vector2f TriAreas() const {
+        const Point2<T>& p = pCorners[0];
+        const Vector2<T> edge0 = pCorners[1] - p;
+        const Vector2<T> edge1 = pCorners[2] - p;
+        const Vector2<T> edge2 = pCorners[3] - p;
+        // Cross product embedding points in 3D gives twice the 
+        // signed area of the triangle.
+        const Float area0 = 0.5f*(edge0.x * edge1.y - edge0.y * edge1.x);
+        const Float area1 = 0.5f*(edge1.x * edge2.y - edge1.y * edge2.x);
+        return { area0,area1 };
+    }
+public:
+    // ConvexQuad Public Methods
+    PBRT_CPU_GPU
+    ConvexQuad() {
+        T minNum = std::numeric_limits<T>::lowest();
+        T maxNum = std::numeric_limits<T>::max();
+        pCorners[0] = Point2<T>(minNum, minNum);
+        pCorners[1] = Point2<T>(maxNum, minNum);
+        pCorners[2] = Point2<T>(maxNum, maxNum);
+        pCorners[3] = Point2<T>(minNum, maxNum);
+    }
+
+    PBRT_CPU_GPU
+    ConvexQuad(const Point2<T> p1, const Point2<T> p2, const Point2<T> p3, const Point2<T> p4) {
+
+    // ConvexQuad(const Point2<T> pCorners) {
+        // Point2<T> p1 = pCorners[0];
+        // Point2<T> p2 = pCorners[1];
+        // Point2<T> p3 = pCorners[2];
+        // Point2<T> p4 = pCorners[3];
+
+        DCHECK(p1 != p2 && p1 != p3 && p1 != p4 && p2 != p3 && p2 != p4 && p3 != p4 );
+        
+        // Point2<T> temp[] = { p1,p2,p3,p4 };
+        pCorners[0] = p1;pCorners[1] = p2;pCorners[2] = p3;pCorners[3] = p4;
+
+        // std::copy(temp, temp + 4, pCorners);
+        Point2<T> C = Centroid();
+        auto ccwWinding = [&C](const Point2<T>& p0, const Point2<T>& p1) {
+            const Vector2<T> e0 = p0 - C;
+            const Vector2<T> e1 = p1 - C;
+            return atan2((double)e0.y,(double)e0.x) < atan2((double)e1.y, (double)e1.x);
+        
+        };
+
+
+        // TG:The sorting of the convexQuad is needed for correct operation.
+        //std::sort of the original function  cannot be called on gpu// Howver
+        // Therefore I implemented the Insertion Sort algorithm myself which runs on GPU and is certainly efficient enough for only four elements.
+        Point2<T> temp;
+        int i = 0;
+        while (i < 4){
+            int j = i;
+            while (j>0 && !ccwWinding(pCorners[j-1],pCorners[j])){
+                        //swap
+                        temp = pCorners[j];
+                        pCorners[j] = pCorners[j-1];
+                        pCorners[j-1] = temp;
+                        j=j-1;
+            }
+            i=i+1;
+                        
+        }
+        
+
+
+
+
+
+       // ORIGINAL does not run on GPU std::sort(pCorners, pCorners + 4, ccwWinding); 
+        //}
+    }
+
+    PBRT_CPU_GPU
+    Point2<T> Centroid() const {
+        return (pCorners[0] + pCorners[1] + pCorners[2] + pCorners[3])*Float(0.25);
+    }
+
+    PBRT_CPU_GPU
+    Float Area() const {
+        if (*this == ConvexQuad()) {
+            return INFINITY;
+        }
+        // Compute area of triangles formed by p0,p1,p2 and p0,p2,p3, and sum
+        Vector2f areas = TriAreas();
+        return (areas.x + areas.y);
+    }
+    // Counter-clockwise winding
+    PBRT_CPU_GPU
+    inline const Point2<T> &operator[](int i) const {
+        DCHECK(i >= 0 || i < 4);
+        return pCorners[i];
+    }
+    // Counter-clockwise winding
+    PBRT_CPU_GPU
+    inline Point2<T> &operator[](int i) {
+        DCHECK(i >= 0 || i < 4);
+        return pCorners[i];
+    }
+
+    PBRT_CPU_GPU
+    bool operator==(const ConvexQuad<T> &b) const {
+        for (int i = 0; i < 4; ++i) {
+            if (pCorners[i] != b.pCorners[i])
+                return false;
+        }
+        return true;
+    }
+
+    PBRT_CPU_GPU
+    bool operator!=(const Bounds2<T> &b) const {
+        for (int i = 0; i < 4; ++i) {
+            if (pCorners[i] == b.pCorners[i])
+                return true;
+        }
+        return false;
+    }
+    // In real arithmetic, would be an inclusive contains (points on edge counted as inside)
+    PBRT_CPU_GPU
+    bool Contains(const Point2<T> &p) const {
+        // Compute the signed area of each polygon from p to an edge.  
+        // If the area is non-negative for all polygons then p is inside 
+        // the polygon.
+        for (int i = 0; i < 4; ++i) {
+            const Vector2<T> edge0 = pCorners[i] - p;
+            const Vector2<T> edge1 = pCorners[(i + 1) % 4] - p;
+
+            // Let z=0 for both vectors and take cross product to get
+            // double the (signed) area.
+            const float doublearea = (edge0.x * edge1.y) - (edge0.y * edge1.x);
+            if (doublearea < 0) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // ConvexQuad Public Data
+    //PBRT_CPU_GPU
+    Point2<T> pCorners[4];
+};
+
+typedef ConvexQuad<Float> ConvexQuadf;
 
 }  // namespace pbrt
 

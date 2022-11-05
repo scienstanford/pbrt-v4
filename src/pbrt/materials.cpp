@@ -41,9 +41,10 @@ std::string NormalBumpEvalContext::ToString() const {
 
 // DielectricMaterial Method Definitions
 std::string DielectricMaterial::ToString() const {
-    return StringPrintf("[ DielectricMaterial displacement: %s uRoughness: %s "
+    return StringPrintf("[ DielectricMaterial displacement: %s normalMap: %s uRoughness: %s "
                         "vRoughness: %s eta: %s remapRoughness: %s ]",
-                        displacement, uRoughness, vRoughness, eta, remapRoughness);
+                        displacement, normalMap ? normalMap->ToString() : std::string("(nullptr)"),
+                        uRoughness, vRoughness, eta, remapRoughness);
 }
 
 DielectricMaterial *DielectricMaterial::Create(
@@ -73,8 +74,9 @@ DielectricMaterial *DielectricMaterial::Create(
 
 // ThinDielectricMaterial Method Definitions
 std::string ThinDielectricMaterial::ToString() const {
-    return StringPrintf("[ ThinDielectricMaterial displacement: %s eta: %s ]",
-                        displacement, eta);
+    return StringPrintf("[ ThinDielectricMaterial displacement: %s normalMap: %s eta: %s ]",
+                        displacement, normalMap ? normalMap->ToString()
+                                                : std::string("(nullptr)"), eta);
 }
 
 ThinDielectricMaterial *ThinDielectricMaterial::Create(
@@ -180,8 +182,10 @@ HairMaterial *HairMaterial::Create(const TextureParameterDictionary &parameters,
 
 // DiffuseMaterial Method Definitions
 std::string DiffuseMaterial::ToString() const {
-    return StringPrintf("[ DiffuseMaterial displacement: %s reflectance: %s ]",
-                        displacement, reflectance);
+    return StringPrintf("[ DiffuseMaterial displacement: %s normapMap: %s reflectance: %s ]",
+                        displacement,
+                        normalMap ? normalMap->ToString() : std::string("(nullptr)"),
+                        reflectance);
 }
 
 DiffuseMaterial *DiffuseMaterial::Create(const TextureParameterDictionary &parameters,
@@ -199,11 +203,12 @@ DiffuseMaterial *DiffuseMaterial::Create(const TextureParameterDictionary &param
 
 // ConductorMaterial Method Definitions
 std::string ConductorMaterial::ToString() const {
-    return StringPrintf("[ ConductorMaterial displacement: %s eta: %s k: %s reflectance: "
-                        "%s uRoughness: %s "
-                        "vRoughness: %s remapRoughness: %s]",
-                        displacement, eta, k, reflectance, uRoughness, vRoughness,
-                        remapRoughness);
+    return StringPrintf("[ ConductorMaterial displacement: %s normalMap: %s eta: %s "
+                        "k: %s reflectance: %s uRoughness: %s vRoughness: %s "
+                        "remapRoughness: %s ]",
+                        displacement,
+                        normalMap ? normalMap->ToString() : std::string("(nullptr)"),
+                        eta, k, reflectance, uRoughness, vRoughness, remapRoughness);
 }
 
 ConductorMaterial *ConductorMaterial::Create(const TextureParameterDictionary &parameters,
@@ -238,6 +243,52 @@ ConductorMaterial *ConductorMaterial::Create(const TextureParameterDictionary &p
     bool remapRoughness = parameters.GetOneBool("remaproughness", true);
 
     return alloc.new_object<ConductorMaterial>(eta, k, reflectance, uRoughness,
+                                               vRoughness, displacement, normalMap,
+                                               remapRoughness);
+}
+
+// RetroreflectiveMaterial Method Definitions (Adapted from conductorMaterial)
+std::string RetroreflectiveMaterial::ToString() const {
+    return StringPrintf("[ RetroreflectiveMaterial displacement: %s normalMap: %s eta: %s "
+                        "k: %s reflectance: %s uRoughness: %s vRoughness: %s "
+                        "remapRoughness: %s ]",
+                        displacement,
+                        normalMap ? normalMap->ToString() : std::string("(nullptr)"),
+                        eta, k, reflectance, uRoughness, vRoughness, remapRoughness);
+}
+
+RetroreflectiveMaterial *RetroreflectiveMaterial::Create(const TextureParameterDictionary &parameters,
+                                             Image *normalMap, const FileLoc *loc,
+                                             Allocator alloc) {
+    SpectrumTexture eta =
+        parameters.GetSpectrumTextureOrNull("eta", SpectrumType::Unbounded, alloc);
+    SpectrumTexture k =
+        parameters.GetSpectrumTextureOrNull("k", SpectrumType::Unbounded, alloc);
+    SpectrumTexture reflectance =
+        parameters.GetSpectrumTextureOrNull("reflectance", SpectrumType::Albedo, alloc);
+
+    if (reflectance && (eta || k))
+        ErrorExit(loc, "For the conductor material, both \"reflectance\" "
+                       "and \"eta\" and \"k\" can't be provided.");
+    if (!reflectance) {
+        if (!eta)
+            eta = alloc.new_object<SpectrumConstantTexture>(
+                GetNamedSpectrum("metal-Cu-eta"));
+        if (!k)
+            k = alloc.new_object<SpectrumConstantTexture>(GetNamedSpectrum("metal-Cu-k"));
+    }
+
+    FloatTexture uRoughness = parameters.GetFloatTextureOrNull("uroughness", alloc);
+    FloatTexture vRoughness = parameters.GetFloatTextureOrNull("vroughness", alloc);
+    if (!uRoughness)
+        uRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
+    if (!vRoughness)
+        vRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
+
+    FloatTexture displacement = parameters.GetFloatTextureOrNull("displacement", alloc);
+    bool remapRoughness = parameters.GetOneBool("remaproughness", true);
+
+    return alloc.new_object<RetroreflectiveMaterial>(eta, k, reflectance, uRoughness,
                                                vRoughness, displacement, normalMap,
                                                remapRoughness);
 }
@@ -284,10 +335,11 @@ template CoatedDiffuseBxDF CoatedDiffuseMaterial::GetBxDF(
 
 std::string CoatedDiffuseMaterial::ToString() const {
     return StringPrintf(
-        "[ CoatedDiffuseMaterial displacement: %s reflectance: %s uRoughness: %s "
-        "vRoughness: %s thickness: %s eta: %s remapRoughness: %s ]",
-        displacement, reflectance, uRoughness, vRoughness, thickness, eta,
-        remapRoughness);
+        "[ CoatedDiffuseMaterial displacement: %s normalMap: %s reflectance: %s "
+        "uRoughness: %s vRoughness: %s thickness: %s eta: %s remapRoughness: %s ]",
+        displacement,
+        normalMap ? normalMap->ToString() : std::string("(nullptr)"),
+        reflectance, uRoughness, vRoughness, thickness, eta, remapRoughness);
 }
 
 CoatedDiffuseMaterial *CoatedDiffuseMaterial::Create(
@@ -389,13 +441,14 @@ template CoatedConductorBxDF CoatedConductorMaterial::GetBxDF(
     SampledWavelengths &lambda) const;
 
 std::string CoatedConductorMaterial::ToString() const {
-    return StringPrintf("[ CoatedConductorMaterial displacement: %f interfaceURoughness: "
-                        "%f interfaceVRoughness: %f thickness: %f "
-                        "interfaceEta: %f g: %s albedo: %s conductorURoughness: %s "
-                        "conductorVRoughness: %s "
-                        "conductorEta: %s k: %s conductorReflectance: %s remapRoughness: "
-                        "%s maxDepth: %d nSamples: %d ]",
-                        displacement, interfaceURoughness, interfaceVRoughness, thickness,
+    return StringPrintf("[ CoatedConductorMaterial displacement: %s normalMap: %s "
+                        "interfaceURoughness: %s interfaceVRoughness: %s thickness: %s "
+                        "interfaceEta: %s g: %s albedo: %s conductorURoughness: %s "
+                        "conductorVRoughness: %s conductorEta: %s k: %s "
+                        "conductorReflectance: %s remapRoughness: %s maxDepth: %d nSamples: %d ]",
+                        displacement,
+                        normalMap ? normalMap->ToString() : std::string("(nullptr)"),
+                        interfaceURoughness, interfaceVRoughness, thickness,
                         interfaceEta, g, albedo, conductorURoughness, conductorVRoughness,
                         conductorEta, k, reflectance, remapRoughness, maxDepth, nSamples);
 }
@@ -477,12 +530,11 @@ CoatedConductorMaterial *CoatedConductorMaterial::Create(
 
 // SubsurfaceMaterial Method Definitions
 std::string SubsurfaceMaterial::ToString() const {
-    return StringPrintf("[ SubsurfaceMaterial displacement: %s scale: %f "
-                        "sigma_a: %s sigma_s: %s "
-                        "reflectance: %s mfp: %s uRoughness: %s vRoughness: %s "
-                        "eta: %f remapRoughness: %s ]",
+    return StringPrintf("[ SubsurfaceMaterial displacement: %s normalMap: %s scale: %f "
+                        "sigma_a: %s sigma_s: %s reflectance: %s mfp: %s uRoughness: %s "
+                        "vRoughness: %s scale: %f eta: %f remapRoughness: %s ]",
                         displacement, scale, sigma_a, sigma_s, reflectance, mfp,
-                        uRoughness, vRoughness, eta, remapRoughness);
+                        uRoughness, vRoughness, scale, eta, remapRoughness);
 }
 
 SubsurfaceMaterial *SubsurfaceMaterial::Create(
@@ -559,8 +611,8 @@ SubsurfaceMaterial *SubsurfaceMaterial::Create(
 // DiffuseTransmissionMaterial Method Definitions
 std::string DiffuseTransmissionMaterial::ToString() const {
     return StringPrintf("[ DiffuseTransmissionMaterial displacement: %s reflectance: %s "
-                        "transmittance: %s ]",
-                        displacement, reflectance, transmittance);
+                        "transmittance: %s scale: %f ]",
+                        displacement, reflectance, transmittance, scale);
 }
 
 DiffuseTransmissionMaterial *DiffuseTransmissionMaterial::Create(
@@ -592,8 +644,9 @@ MeasuredMaterial::MeasuredMaterial(const std::string &filename, FloatTexture dis
 }
 
 std::string MeasuredMaterial::ToString() const {
-    return StringPrintf("[ MeasuredMaterial displacement: %s normalMap: %p ]",
-                        displacement, normalMap);
+    return StringPrintf("[ MeasuredMaterial displacement: %s normalMap: %s ]",
+                        displacement,
+                        normalMap ? normalMap->ToString() : std::string("(nullptr)"));
 }
 
 MeasuredMaterial *MeasuredMaterial::Create(const TextureParameterDictionary &parameters,
@@ -646,6 +699,8 @@ Material Material::Create(const std::string &name,
         material = HairMaterial::Create(parameters, loc, alloc);
     else if (name == "conductor")
         material = ConductorMaterial::Create(parameters, normalMap, loc, alloc);
+    else if (name == "retroreflective")
+        material = RetroreflectiveMaterial::Create(parameters, normalMap, loc, alloc);
     else if (name == "measured")
         material = MeasuredMaterial::Create(parameters, normalMap, loc, alloc);
     else if (name == "subsurface")
