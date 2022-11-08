@@ -604,20 +604,18 @@ class HumanEyeCamera : public CameraBase {
         Float conicConstantX;
         Float conicConstantY;
     };
+    pstd::vector<LensElementEye> lensEls;
 
-    // RealisticCamera Public Methods
+    // HumanEyeCamera Public Methods
     HumanEyeCamera(CameraBaseParameters baseParameters,
-                    bool simpleWeighting,
-                    bool noWeighting,
-                    std::string specfile,
+                    pstd::vector<LensElementEye> &eyeInterfacesData,
                     Float pupilDiameter,
                     Float retinaDistance,
                     Float retinaRadius,
                     Float retinaSemiDiam,
                     pstd::vector<Spectrum> iorSpectra,
-                    bool flipRad,
-                    bool mmUnits,
-                    bool diffractionEnabled);
+                    bool diffractionEnabled,
+                    Allocator alloc);
     static HumanEyeCamera *Create(const ParameterDictionary &parameters,
                                     const CameraTransform &cameraTransform,
                                     Film film, Medium medium, const FileLoc *loc,
@@ -626,13 +624,40 @@ class HumanEyeCamera : public CameraBase {
     pstd::optional<CameraRay> GenerateRay(CameraSample sample,
                                           SampledWavelengths &lambda) const;
 
+    PBRT_CPU_GPU
+    pstd::optional<CameraRayDifferential> GenerateRayDifferential(
+        CameraSample sample, SampledWavelengths &lambda) const {
+        return CameraBase::GenerateRayDifferential(this, sample, lambda);
+    }
+
+    PBRT_CPU_GPU
+    SampledSpectrum We(const Ray &ray, SampledWavelengths &lambda,
+                       Point2f *pRaster2 = nullptr) const {
+        LOG_FATAL("We() unimplemented for HumanEyeCamera");
+        return {};
+    }
+
+    PBRT_CPU_GPU
+    void PDF_We(const Ray &ray, Float *pdfPos, Float *pdfDir) const {
+        LOG_FATAL("PDF_We() unimplemented for HumanEyeCamera");
+    }
+
+    PBRT_CPU_GPU
+    pstd::optional<CameraWiSample> SampleWi(const Interaction &ref, Point2f u,
+                                            SampledWavelengths &lambda) const {
+        LOG_FATAL("SampleWi() unimplemented for HumanEyeCamera");
+        return {};
+    }
+
+    // std::string ToString() const; // not necessary for now --Zhenyi
+
     private:
         // HumanEyeCamera Private Methods
-        const bool simpleWeighting;
-        const bool noWeighting;
+        // const bool simpleWeighting;
+        // const bool noWeighting;
 
         // Lens information
-        pstd::vector<LensElementEye> lensEls;
+        
         Float effectiveFocalLength;
 
         // Specific parameters for the human eye
@@ -646,12 +671,18 @@ class HumanEyeCamera : public CameraBase {
 
         // Flags for conventions
         bool diffractionEnabled;
-        float lensScaling;
+        Float lensScaling;
 
         // Private methods for tracing through lens
+        PBRT_CPU_GPU
         bool IntersectLensElAspheric(const Ray &r, Float *tHit, LensElementEye currElement, Float zShift, Vector3f *n) const;
+        
+        PBRT_CPU_GPU
         void applySnellsLaw(Float n1, Float n2, Float lensRadius, Vector3f &normalVec, Ray * ray ) const;
+        
+        PBRT_CPU_GPU
         Float lookUpIOR(int mediumIndex, const Ray &ray) const;
+        
         void diffractHURB(Point3f intersect, Float apertureRadius, const Float wavelength, const Vector3f oldDirection, Vector3f *newDirection) const;
         
         // Handy method to explicity solve for the z(x,y) at a given point (x,y), for the biconic SAG
@@ -659,7 +690,7 @@ class HumanEyeCamera : public CameraBase {
 
         // ZLY: To check whether this is needed or not
         // // GSL seed(?) for random number generation
-        // gsl_rng * r;
+        gsl_rng * r;
 };
 
 
@@ -701,12 +732,12 @@ class OmniCamera : public CameraBase {
     };
 
     // TG: Variables not in struct as experiment for GPU compatible code
-       pstd::vector<LensElementInterface> microlensElementInterfaces;
-        float microlensOffsetFromSensor;
-        pstd::vector<Vector2f> microlensOffsets;
-        Vector2i microlensDimensions;
-        // Non-physical term
-        int microlensSimulationRadius;
+    pstd::vector<LensElementInterface> microlensElementInterfaces;
+    float microlensOffsetFromSensor;
+    pstd::vector<Vector2f> microlensOffsets;
+    Vector2i microlensDimensions;
+    // Non-physical term
+    int microlensSimulationRadius;
 
 
     // OmniCamera Public Methods
