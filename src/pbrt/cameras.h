@@ -674,13 +674,13 @@ class HumanEyeCamera : public CameraBase {
         Float lensScaling;
 
         // Private methods for tracing through lens
-        PBRT_CPU_GPU
+        // PBRT_CPU_GPU
         bool IntersectLensElAspheric(const Ray &r, Float *tHit, LensElementEye currElement, Float zShift, Vector3f *n) const;
         
-        PBRT_CPU_GPU
+        // PBRT_CPU_GPU
         void applySnellsLaw(Float n1, Float n2, Float lensRadius, Vector3f &normalVec, Ray * ray ) const;
         
-        PBRT_CPU_GPU
+        // PBRT_CPU_GPU
         Float lookUpIOR(int mediumIndex, const Ray &ray) const;
         
         void diffractHURB(Point3f intersect, Float apertureRadius, const Float wavelength, const Vector3f oldDirection, Vector3f *newDirection) const;
