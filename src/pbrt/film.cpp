@@ -1342,7 +1342,7 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
     while(angle>pdsensitivity.angles[index] && index<pdsensitivity.angles.size()){
         index=index+1;
     }
-
+    
     Float distributor[2] = {pdsensitivity.proportionL[index], pdsensitivity.proportionR[index]};
     
 
@@ -1455,6 +1455,9 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
 
     // PD Sensitivity Data
     std::vector<Float> angles = toTerms(j["angles"]);
+    //std::vector<Float> polarAngles = toTerms(j["polarangles"]);
+    //std::vector<Float> azimuths = toTerms(j["azmiths"]);
+
     std::vector<Float> propL = toTerms(j["proportionL"]);
     std::vector<Float> propR = toTerms(j["proportionR"]);
 
@@ -1465,6 +1468,7 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
 
 
     printf("Angles create: %f %f ",angles[0],propL[0]);
+    
   }
     return alloc.new_object<LightfieldFilmWrapper>(filmBaseParameters, pd, lambdaMin,
                                                    lambdaMax, nBuckets, colorSpace,
@@ -1694,7 +1698,7 @@ Film Film::Create(const std::string &name, const ParameterDictionary &parameters
         film = GBufferFilm::Create(parameters, exposureTime, cameraTransform, filter,
                                    parameters.ColorSpace(), loc, alloc);
     else if (name == "lightfield") {
-        std::cout << "Lightfield Gbuffer Film"
+        std::cout << "Lightfield Film"
                   << "\n";
         film = LightfieldFilmWrapper::Create(parameters, exposureTime, filter,
                                              parameters.ColorSpace(), loc, alloc);

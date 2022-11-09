@@ -30,6 +30,10 @@
 #include <iostream>
 #include <vector>
 
+// TG: Boost library to deal with matrices
+#include "boost/multi_array.hpp"
+#include <cassert>
+
 namespace pbrt {
 
 // PixelSensor Definition
@@ -554,15 +558,23 @@ class SpectralFilm : public FilmBase {
     SquareMatrix<3> outputRGBFromSensorRGB;
 };
 
-
+// Thomas: Custom made matrix type to make my life easier
+typedef boost::multi_array<char, 2> Matrix;
 class LightfieldFilmWrapper : public SpectralFilm {
   public:
  
+
     struct PDSensitivity {
         PDSensitivity() = default;
         std::vector<Float> angles;
         std::vector<Float> proportionL;
         std::vector<Float> proportionR;
+        
+        // Full 3D reprsentation
+        std::vector<Float> polarAngles; // Matrix rows
+        std::vector<Float> azimuthAngles; // Matrix Columns
+        Matrix proportions;
+        Matrix sumweights;
     };
 
     PBRT_CPU_GPU
