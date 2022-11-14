@@ -1455,8 +1455,8 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
 
     // PD Sensitivity Data
     std::vector<Float> angles = toTerms(j["angles"]);
-    //std::vector<Float> polarAngles = toTerms(j["polarangles"]);
-    //std::vector<Float> azimuths = toTerms(j["azmiths"]);
+    std::vector<Float> polarAngles = toTerms(j["polarangles"]);
+    std::vector<Float> azimuths = toTerms(j["azimuths"]);
 
     std::vector<Float> propL = toTerms(j["proportionL"]);
     std::vector<Float> propR = toTerms(j["proportionR"]);
