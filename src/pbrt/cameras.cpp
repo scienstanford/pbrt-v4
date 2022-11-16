@@ -1522,10 +1522,12 @@ HumanEyeCamera::HumanEyeCamera(CameraBaseParameters baseParameters,
                     Float retinaRadius,
                     Float retinaSemiDiam,
                     pstd::vector<Spectrum> iorSpectra,
+                    Array2D<Point3f> surfaceLookupTable,
                     bool diffractionEnabled,
                     Allocator alloc)
     : CameraBase(baseParameters),
       lensEls(alloc),
+      lookupTable(surfaceLookupTable,alloc),
       pupilDiameter(pupilDiameter),
       retinaDistance(retinaDistance),
       retinaRadius(retinaRadius),
@@ -1535,6 +1537,8 @@ HumanEyeCamera::HumanEyeCamera(CameraBaseParameters baseParameters,
 
     // Initialize _elementInterfaces_ for camera
     lensEls = eyeInterfacesData;
+
+    
 
     // To calculate the "film diagonal", we use the retina semi-diameter. The film diagonal is the diagonal of the rectangular image rendered out by PBRT, in real units. Since we restrict samples to a circular image, we can calculate the film diagonal to be the same as a square that circumscribes the circular image.
     retinaDiag = retinaSemiDiam*1.4142*2; // sqrt(2)*2
@@ -1562,71 +1566,23 @@ pstd::optional<CameraRay> HumanEyeCamera::GenerateRay(CameraSample sample,
     //                Lens Elements        Sensor
     //
 
-
-    // Determine the size of the sensor in real world units (i.e. convert from pixels to millimeters).
-
-    Point2i filmRes = film.FullResolution();
-    // To calculate the "film diagonal", we use the retina semi-diameter. The film diagonal is the diagonal of the rectangular image rendered out by PBRT, in real units. Since we restrict samples to a circular image, we can calculate the film diagonal to be the same as a square that circumscribes the circular image.
-    Float aspectRatio = (Float)filmRes.x/(Float)filmRes.y;
-    Float width = retinaDiag /std::sqrt((1.f + 1.f/(aspectRatio * aspectRatio)));
-    Float height = width/aspectRatio;
+    
+    // Choose surface to project to
 
     Point3f startingPoint;
 
-    startingPoint.x = -((sample.pFilm.x) - filmRes.x/2.f - .25)/(filmRes.y/2.f);
-    startingPoint.y = ((sample.pFilm.y) - filmRes.y/2.f - .25)/(filmRes.y/2.f);
 
-    // Convert starting point units to millimeters
-    startingPoint.x = startingPoint.x * width/2.f;
-    startingPoint.y = startingPoint.y * height/2.f;
-    startingPoint.z = -retinaDistance;
-
-
-    // Project sampled points onto the curved retina
-    if (retinaRadius != 0)
-    {
-        // Right now the code only lets you curve the sensor toward the scene and not the other way around. See diagram:
-        /*
-
-            The distance between the zero point on the z-axis (i.e. the lens element closest to the sensor) and the dotted line will be equal to the "retinaDistance." The retina curvature is defined by the "retinaRadius" and it's height in the y and x direction is defined by the "retinaSemiDiam."
+    // If a surface lookup table is defined, use the legacy code
+    if(useLookupTable()){
+        Point3f startingPoint= projectLookupTable(sample.pFilm);
+    
+    // If a sphere is defined, use the legacy code
+    }else{
 
 
-                                    :
-                                    |  :
-                                    | :
-                        | | |         |:
-        scene <------ | | | <----   |:
-                        | | |         |:
-                    Lens System      | :
-                                    |  :
-                                    :
-                                retina
-        <---- +z
 
-            */
+        Point3f startingPoint= projectToSphere(sample.pFilm);
 
-        // Limit sample points to a circle within the retina semi-diameter
-        if((startingPoint.x*startingPoint.x + startingPoint.y*startingPoint.y) > (retinaSemiDiam*retinaSemiDiam)){
-            return {};
-        }
-
-        // Calculate the distance of a disc that fits inside the curvature of the retina.
-        Float zDiscDistance = -1* std::sqrt(retinaRadius*retinaRadius-retinaSemiDiam*retinaSemiDiam);
-
-        // If we are within this radius, project each point out onto a sphere. There may be some issues here with even sampling, since this is a direct projection...
-        Float el = atan(startingPoint.x/zDiscDistance);
-        Float az = atan(startingPoint.y/zDiscDistance);
-
-        // Convert spherical coordinates to cartesian coordinates (note: we switch up the x,y,z axis to match our conventions)
-        Float xc,yc,zc, rcoselev;
-        xc = -1*retinaRadius*sin(el); // TODO: Confirm this flip?
-        rcoselev = retinaRadius*cos(el);
-        zc = -1*(rcoselev*cos(az)); // The -1 is to account for the curvature described above in the diagram
-        yc = -1*rcoselev*sin(az); // TODO: Confirm this flip?
-
-        zc = zc + -1*retinaDistance + retinaRadius; // Move the z coordinate out to correct retina distance
-
-        startingPoint = Point3f(xc,yc,zc);
 
     }
 
@@ -2179,6 +2135,19 @@ HumanEyeCamera *HumanEyeCamera::Create(const ParameterDictionary &parameters,
         }
     }
 
+
+    //Read lookuptable if available
+     std::string lookupTableFile = parameters.GetOneString("lookuptable", "");
+     Array2D<Point3f> lookupTable;
+     if(lookupTableFile == ""){
+           lookupTable = Array2D<Point3f>(alloc); // Empty lookup table means it will not be used
+     }else{
+            //Read out lookup table
+
+     }
+
+
+
     // These are additional parameters we need to specify in the PBRT file.
     Float pupilDiameter = parameters.GetOneFloat("pupilDiameter", 4.0); //mm
     Float retinaDistance = parameters.GetOneFloat("retinaDistance",16.32); //mm
@@ -2300,7 +2269,7 @@ HumanEyeCamera *HumanEyeCamera::Create(const ParameterDictionary &parameters,
 
     return alloc.new_object<HumanEyeCamera>(cameraBaseParameters, eyeInterfacesData, pupilDiameter,
                                                 retinaDistance, retinaRadius,
-                                                retinaSemiDiam, iorSpectra,
+                                                retinaSemiDiam, iorSpectra, lookupTable,
                                                 diffractionEnabled, alloc);
 
 }
@@ -3193,7 +3162,6 @@ pstd::optional<CameraRay> OmniCamera::GenerateRay(CameraSample sample,
               sample.pFilm.y / film.FullResolution().y);
     Point2f pFilm2 = physicalExtent.Lerp(s);
     Point3f pFilm(-pFilm2.x, pFilm2.y, 0);
-
 
 
 
