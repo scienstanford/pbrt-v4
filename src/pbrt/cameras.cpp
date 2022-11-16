@@ -2138,14 +2138,108 @@ HumanEyeCamera *HumanEyeCamera::Create(const ParameterDictionary &parameters,
 
     //Read lookuptable if available
      std::string lookupTableFile = parameters.GetOneString("lookuptable", "");
-     Array2D<Point3f> lookupTable;
+     Array2D<Point3f> lookupTable(alloc);
      if(lookupTableFile == ""){
+            
            lookupTable = Array2D<Point3f>(alloc); // Empty lookup table means it will not be used
      }else{
             //Read out lookup table
 
+            
+
+            printf("Lookup table read: %s \n",lookupTableFile.c_str());
+
+
+
+
+
+    auto endsWith = [](const std::string& str, const std::string& suffix) {
+        return str.size() >= suffix.size() && 0 == str.compare(str.size() - suffix.size(), suffix.size(), suffix);
+    };
+ if (!endsWith(lookupTableFile, ".json")) {
+        Error("Invalid format for lookuptable specification file \"%s\".",
+            lookupTableFile.c_str());
+        return nullptr;
+    }
+    // read lens json file
+    std::ifstream i(lookupTableFile);
+    json j;
+    if (i && (i>>j)) {
+        // assert(j.is_object())
+        // j["name"]
+        // j["description"]
+        auto jsurfaces = j["table"];
+
+        auto toVec2 = [](json val) {
+            if (val.is_number()) {
+                return Vector2f{ (Float)val, (Float)val };
+            } else if (val.is_array() && val.size() == 2) {
+                return Vector2f{ val[0], val[1] };
+            }
+            return Vector2f(); // Default value
+        };
+
+
+        auto toPoint3f = [](json val) {
+            if (val.is_number()) {
+                return Point3f{ (Float)val, (Float)val,(Float)val };
+            } else if (val.is_array() && val.size() == 3) {
+                return Point3f{ val[0], val[1], val[2] };
+            }
+            return Point3f(); // Default value
+        };
+
+        auto toVec2i = [](json val) {
+            if (val.is_number()) {
+                return Vector2i{ (int)val, (int)val };
+            }
+            else if (val.is_array() && val.size() == 2) {
+                return Vector2i{ val[0], val[1] };
+            }
+            return Vector2i(); // Default value
+        };
+
+
+
+        //   Inirialize Array2D
+        Point2i nbRowCols = Point2i(toVec2i(j["rowcols"]));    
+
+       
+        lookupTable = Array2D<Point3f>(Bounds2i(Point2i(0,0),nbRowCols),alloc); // Empty lookup table means it will not be used
+        
+        auto aad=lookupTable[Point2i(0,0)];
+        if (jsurfaces.is_array() && jsurfaces.size() > 0) {
+            for (auto jsurf : jsurfaces) {
+                Point2i index = Point2i(toVec2i(jsurf["rowcol"]));
+                Point3f startingPoint = toPoint3f(jsurf["point"]);
+                
+                printf("index: %i,%i \n",index.x,index.y);
+                printf("STARTINGPOINT: %f,%f,%f \n",startingPoint.x,startingPoint.y,startingPoint.z);
+                lookupTable[index] = startingPoint;
+                  
+            }
+        } else {
+            Error("Error,  not a valid table in lookuptable file \"%s\".",
+                lookupTableFile.c_str());
+            return nullptr;
+        }
+     
+    } else {
+        Error("Error reading lookup table file \"%s\".",
+            lookupTableFile.c_str());
+        return nullptr;
+    }
+
+
+
+
+
      }
 
+
+  
+        
+        
 
 
     // These are additional parameters we need to specify in the PBRT file.

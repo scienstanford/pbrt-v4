@@ -758,10 +758,10 @@ class HumanEyeCamera : public CameraBase {
         Point2i filmIndex(Float2int(filmResolution.x * s.x),
                           Float2int(filmResolution.y * s.y));
 
-        // Point3f startingPoint = lookupTable[filmIndex];
-        printf("Film index %i,%i \n", filmIndex.x, filmIndex.y);
-        // return startingPoint;
-        return {};
+        Point3f startingPoint = lookupTable[filmIndex];
+        
+        return startingPoint;
+        
     }
 
     // std::string ToString() const; // not necessary for now --Zhenyi
