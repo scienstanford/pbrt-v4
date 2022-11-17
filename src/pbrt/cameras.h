@@ -654,10 +654,10 @@ class HumanEyeCamera : public CameraBase {
     }
 
     PBRT_CPU_GPU
-    Point3f projectToSphere(const Point2f pFilm) const {
+    Point3f mapToSphere(const Point2f pFilm) const {
         // Determine the size of the sensor in real world units (i.e. convert from pixels
         // to millimeters).
-
+        //printf("Pfilm %f,%f:",pFilm.x,pFilm.y);
         Point2i filmRes = film.FullResolution();
 
         // To calculate the "film diagonal", we use the retina semi-diameter. The film
@@ -736,31 +736,43 @@ class HumanEyeCamera : public CameraBase {
             startingPoint = Point3f(xc, yc, zc);
         }
 
+        
         return startingPoint;
     }
 
     // TG: Casting a Float to integer requires another function on GPU and CPU
     // note that Float is a template class which has a different meaning on CPU and GPU.
     // On GPU Float is a double.
-    PBRT_CPU_GPU inline int Float2int(Float arg) const {
+    // Rounding Down
+    PBRT_CPU_GPU inline int Float2int_rd(Float arg) const {
 #ifdef PBRT_IS_GPU_CODE
 
         return ::__double2int_rd(arg)
 #else
-        return (int)(arg);
+        return (int)(std::floor(arg));
 #endif
     }
 
     PBRT_CPU_GPU
-    Point3f projectLookupTable(const Point2f pFilm) const {
-        Point2i filmResolution = film.FullResolution();
-        Point2f s(pFilm.x / film.FullResolution().x, pFilm.y / film.FullResolution().y);
-        Point2i filmIndex(Float2int(filmResolution.x * s.x),
-                          Float2int(filmResolution.y * s.y));
+    Point3f mapLookupTable(const Point2f pFilm) const {
 
-        Point3f startingPoint = lookupTable[filmIndex];
+        // We need to find the pixel index to know where to evaluate the lookupTable.
+        // pFIlm actually is already the filmindex. It is a floating point number to allow for jitter within the pixel
+        // But if you round it down (floor), you will get the pixel index starting at zero.
+        // I implemented a function that should work on both GPU and CPU
+        Point2i filmIndex=Point2i(Float2int_rd(pFilm.x),Float2int_rd(pFilm.y));
         
-        return startingPoint;
+
+        // DO not evaluae the lookuptable if the index is larger than its size - for whatever reason
+        if((filmIndex.x < lookupTable.XSize()) && (filmIndex.y < lookupTable.YSize())){
+            Point3f startingPoint = lookupTable[filmIndex];
+
+
+            return startingPoint;
+        }else{
+           // REturn empty value if index not within domain of lookupTable;
+          return {};
+         }
         
     }
 
@@ -773,6 +785,8 @@ class HumanEyeCamera : public CameraBase {
 
     // Lookup table
     Array2D<Point3f> lookupTable;
+    Bounds2f physicalExtent;
+
 
     // Lens information
 

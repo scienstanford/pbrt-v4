@@ -1539,6 +1539,13 @@ HumanEyeCamera::HumanEyeCamera(CameraBaseParameters baseParameters,
     lensEls = eyeInterfacesData;
 
     
+    // Calculate physical extent (for computations with lookuptable)
+    Float aspect = (Float)film.FullResolution().y / (Float)film.FullResolution().x;
+    Float diagonal = film.Diagonal();
+    Float x = std::sqrt(Sqr(diagonal) / (1 + Sqr(aspect)));
+    Float y = aspect * x;
+    physicalExtent = Bounds2f(Point2f(-x / 2, -y / 2), Point2f(x / 2, y / 2));
+
 
     // To calculate the "film diagonal", we use the retina semi-diameter. The film diagonal is the diagonal of the rectangular image rendered out by PBRT, in real units. Since we restrict samples to a circular image, we can calculate the film diagonal to be the same as a square that circumscribes the circular image.
     retinaDiag = retinaSemiDiam*1.4142*2; // sqrt(2)*2
@@ -1574,18 +1581,19 @@ pstd::optional<CameraRay> HumanEyeCamera::GenerateRay(CameraSample sample,
 
     // If a surface lookup table is defined, use the legacy code
     if(useLookupTable()){
-        Point3f startingPoint= projectLookupTable(sample.pFilm);
-    
+        
+        startingPoint= mapLookupTable(sample.pFilm);
+        
     // If a sphere is defined, use the legacy code
     }else{
 
 
 
-        Point3f startingPoint= projectToSphere(sample.pFilm);
+        startingPoint= mapToSphere(sample.pFilm);
 
 
     }
-
+    //printf("Starting point: %f,%f,%f \n",startingPoint.x,startingPoint.y,startingPoint.z);
     Float lensU, lensV;
     Point2f lens = SampleUniformDiskConcentric(sample.pLens);
     lensU = lens.x;
