@@ -560,6 +560,7 @@ class SpectralFilm : public FilmBase {
 
 // Thomas: Custom made matrix type to make my life easier
 typedef boost::multi_array<char, 2> Matrix;
+
 class LightfieldFilmWrapper : public SpectralFilm {
   public:
  
@@ -571,11 +572,20 @@ class LightfieldFilmWrapper : public SpectralFilm {
         std::vector<Float> proportionR;
         
         // Full 3D reprsentation
+        
         std::vector<Float> polarAngles; // Matrix rows
         std::vector<Float> azimuthAngles; // Matrix Columns
-        Matrix proportions;
-        Matrix sumweights;
+
+        // A vector containing proportion for all subpixels however many there may be
+        // Rows (first index) are polar angles
+        pstd::vector<Array2D<Float>> proportions; 
+        pstd::vector<std::string> subpixelNames; 
+        Array2D<Float> sumweights; // Columns (second index) are azmith angles
     };
+    
+    // Array containing a pdSensitivity per pixel
+    Array2D<PDSensitivity> pdSensitivities;
+    
 
     PBRT_CPU_GPU
     void AddLightfieldSample(Ray raySensor, Point2i pFilm, SampledSpectrum L, const SampledWavelengths &lambda,

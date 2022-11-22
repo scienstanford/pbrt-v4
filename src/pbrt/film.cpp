@@ -1116,7 +1116,7 @@ LightfieldFilmWrapper::LightfieldFilmWrapper(FilmBaseParameters p, PDSensitivity
 
         pixel.subpixels = std::vector<SubPixel>(nbSubpixels);
 
-        // Allocoate resources for subpixels
+        // Allocate resources for subpixels
         for (int sp = 0; sp < pixel.subpixels.size(); sp++) {
             pixel.subpixels[sp].bucketSums = bucketWeightBuffer;
             bucketWeightBuffer += nBuckets;
@@ -1306,6 +1306,9 @@ Image LightfieldFilmWrapper::GetImage(ImageMetadata *metadata, Float splatScale)
     return image;
 }
 
+
+
+
 void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
                                                 SampledSpectrum L,
                                                 const SampledWavelengths &lambda,
@@ -1336,16 +1339,42 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
 
     // We want the angle w.r.t. the normal on the film, hence we subtract it from 90 deg (pi/2)
     // we then convert it from radians to degrees.
-    Float angle = 180/Pi*(Pi/2-atan2(dir.z,dir.x));
+    //Float angle = 180/Pi*(Pi/2-atan2(dir.z,dir.x));
     // Find first angle which is at least equal in size
-    int index=0;
-    while(angle>pdsensitivity.angles[index] && index<pdsensitivity.angles.size()){
-        index=index+1;
-    }
+ //   int index=0;
+//    while(angle>pdsensitivity.angles[index] && index<pdsensitivity.angles.size()){
+//        index=index+1;
+//    }
     
-    Float distributor[2] = {pdsensitivity.proportionL[index], pdsensitivity.proportionR[index]};
-    
+    // Calculate polar angle (w.r.t to normal on film (z direction))
+    Float polarAngleDeg = 180/Pi*(Pi/2-atan2(dir.z,std::sqrt(dir.x*dir.x +dir.y*dir.y)));
 
+    // Calculate azimuth angle 
+    // TG: watch out for the sign of dir !
+    Float azimuthAngleDeg = 180/Pi*atan2(dir.x,dir.y);
+
+
+    // Find closest Polar which is at least equal in size
+    int indexPolarRow=0;
+    while(polarAngleDeg>pdsensitivity.polarAngles[indexPolarRow] && indexPolarRow<pdsensitivity.polarAngles.size()){
+        indexPolarRow++;
+    }
+
+
+    // Find closest Azimuth which is at least equal in size
+    int indexPolarCol=0;
+    while(azimuthAngleDeg>pdsensitivity.azimuthAngles[indexPolarCol] && indexPolarCol<pdsensitivity.azimuthAngles.size()){
+        indexPolarCol++;
+    }
+
+    // Read sensitivities and store in array
+    auto nbSubpixels = pdsensitivity.proportions.size();
+    Float distributor[nbSubpixels];
+    for (int s=0;s<nbSubpixels;s++){
+        Point2i index(indexPolarRow,indexPolarCol);
+        distributor[s]=pdsensitivity.proportions[s][index];
+        
+    }
     
     //if (dir.x > 0) {
       //  distributor[0] = 1.0;
@@ -1458,18 +1487,54 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     std::vector<Float> polarAngles = toTerms(j["polarangles"]);
     std::vector<Float> azimuths = toTerms(j["azimuths"]);
 
+
     std::vector<Float> propL = toTerms(j["proportionL"]);
     std::vector<Float> propR = toTerms(j["proportionR"]);
 
-    
-    pd.angles=angles;
-    pd.proportionL=propL;
-    pd.proportionR=propR;
+
+    // Read proportions
+   
+        PDSensitivity pds;
+
+        pstd::vector<Array2D<Float>> proportionsVector(alloc);
+        
+        
+    auto subpixels  = j["subpixels"];
+    for(int s=0; s<subpixels.size();s++){
+        
+        
+        // Select subpixel and determine nb of rows and columns
+        auto subpixel = subpixels[s];
+        auto proportions = subpixel["proportion"];
+        auto nbRows = proportions.size(); // Polar angles
+        assert(polarAngles.size()==nbRows);
+        auto nbCols = proportions[0].size(); // Azimuth angles
+        assert(azimuths.size()==nbCols);
 
 
-    printf("Angles create: %f %f ",angles[0],propL[0]);
+        // Loop over rows and columns and store in array
+        Array2D<Float> proportionArray(nbRows,nbCols,alloc); // Empty lookup table means it will not be used
+        for(int r=0;r<nbRows;r++){
+            for(int c=0;c<nbCols;c++){
+                Point2i index(r,c);
+               proportionArray[index] = proportions[r][c];
+            }
+        }
+
+        // Store proportion array in vector (one matrix per subpixel)
+        proportionsVector.push_back(proportionArray);
+    }
     
-  }
+    
+
+    pd.proportions = proportionsVector;
+    pd.azimuthAngles=azimuths;
+    pd.polarAngles=polarAngles;
+
+
+    //printf("Angles create: %f %f ",angles[0],propL[0]);
+    
+   }
     return alloc.new_object<LightfieldFilmWrapper>(filmBaseParameters, pd, lambdaMin,
                                                    lambdaMax, nBuckets, colorSpace,
                                                    maxComponentValue, writeFP16, alloc);
