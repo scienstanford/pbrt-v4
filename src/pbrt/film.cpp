@@ -1351,7 +1351,7 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
 
     // Calculate azimuth angle 
     // TG: watch out for the sign of dir !
-    Float azimuthAngleDeg = 180/Pi*atan2(dir.x,dir.y);
+    Float azimuthAngleDeg = 180/Pi*atan2(dir.y,dir.x);
 
 
     // Find closest Polar which is at least equal in size
@@ -1369,7 +1369,7 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
 
     // Read sensitivities and store in array 
     const int nbSubpixels = pdsensitivity.proportions.size();
-    Float distributor[2];
+    Float distributor[2]; // try to generalize to arbitrary pixels..
     for (int s=0;s<nbSubpixels;s++){
         Point2i index(indexPolarRow,indexPolarCol);
         distributor[s]=pdsensitivity.proportions[s][index];
