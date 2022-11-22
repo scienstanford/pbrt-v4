@@ -654,6 +654,8 @@ class HumanEyeCamera : public CameraBase {
     }
 
     PBRT_CPU_GPU
+    // TG: This function implements the legacy realisticEye code. 
+    // A point on the film is mapped to a spherical surface.
     Point3f mapToSphere(const Point2f pFilm) const {
         // Determine the size of the sensor in real world units (i.e. convert from pixels
         // to millimeters).
@@ -754,6 +756,11 @@ class HumanEyeCamera : public CameraBase {
     }
 
     PBRT_CPU_GPU
+    // TG: This function takes a point on the film, finds its corresponding index in the 2D lookup table and 
+    // simply returns the point given in the lookup table. The actual position of the film is meaningless since we map
+    // it to an arbitrary point given by the lookup table. 
+    // Note that of a prime number of data points are given, a rectangular grid can never represent the right number of pixels
+    // It is perfectly valid to define a film that has only one row, since we use it as a datastructure rather as a physical film
     Point3f mapLookupTable(const Point2f pFilm) const {
 
         // We need to find the pixel index to know where to evaluate the lookupTable.
