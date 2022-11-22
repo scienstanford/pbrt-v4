@@ -1367,9 +1367,9 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
         indexPolarCol++;
     }
 
-    // Read sensitivities and store in array
+    // Read sensitivities and store in array 
     const int nbSubpixels = pdsensitivity.proportions.size();
-    Float distributor[nbSubpixels];
+    Float distributor[2];
     for (int s=0;s<nbSubpixels;s++){
         Point2i index(indexPolarRow,indexPolarCol);
         distributor[s]=pdsensitivity.proportions[s][index];
