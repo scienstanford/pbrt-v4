@@ -31,7 +31,7 @@
 #include <vector>
 
 // TG: Boost library to deal with matrices
-#include "boost/multi_array.hpp"
+
 #include <cassert>
 
 namespace pbrt {
@@ -559,7 +559,6 @@ class SpectralFilm : public FilmBase {
 };
 
 // Thomas: Custom made matrix type to make my life easier
-typedef boost::multi_array<char, 2> Matrix;
 
 class LightfieldFilmWrapper : public SpectralFilm {
   public:
