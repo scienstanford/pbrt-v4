@@ -1322,7 +1322,9 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
 
     
     // Select Pixel from lookuptable
-    Point2i pixelindex(Float2int_rd(pFilm.x),Float2int_rd(pFilm.y));
+    // Lookuptable is row first. In pbrt y-dimension are rows, so we use y as rows and x as columns.
+    
+   Point2i pixelindex(Float2int_rd(pFilm.y),Float2int_rd(pFilm.x));
 
     PDSensitivity pdsensitivity;
     if(pixelindex.x<pdSensitivities.XSize() && pixelindex.y<pdSensitivities.YSize()){
