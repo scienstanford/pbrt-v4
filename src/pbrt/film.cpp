@@ -1074,7 +1074,7 @@ GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
         writeRelativeVariance, alloc);
 }
 
-LightfieldFilmWrapper::LightfieldFilmWrapper(FilmBaseParameters p, PDSensitivity pd, Float lambdaMin,
+LightfieldFilmWrapper::LightfieldFilmWrapper(FilmBaseParameters p, Array2D<PDSensitivity> pdArray, Float lambdaMin,
                                              Float lambdaMax, int nBuckets,
                                              const RGBColorSpace *colorSpace,
                                              Float maxComponentValue, bool writeFP16,
@@ -1082,7 +1082,8 @@ LightfieldFilmWrapper::LightfieldFilmWrapper(FilmBaseParameters p, PDSensitivity
     : SpectralFilm(p, lambdaMin, lambdaMax, nBuckets, colorSpace, maxComponentValue,
                    writeFP16, alloc),
       pixelcomplexes(p.pixelBounds, alloc),
-      pdsensitivity(pd),
+      pdSensitivities(pdArray,alloc),
+      //pdsensitivity(pds),
       colorSpace(colorSpace),
       lambdaMin(lambdaMin),
       lambdaMax(lambdaMax),
@@ -1454,13 +1455,14 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
         return nullptr;
     }
 
-      // Load PD sensitivity data json
-        std::ifstream i(pdFile);
-        json j;
+    // Load PD sensitivity data json
+    std::ifstream i(pdFile);
+    json j;
 
     //This is an obscure oneliner of code but the i>>j makes json read the file
     // If reading fails it will return false and break out of the if statement.
   PDSensitivity pd;
+  Array2D<PDSensitivity> pdPixelArray;
   if (i && (i>>j)) {
         auto toTerms = [](json jterms)
             {
@@ -1485,8 +1487,6 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     // PD Sensitivity Data
     std::vector<Float> angles = toTerms(j["angles"]);
 
-
-
     std::vector<Float> propL = toTerms(j["proportionL"]);
     std::vector<Float> propR = toTerms(j["proportionR"]);
 
@@ -1495,6 +1495,7 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
 
     auto toPDSensitivity = [alloc,toTerms](json j){
         PDSensitivity pds;
+
         pstd::vector<Array2D<Float>> proportionsVector(alloc);
         auto subpixels  = j["subpixels"];
         std::vector<Float> polarAngles = toTerms(j["polarangles"]);
@@ -1527,7 +1528,7 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
         }
     
     
-
+        //pds.proportions=pstd::vector<Array2D<Float>>(alloc);
         pds.proportions = proportionsVector;
         pds.azimuthAngles=azimuths;
         pds.polarAngles=polarAngles;
@@ -1535,12 +1536,36 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
         return pds;
     };
     
-    pd = toPDSensitivity(j);
+    int nbRows = (int)j["nbpixels"]["rows"];
+    int nbColumns = (int)j["nbpixels"]["columns"];
+    int nbPixels= nbRows*nbColumns;
+    auto pixels  = j["pixels"];
+    assert(nbPixels == pixels.size()); // advoid inconsistency of meta data
 
-    //printf("Angles create: %f %f ",angles[0],propL[0]);
+    // Local variable that will be passed on later to 'pdPixelArray'
+    // This is done because we only know now what size this array will be;
+    Array2D<PDSensitivity> pdPixelArrayLocal = Array2D<PDSensitivity>(nbRows,nbColumns,alloc);
+
+
+    for(int p=0;p<nbPixels;p++){
+        // Read row and column of the pixel, to be used as index in the lookuptable
+        // Assumes lowest possible index is [1,1], as c++ starts at zero, we subtract one for both
+        // row and column
+        int row = (int)pixels[p]["row"]-1;
+        int column = (int)pixels[p]["column"]-1;
+
+        //Generate and store PDSensitivity from json for specific pixel (lookuptable)
+        PDSensitivity pdd = toPDSensitivity(pixels[p]["prd"]);
+        pdPixelArrayLocal[Point2i(row,column)] = pdd;
+    }
+    
+    pdPixelArray=Array2D<PDSensitivity>(pdPixelArrayLocal,alloc);
+    
     
    }
-    return alloc.new_object<LightfieldFilmWrapper>(filmBaseParameters, pd, lambdaMin,
+
+    //pd=pdPixelArray[Point2i(0,0)];
+    return alloc.new_object<LightfieldFilmWrapper>(filmBaseParameters, pdPixelArray,lambdaMin,
                                                    lambdaMax, nBuckets, colorSpace,
                                                    maxComponentValue, writeFP16, alloc);
 }

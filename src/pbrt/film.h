@@ -563,13 +563,10 @@ class SpectralFilm : public FilmBase {
 class LightfieldFilmWrapper : public SpectralFilm {
   public:
  
-
     struct PDSensitivity {
         PDSensitivity() = default;
-        std::vector<Float> angles;
-        std::vector<Float> proportionL;
-        std::vector<Float> proportionR;
-        
+        PDSensitivity(PDSensitivity& pdsensitivity)  = default;
+
         // Full 3D reprsentation
         
         std::vector<Float> polarAngles; // Matrix rows
@@ -578,19 +575,16 @@ class LightfieldFilmWrapper : public SpectralFilm {
         // A vector containing proportion for all subpixels however many there may be
         // Rows (first index) are polar angles
         pstd::vector<Array2D<Float>> proportions; 
-        pstd::vector<std::string> subpixelNames; 
-        Array2D<Float> sumweights; // Columns (second index) are azmith angles
+//        Array2D<Float> sumweights; // Columns (second index) are azmith angles
     };
-    
-    // Array containing a pdSensitivity per pixel
-    Array2D<PDSensitivity> pdSensitivities;
+
     
 
     PBRT_CPU_GPU
     void AddLightfieldSample(Ray raySensor, Point2i pFilm, SampledSpectrum L, const SampledWavelengths &lambda,
                    const VisibleSurface *visibleSurface, Float weight);
 
-    LightfieldFilmWrapper(FilmBaseParameters p, PDSensitivity pd, Float lambdaMin, Float lambdaMax,
+    LightfieldFilmWrapper(FilmBaseParameters p, Array2D<PDSensitivity> pdArray,Float lambdaMin, Float lambdaMax,
                  int nBuckets, const RGBColorSpace *colorSpace,
                  Float maxComponentValue = Infinity, bool writeFP16 = true,
                  Allocator alloc = {});
@@ -643,7 +637,11 @@ class LightfieldFilmWrapper : public SpectralFilm {
     Float maxComponentValue;
     bool writeFP16;
     Float filterIntegral;
-    PDSensitivity pdsensitivity;
+
+        
+    // Array containing a pdSensitivity per pixel
+    Array2D<PDSensitivity> pdSensitivities;
+    PDSensitivity pdsensitivity; // legacy, to be de
 
     SquareMatrix<3> outputRGBFromSensorRGB;
 
