@@ -1484,53 +1484,58 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
 
     // PD Sensitivity Data
     std::vector<Float> angles = toTerms(j["angles"]);
-    std::vector<Float> polarAngles = toTerms(j["polarangles"]);
-    std::vector<Float> azimuths = toTerms(j["azimuths"]);
+
 
 
     std::vector<Float> propL = toTerms(j["proportionL"]);
     std::vector<Float> propR = toTerms(j["proportionR"]);
 
 
-    // Read proportions
-   
+    // Read proportions from subpixels and store into std::vector<Array2D<Float>>
+
+    auto toPDSensitivity = [alloc,toTerms](json j){
         PDSensitivity pds;
-
         pstd::vector<Array2D<Float>> proportionsVector(alloc);
+        auto subpixels  = j["subpixels"];
+        std::vector<Float> polarAngles = toTerms(j["polarangles"]);
+        std::vector<Float> azimuths = toTerms(j["azimuths"]);
+
+        for(int s=0; s<subpixels.size();s++){
         
-        
-    auto subpixels  = j["subpixels"];
-    for(int s=0; s<subpixels.size();s++){
-        
-        
-        // Select subpixel and determine nb of rows and columns
-        auto subpixel = subpixels[s];
-        auto proportions = subpixel["proportion"];
-        auto nbRows = proportions.size(); // Polar angles
-        assert(polarAngles.size()==nbRows);
-        auto nbCols = proportions[0].size(); // Azimuth angles
-        assert(azimuths.size()==nbCols);
+   
+
+            // Select subpixel and determine nb of rows and columns
+            auto subpixel = subpixels[s];
+            auto proportions = subpixel["proportion"];
+            auto nbRows = proportions.size(); // Polar angles
+            assert(polarAngles.size()==nbRows);
+            auto nbCols = proportions[0].size(); // Azimuth angles
+            assert(azimuths.size()==nbCols);
 
 
-        // Loop over rows and columns and store in array
-        Array2D<Float> proportionArray(nbRows,nbCols,alloc); // Empty lookup table means it will not be used
-        for(int r=0;r<nbRows;r++){
-            for(int c=0;c<nbCols;c++){
-                Point2i index(r,c);
-               proportionArray[index] = proportions[r][c];
+            // Loop over rows and columns and store in array
+            Array2D<Float> proportionArray(nbRows,nbCols,alloc); // Empty lookup table means it will not be used
+            for(int r=0;r<nbRows;r++){
+                for(int c=0;c<nbCols;c++){
+                  Point2i index(r,c);
+                proportionArray[index] = proportions[r][c];
+                }
             }
+
+            // Store proportion array in vector (one matrix per subpixel)
+            proportionsVector.push_back(proportionArray);
         }
-
-        // Store proportion array in vector (one matrix per subpixel)
-        proportionsVector.push_back(proportionArray);
-    }
     
     
 
-    pd.proportions = proportionsVector;
-    pd.azimuthAngles=azimuths;
-    pd.polarAngles=polarAngles;
+        pds.proportions = proportionsVector;
+        pds.azimuthAngles=azimuths;
+        pds.polarAngles=polarAngles;
 
+        return pds;
+    };
+    
+    pd = toPDSensitivity(j);
 
     //printf("Angles create: %f %f ",angles[0],propL[0]);
     
