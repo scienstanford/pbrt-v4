@@ -1604,7 +1604,7 @@ OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
     }
     // Compute exit pupil bounds at sampled points on the film
     int nSamples = 64;
-    //nSamples = 1; // Thomas: remove this (debug)
+    nSamples = 1; // Thomas: remove this (debug)
     exitPupilBounds.resize(nSamples);
     ParallelFor(0, nSamples, [&](int i) {
         Float r0 = (Float)i / nSamples * film.Diagonal() / 2;

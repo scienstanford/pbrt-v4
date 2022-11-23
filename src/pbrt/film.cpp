@@ -1456,7 +1456,7 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     //This is an obscure oneliner of code but the i>>j makes json read the file
     // If reading fails it will return false and break out of the if statement.
   PDSensitivity pd;
-  Array2D<PDSensitivity> pdPixelArray;
+  Array2D<PDSensitivity> pdPixelArray(alloc);
   if (i && (i>>j)) {
         auto toTerms = [](json jterms)
             {
