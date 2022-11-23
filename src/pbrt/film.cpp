@@ -1309,18 +1309,7 @@ Image LightfieldFilmWrapper::GetImage(ImageMetadata *metadata, Float splatScale)
 
 
 
-// TG: Casting a Float to integer requires another function on GPU and CPU
-    // note that Float is a template class which has a different meaning on CPU and GPU.
-    // On GPU Float is a double.
-    // Rounding Down
-    PBRT_CPU_GPU inline int Float2int_rd(Float arg) {
-#ifdef PBRT_IS_GPU_CODE
 
-        return ::__double2int_rd(arg)
-#else
-        return (int)(std::floor(arg));
-#endif
-    }
 
 void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
                                                 SampledSpectrum L,

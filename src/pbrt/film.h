@@ -578,7 +578,18 @@ class LightfieldFilmWrapper : public SpectralFilm {
 //        Array2D<Float> sumweights; // Columns (second index) are azmith angles
     };
 
-    
+    // TG: Casting a Float to integer requires another function on GPU and CPU
+    // note that Float is a template class which has a different meaning on CPU and GPU.
+    // On GPU Float is a double.
+    // Rounding Down
+    PBRT_CPU_GPU inline int Float2int_rd(Float arg) const {
+#ifdef PBRT_IS_GPU_CODE
+
+        return ::__double2int_rd(arg);
+#else
+        return (int)(std::floor(arg));
+#endif
+    };
 
     PBRT_CPU_GPU
     void AddLightfieldSample(Ray raySensor, Point2i pFilm, SampledSpectrum L, const SampledWavelengths &lambda,
