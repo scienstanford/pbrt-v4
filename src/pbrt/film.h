@@ -591,7 +591,7 @@ class LightfieldFilmWrapper : public SpectralFilm {
 #endif
     };
 
-    PBRT_CPU_GPU
+    PBRT_CPU_GPU 
     void AddLightfieldSample(Ray raySensor, Point2i pFilm, SampledSpectrum L, const SampledWavelengths &lambda,
                    const VisibleSurface *visibleSurface, Float weight);
 
