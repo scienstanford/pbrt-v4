@@ -1321,11 +1321,14 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
     dir = Normalize(dir);
 
     
-    // Select Pixel from lookuptable
-    // Lookuptable is row first. In pbrt y-dimension are rows, so we use y as rows and x as columns.
-    
+   // Select Pixel from lookuptable
+   // Lookuptable is row first. In pbrt y-dimension are rows, so we use y as rows and x as columns.
    Point2i pixelindex(Float2int_rd(pFilm.y),Float2int_rd(pFilm.x));
 
+    // Determine  which PDSensitivity to use. If the pixelindex is within the boundaries 
+    // of the lookup table, use it. If the index is out of bounds, use the sensitivity curve for the first
+    // pixel (0,0). This is for example useful if you want all pixels to use the same angular sensitivity curve.
+    
     PDSensitivity pdsensitivity;
     if(pixelindex.x<pdSensitivities.XSize() && pixelindex.y<pdSensitivities.YSize()){
         pdsensitivity = pdSensitivities[pixelindex];
@@ -1334,37 +1337,37 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
         pdsensitivity = pdSensitivities[Point2i(0,0)];
     }
 
-    // We want the angle w.r.t. the normal on the film, hence we subtract it from 90 deg (pi/2)
-    // we then convert it from radians to degrees.
-    //Float angle = 180/Pi*(Pi/2-atan2(dir.z,dir.x));
-    // Find first angle which is at least equal in size
- //   int index=0;
-//    while(angle>pdsensitivity.angles[index] && index<pdsensitivity.angles.size()){
-//        index=index+1;
-//    }
+
     
     // Calculate polar angle (w.r.t to normal on film (z direction))
+    // We want the angle w.r.t. the normal on the film, hence we subtract it from 90 deg (pi/2)
+    // we then convert it from radians to degrees.
     Float polarAngleDeg = 180/Pi*(Pi/2-atan2(dir.z,std::sqrt(dir.x*dir.x +dir.y*dir.y)));
 
     // Calculate azimuth angle 
-    // TG: watch out for the sign of dir !
+    // TG: watch out for the sign of the direction vector !
     Float azimuthAngleDeg = 180/Pi*atan2(dir.y,dir.x);
 
 
-    // Find closest Polar which is at least equal in size
+    // Now that we have calculated the polar and azimuth angle, we need to find the closest match
+    // in the angular sensitivity matrix. Since the matrix is ordered we can simply loop through it ad
+    // find the closest match. 
+    
+    // Find closest Polar angle which is at least equal in size
     int indexPolarRow=0;
     while(polarAngleDeg>pdsensitivity.polarAngles[indexPolarRow] && indexPolarRow<pdsensitivity.polarAngles.size()){
         indexPolarRow++;
     }
 
 
-    // Find closest Azimuth which is at least equal in size
+    // Find closest Azimuth angle which is at least equal in size
     int indexPolarCol=0;
     while(azimuthAngleDeg>pdsensitivity.azimuthAngles[indexPolarCol] && indexPolarCol<pdsensitivity.azimuthAngles.size()){
         indexPolarCol++;
     }
 
-    // Read sensitivities and store in array 
+    // Read proportions for each subpixel from the sensitivity matrix 
+    // We store the proportion for each pixel in an array for later use.
     const int nbSubpixels = pdsensitivity.proportions.size();
     Float distributor[2]; // try to generalize to arbitrary pixels..
     for (int s=0;s<nbSubpixels;s++){
@@ -1373,11 +1376,6 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
         
     }
     
-    //if (dir.x > 0) {
-      //  distributor[0] = 1.0;
-     //   distributor[1] = 0.0;
-    //}
-
     // Start by doing more or less what RGBFilm::AddSample() does so
     // that we can maintain accurate RGB values.
 
@@ -1390,7 +1388,9 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
         rgb *= maxComponentValue / m;
 
     DCHECK(InsideExclusive(pFilm, pixelBounds));
+
     // Update RGB fields in Pixel structure.
+    // Distribute the energy of the ray  to the subpixels
     PixelComplex &pixel = pixelcomplexes[pFilm];
 
     for (int sp = 0; sp < pixel.subpixels.size(); ++sp) {
@@ -1420,6 +1420,7 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
             int b = LambdaToBucket(lambda[i]);
             
             auto t  =distributor[sp] * L[i];
+            // TG: why is spectral information not kept? Should I use another function
             pixel.subpixels[sp].bucketSums[b] += distributor[sp] * L[i];
            // pixel.subpixels[sp].weightSums[b] += weight;  // Thomas: add distributor here?
         }
@@ -1480,15 +1481,10 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
                 return res;
             };
 
-    // PD Sensitivity Data
-    std::vector<Float> angles = toTerms(j["angles"]);
-
-    std::vector<Float> propL = toTerms(j["proportionL"]);
-    std::vector<Float> propR = toTerms(j["proportionR"]);
-
-
-    // Read proportions from subpixels and store into std::vector<Array2D<Float>>
-
+    // PD Sensitivity Data 
+    
+    // For each pixel position, we extract the PD sensitivity curves in the form of a
+    // PDSensitivity object
     auto toPDSensitivity = [alloc,toTerms](json j){
         PDSensitivity pds;
 
@@ -1499,18 +1495,20 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
 
         for(int s=0; s<subpixels.size();s++){
         
-   
 
             // Select subpixel and determine nb of rows and columns
             auto subpixel = subpixels[s];
             auto proportions = subpixel["proportion"];
             auto nbRows = proportions.size(); // Polar angles
-            assert(polarAngles.size()==nbRows);
+            if(!(polarAngles.size()==nbRows)){
+                Error("Number of rows in matrix do not match number of polar angles.");
+            };
             auto nbCols = proportions[0].size(); // Azimuth angles
-            assert(azimuths.size()==nbCols);
+            if(!(azimuths.size()==nbCols)){
+                Error("Number of columns in matrix do not match number of azimuth angles.");
+            };
 
-
-            // Loop over rows and columns and store in array
+           // Loop over rows and columns and store in array
             Array2D<Float> proportionArray(nbRows,nbCols,alloc); // Empty lookup table means it will not be used
             for(int r=0;r<nbRows;r++){
                 for(int c=0;c<nbCols;c++){
@@ -1531,18 +1529,23 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
 
         return pds;
     };
-    
+
+
+    // Red metadata from pdsensitivity jsonfile
     int nbRows = (int)j["nbpixels"]["rows"];
     int nbColumns = (int)j["nbpixels"]["columns"];
     int nbPixels= nbRows*nbColumns;
     auto pixels  = j["pixels"];
-    assert(nbPixels == pixels.size()); // advoid inconsistency of meta data
-
+     // advoid inconsistency of meta data
+    if(!(nbPixels == pixels.size())){
+        Error("Metadata about number of pixels is inconistent with the number of provided pixels.         Check whether the field nbpixels contains error or lookuptable has missing/unwanted pixels.");
+    };
+    
     // Local variable that will be passed on later to 'pdPixelArray'
     // This is done because we only know now what size this array will be;
     Array2D<PDSensitivity> pdPixelArrayLocal = Array2D<PDSensitivity>(nbRows,nbColumns,alloc);
 
-
+    // Read proportions from subpixels and store into std::vector<Array2D<Float>>
     for(int p=0;p<nbPixels;p++){
         // Read row and column of the pixel, to be used as index in the lookuptable
         // Assumes lowest possible index is [1,1], as c++ starts at zero, we subtract one for both

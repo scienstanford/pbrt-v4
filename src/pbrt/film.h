@@ -611,6 +611,8 @@ class LightfieldFilmWrapper : public SpectralFilm {
     
   private:
     // LightfieldFilm:: Subpixel complex Definition
+
+    // A Subpixel is a container where distributed rays are accumulated.
     struct SubPixel {
         SubPixel() = default;
         // Continue to store RGB, both to include in the final image as
@@ -623,6 +625,7 @@ class LightfieldFilmWrapper : public SpectralFilm {
         AtomicDouble *bucketSplats;
     };
 
+    // A PixelComplex is a collection of subpixels.
     struct PixelComplex {
         PixelComplex() = default;
         std::vector<SubPixel> subpixels;
