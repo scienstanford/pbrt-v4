@@ -1074,7 +1074,7 @@ GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
         writeRelativeVariance, alloc);
 }
 
-LightfieldFilmWrapper::LightfieldFilmWrapper(FilmBaseParameters p, Array2D<PDSensitivity> pdArray, Float lambdaMin,
+LightfieldFilmWrapper::LightfieldFilmWrapper(FilmBaseParameters p, Array2D<PDSensitivity> pdArray, int nbSubpixels, Float lambdaMin,
                                              Float lambdaMax, int nBuckets,
                                              const RGBColorSpace *colorSpace,
                                              Float maxComponentValue, bool writeFP16,
@@ -1093,16 +1093,21 @@ LightfieldFilmWrapper::LightfieldFilmWrapper(FilmBaseParameters p, Array2D<PDSen
     filterIntegral = filter.Integral();
     // Compute _outputRGBFromSensorRGB_ matrix
 
+
+
+
+
+    // Allocate Memory for all pixel complexes to store
     CHECK(!pixelBounds.IsEmpty());
     filmPixelMemory +=
         pixelBounds.Area() * (sizeof(PixelComplex) + 3 * nBuckets * sizeof(double));
 
-    int nbSubpixels = 2;
-
-    // Allocate memory for the pixel buffers in big arrays. Note that it's
+   // Allocate memory for the pixel buffers in big arrays. Note that it's
     // wasteful (but convenient) to be storing three pointers in each
     // SpectralFilm::Pixel structure since the addresses could be computed
     // based on the base pointers and pixel coordinates.
+
+    //  Factor of 2 is includede because we need two arrays: bucketSums and weightSums
     int nPixels = pixelBounds.Area();
     double *bucketWeightBuffer = alloc.allocate_object<double>(2 * nBuckets * nPixels*nbSubpixels);
     std::memset(
@@ -1128,8 +1133,7 @@ LightfieldFilmWrapper::LightfieldFilmWrapper(FilmBaseParameters p, Array2D<PDSen
             pixel.subpixels[sp].bucketSplats = splatBuffer;
             splatBuffer += NSpectrumSamples;
         }
-        auto aa = pixel.subpixels[1].bucketSums;
-        int bb = 2;
+     
     }
 }
 void LightfieldFilmWrapper::WriteImage(ImageMetadata metadata, Float splatScale) {
@@ -1210,9 +1214,13 @@ Image LightfieldFilmWrapper::GetSubImage(ImageMetadata *metadata, int subpixel_i
         for (int i = 0; i < nBuckets; ++i) {
             Float c = 0;
             if (pixel.subpixels[sp].weightSums[i] > 0) {
+                double bucksum = pixel.subpixels[sp].bucketSums[i];
+                double weightsum = pixel.subpixels[sp].weightSums[i];
+                double splat = pixel.subpixels[sp].bucketSplats[i];
                 c = pixel.subpixels[sp].bucketSums[i] /
-                        pixel.subpixels[sp].weightSums[i] +
-                    splatScale * pixel.subpixels[sp].bucketSplats[i] / filterIntegral;
+                        pixel.subpixels[sp].weightSums[i];
+                        // Thomas Debug: this gives corrupt data? Why are bucketsplats not set to zero?
+                        //  splatScale * pixel.subpixels[sp].bucketSplats[i] / filterIntegral;
                 if (writeFP16 && c > 65504) {
                     c = 65504;
                     ++nClamped;
@@ -1393,12 +1401,16 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
     // Distribute the energy of the ray  to the subpixels
     PixelComplex &pixel = pixelcomplexes[pFilm];
 
-    for (int sp = 0; sp < pixel.subpixels.size(); ++sp) {
+    
         
-        for (int c = 0; c < 3; ++c)
+        for (int c = 0; c < 3; ++c){
+            for (int sp = 0; sp < pixel.subpixels.size(); ++sp) {
             pixel.subpixels[sp].rgbSum[c] += weight * rgb[c] * distributor[sp];
-        pixel.subpixels[sp].rgbWeightSum += weight;  // Thomas distributor also needed?
-
+            }
+        }
+        for (int sp = 0; sp < pixel.subpixels.size(); ++sp) {
+            pixel.subpixels[sp].rgbWeightSum += weight;  // Thomas distributor also needed?
+        }
         // Spectral processing starts here.
         // Optionally clamp spectral value. (TODO: for spectral should we
         // just clamp channels individually?)
@@ -1417,12 +1429,12 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
         
         // Accumulate contributions in spectral buckets.
         for (int i = 0; i < NSpectrumSamples; ++i) {
+            // To allows for binning, the following function maps one of the NSpectrumSamples (31) wavelelnths
+            // in however many bins we ask for.
             int b = LambdaToBucket(lambda[i]);
-            
-            auto t  =distributor[sp] * L[i];
-            // TG: why is spectral information not kept? Should I use another function
-            pixel.subpixels[sp].bucketSums[b] += distributor[sp] * L[i];
-           // pixel.subpixels[sp].weightSums[b] += weight;  // Thomas: add distributor here?
+            for (int sp = 0; sp < pixel.subpixels.size(); ++sp) {            
+                pixel.subpixels[sp].bucketSums[b] += distributor[sp] * L[i];
+                pixel.subpixels[sp].weightSums[b] += weight;  
         }
     }
 }
@@ -1443,6 +1455,11 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     Float lambdaMin = parameters.GetOneFloat("lambdamin", Lambda_min);
     Float lambdaMax = parameters.GetOneFloat("lambdamax", Lambda_max);
     Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
+
+
+    // Will be determined when reading the file
+    int nbSubpixels;
+
 
     // Extract DUal pixel data
     std::string pdFile = ResolveFilename(parameters.GetOneString("pdsensitivity", ""));
@@ -1493,6 +1510,7 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
         std::vector<Float> polarAngles = toTerms(j["polarangles"]);
         std::vector<Float> azimuths = toTerms(j["azimuths"]);
 
+        
         for(int s=0; s<subpixels.size();s++){
         
 
@@ -1560,11 +1578,13 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     
     pdPixelArray=Array2D<PDSensitivity>(pdPixelArrayLocal,alloc);
     
+    // Read number of subpixels from the first pixel, and assume this is the number use
+    nbSubpixels = (int) pixels[0]["prd"]["subpixels"].size();
     
    }
 
     //pd=pdPixelArray[Point2i(0,0)];
-    return alloc.new_object<LightfieldFilmWrapper>(filmBaseParameters, pdPixelArray,lambdaMin,
+    return alloc.new_object<LightfieldFilmWrapper>(filmBaseParameters, pdPixelArray, nbSubpixels,lambdaMin,
                                                    lambdaMax, nBuckets, colorSpace,
                                                    maxComponentValue, writeFP16, alloc);
 }
