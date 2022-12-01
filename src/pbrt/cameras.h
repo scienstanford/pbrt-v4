@@ -837,7 +837,7 @@ class OmniCamera : public LightfieldCameraBase {
     PBRT_CPU_GPU inline int Float2int_rd(Float arg) const {
 #ifdef PBRT_IS_GPU_CODE
 
-        return ::__double2int_rd(arg)
+        return ::__double2int_rd(arg);
 #else
         return (int)(std::floor(arg));
 #endif
