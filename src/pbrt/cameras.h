@@ -25,6 +25,13 @@
 #include <vector>
 #include <gsl/gsl_randist.h>
 
+
+// For reading json files 
+#include <fstream> 
+#include <iostream>
+#include <ext/json.hpp> 
+using json = nlohmann::json;
+
 namespace pbrt {
 
 // CameraTransform Definition
@@ -616,6 +623,119 @@ class RealisticCamera : public CameraBase {
     pstd::vector<Bounds2f> exitPupilBounds;
 };
 
+
+// Read a JSON file containing a lookup table
+// INPUTS:
+//   std::string lookupTableFile - Path to the json file
+//   Allocator - PBRT needs this to allocate datastructures in memory for CPU and GPU
+//   Array2D<Point2f> &lookupTable - This variable is used to return the final lookuptable
+// Returns false if unsuccesful
+PBRT_CPU_GPU
+static bool readLookupTableJson(std::string lookupTableFile,Allocator alloc,Array2D<Point3f> &lookupTable) {
+
+    //Read lookuptable if available
+//     Array2D<Point2f> lookupTable(alloc);
+     if(lookupTableFile == ""){
+            
+           lookupTable = Array2D<Point3f>(alloc); // Empty lookup table means it will not be used
+            return false;
+     }else{
+            //Read out lookup table
+
+            
+
+            printf("Lookup table read: %s \n",lookupTableFile.c_str());
+
+
+
+
+
+    auto endsWith = [](const std::string& str, const std::string& suffix) {
+        return str.size() >= suffix.size() && 0 == str.compare(str.size() - suffix.size(), suffix.size(), suffix);
+    };
+    if (!endsWith(lookupTableFile, ".json")) {
+        Error("Invalid format for lookuptable specification file \"%s\".",
+            lookupTableFile.c_str());
+        return false;
+    }
+    // read lens json file
+    std::ifstream i(lookupTableFile);
+    json j;
+    if (i && (i>>j)) {
+        // assert(j.is_object())
+        // j["name"]
+        // j["description"]
+        auto jsurfaces = j["table"];
+
+        auto toVec2 = [](json val) {
+            if (val.is_number()) {
+                return Vector2f{ (Float)val, (Float)val };
+            } else if (val.is_array() && val.size() == 2) {
+                return Vector2f{ val[0], val[1] };
+            }
+            return Vector2f(); // Default value
+        };
+
+
+        auto toPoint3f = [](json val) {
+            if (val.is_number()) {
+                return Point3f{ (Float)val, (Float)val, (Float)val};
+            } else if (val.is_array() && val.size() == 3) {
+                return Point3f{ val[0], val[1], val[2] };
+            }
+            return Point3f(); // Default value
+        };
+
+        auto toVec2i = [](json val) {
+            if (val.is_number()) {
+                return Vector2i{ (int)val, (int)val };
+            }
+            else if (val.is_array() && val.size() == 2) {
+                return Vector2i{ val[0], val[1] };
+            }
+            return Vector2i(); // Default value
+        };
+
+
+
+        //   Inirialize Array2D
+        Point2i nbRowCols = Point2i(toVec2i(j["rowcols"]));    
+
+       
+        lookupTable = Array2D<Point3f>(Bounds2i(Point2i(0,0),nbRowCols),alloc); // Empty lookup table means it will not be used
+        
+        auto aad=lookupTable[Point2i(0,0)];
+        if (jsurfaces.is_array() && jsurfaces.size() > 0) {
+            for (auto jsurf : jsurfaces) {
+                Point2i index = Point2i(toVec2i(jsurf["rowcol"]));
+                Point3f startingPoint = toPoint3f(jsurf["point"]);
+                
+                printf("index: %i,%i \n",index.x,index.y);
+                printf("STARTINGPOINT: %f,%f \n",startingPoint.x,startingPoint.y);
+                lookupTable[index] = startingPoint;
+                  
+            }
+        } else {
+            Error("Error,  not a valid table in lookuptable file \"%s\".",
+                lookupTableFile.c_str());
+            return false;
+        }
+     
+    } else {
+        Error("Error reading lookup table file \"%s\".",
+            lookupTableFile.c_str());
+        return false;
+    }
+
+
+
+
+
+     }
+
+    return true; // success
+};
+
 // OmniCamera Definition
 class OmniCamera : public LightfieldCameraBase {
   public:
@@ -655,6 +775,7 @@ class OmniCamera : public LightfieldCameraBase {
 
     // OmniCamera Public Methods
     OmniCamera(CameraBaseParameters baseParameters,
+                    Array2D<Point3f> surfaceLookupTable,
                     pstd::vector<OmniCamera::LensElementInterface> &lensInterfaceData,
                     Float focusDistance, Float filmDistance,
                     bool caFlag, bool diffractionEnabled,
@@ -703,8 +824,60 @@ class OmniCamera : public LightfieldCameraBase {
 
     std::string ToString() const;
 
+    PBRT_CPU_GPU
+    bool useLookupTable() const {
+         return (lookupTable.size()>0);
+         
+    }
+
+        // TG: Casting a Float to integer requires another function on GPU and CPU
+    // note that Float is a template class which has a different meaning on CPU and GPU.
+    // On GPU Float is a double.
+    // Rounding Down
+    PBRT_CPU_GPU inline int Float2int_rd(Float arg) const {
+#ifdef PBRT_IS_GPU_CODE
+
+        return ::__double2int_rd(arg)
+#else
+        return (int)(std::floor(arg));
+#endif
+    }
+
+    PBRT_CPU_GPU
+    // TG: This function takes a point on the film, finds its corresponding index in the 2D lookup table and 
+    // simply returns the point given in the lookup table. The actual position of the film is meaningless since we map
+    // it to an arbitrary point given by the lookup table. 
+    // Note that of a prime number of data points are given, a rectangular grid can never represent the right number of pixels
+    // It is perfectly valid to define a film that has only one row, since we use it as a datastructure rather as a physical film
+    Point3f mapLookupTable(const Point2f pFilmUnitless) const {
+
+        // We need to find the pixel index to know where to evaluate the lookupTable.
+        // pFIlm actually is already the filmindex. It is a floating point number to allow for jitter within the pixel
+        // But if you round it down (floor), you will get the pixel index starting at zero.
+        // I implemented a function that should work on both GPU and CPU
+        Point2i filmIndex=Point2i(Float2int_rd(pFilmUnitless.x),Float2int_rd(pFilmUnitless.y));
+        
+
+        // DO not evaluae the lookuptable if the index is larger than its size - for whatever reason
+        if((filmIndex.x < lookupTable.XSize()) && (filmIndex.y < lookupTable.YSize())){
+            Point3f startingPoint = lookupTable[filmIndex];
+
+
+            return startingPoint;
+        }else{
+           // REturn empty value if index not within domain of lookupTable;
+          return {};
+         }
+        
+    }
+
   private:
     // OmniCamera Private Declarations
+
+
+    /*** Variables related to lookup table***/
+    Array2D<Point3f> lookupTable;
+    
 
     enum IntersectResult {MISS,CULLED_BY_APERTURE,HIT};
 

@@ -1536,6 +1536,7 @@ LightfieldCameraBase::LightfieldCameraBase(CameraBaseParameters p)
 
 // OmniCamera Method Definitions
 OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
+                                Array2D<Point3f> filmLookupTable,
                                  pstd::vector<OmniCamera::LensElementInterface> &lensInterfaceData,
                                  Float focusDistance, Float filmDistance,
                                  bool caFlag, bool diffractionEnabled,
@@ -1545,11 +1546,13 @@ OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
                                  Float setApertureDiameter, Image apertureImage,
                                  Allocator alloc)
     : LightfieldCameraBase(baseParameters),
+      lookupTable(filmLookupTable,alloc),
       elementInterfaces(alloc),
       exitPupilBounds(alloc),
       caFlag(caFlag),
       diffractionEnabled(diffractionEnabled),
-      apertureImage(std::move(apertureImage)) {
+      apertureImage(std::move(apertureImage))
+      {
     // Compute film's physical extent
     Float aspect = (Float)film.FullResolution().y / (Float)film.FullResolution().x;
     Float diagonal = film.Diagonal();
@@ -1614,6 +1617,13 @@ OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
 
     // Compute minimum differentials for _OmniCamera_
     FindMinimumDifferentials(this);
+
+    
+    
+    
+    
+    
+
 }
 
 struct aspheric_params {
@@ -2335,23 +2345,37 @@ Float OmniCamera::TraceFullLensSystemFromFilm(const Ray& rIn, Ray* rOut) const {
 
 pstd::optional<std::pair<CameraRay,CameraRay>> OmniCamera::GenerateRayIO(CameraSample sample,
                                                        SampledWavelengths &lambda) const {
-    // Find point on film, _pFilm_, corresponding to _sample.pFilm_
-    Point2f s(sample.pFilm.x / film.FullResolution().x,
-              sample.pFilm.y / film.FullResolution().y);
-    Point2f pFilm2 = physicalExtent.Lerp(s);
-    Point3f pFilm(-pFilm2.x, pFilm2.y, 0);
 
+
+    // Potentially use a lookuptable to move pixel position (pFilmMeters) to
+    // an arbitrary position
+    Point3f pFilmMeters; 
+    if(useLookupTable()){
+        // TG: check sign , why flip X?
+        Point3f pixelPosition= mapLookupTable(sample.pFilm);
+        // TG: should we flip X position as in the legacy code?
+        pFilmMeters = Point3f(pixelPosition.x, pixelPosition.y, pixelPosition.z);
+    }else{
+        // Convert sample.pFilm (unitless coordinates) to the physical position on the film
+        // in units (meters) --> pFilm
+        // Find point on film, _pFilm_, corresponding to _sample.pFilm_
+        Point2f s(sample.pFilm.x / film.FullResolution().x,
+              sample.pFilm.y / film.FullResolution().y);
+        Point2f pFilm2 = physicalExtent.Lerp(s);
+        pFilmMeters = Point3f(-pFilm2.x, pFilm2.y, 0); // in meters (why is X flipped?)
+    }
+    
     // Trace ray from _pFilm_ through lens system
     pstd::optional<ExitPupilSample> eps;
     if (microlens.elementInterfaces.size() > 0){
-        eps = SampleMicrolensPupil(Point2f(pFilm.x, pFilm.y), sample.pLens);
+        eps = SampleMicrolensPupil(Point2f(pFilmMeters.x, pFilmMeters.y), sample.pLens);
     } else {
-        eps = SampleExitPupil(Point2f(pFilm.x, pFilm.y), sample.pLens);
+        eps = SampleExitPupil(Point2f(pFilmMeters.x, pFilmMeters.y), sample.pLens);
     }
     if (!eps)
         return {};
 
-    Ray rFilm(pFilm, eps->pPupil - pFilm);
+    Ray rFilm(pFilmMeters, eps->pPupil - pFilmMeters);
 
     Ray ray;
     // printf("GPU DEBUG: Going into fulll lens system\n");
@@ -2776,6 +2800,7 @@ std::string OmniCamera::ToString() const {
         CameraBase::ToString(), elementInterfaces, exitPupilBounds);
 }
 
+
 OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
                                          const CameraTransform &cameraTransform,
                                          Film film, Medium medium, const FileLoc *loc,
@@ -2785,6 +2810,8 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
 
     // Omni camera-specific parameters
     std::string lensFile = ResolveFilename(parameters.GetOneString("lensfile", ""));
+    std::string lookupTableFile = ResolveFilename(parameters.GetOneString("lookuptablefile", ""));
+
     Float apertureDiameter = parameters.GetOneFloat("aperturediameter", 1.0);
     Float focusDistance = parameters.GetOneFloat("focusdistance", 10.0);
     // Microlens parameters
@@ -2805,6 +2832,17 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
         Error(loc, "No lens description file supplied!");
         return nullptr;
     }
+    
+    Array2D<Point3f> lookupTable(alloc);
+    if (!(lookupTableFile.empty())) {
+        bool success = readLookupTableJson(lookupTableFile,alloc,lookupTable);
+        if(!success){
+             Error(loc, "No valid JSON lookuptable description file supplied!");
+        }
+    }
+
+
+
     // Load element data from lens description file: main lens
     pstd::vector<OmniCamera::LensElementInterface> lensInterfaceData;
 
@@ -3139,7 +3177,7 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
         }
     }
 
-    return alloc.new_object<OmniCamera>(cameraBaseParameters, lensInterfaceData,
+    return alloc.new_object<OmniCamera>(cameraBaseParameters, lookupTable,lensInterfaceData,
                                              focusDistance, filmDistance, 
                                              caFlag, diffractionEnabled,
                                              microlensData, microlensDims,
@@ -3574,6 +3612,8 @@ pstd::optional<std::pair<CameraRay,CameraRay>> RTFCamera::GenerateRayIO(CameraSa
               sample.pFilm.y / film.FullResolution().y);
     Point2f pFilm2 = physicalExtent.Lerp(s);
     Point3f pFilm(-pFilm2.x, pFilm2.y, 0);
+
+    
 
     // We want to find the sample on the lens, this information is in sample.pLens. But how?
     Point3f pOnInputPlane;

@@ -6,23 +6,23 @@
 #include <pbrt/pbrt.h>
 
 #include <ctype.h>
+#include <pbrt/options.h>
+#include <pbrt/util/args.h>
+#include <pbrt/util/error.h>
+#include <pbrt/util/file.h>
+#include <pbrt/util/image.h>
+#include <pbrt/util/log.h>
+#include <pbrt/util/parallel.h>
+#include <pbrt/util/spectrum.h>
+#include <pbrt/util/transform.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <algorithm>
-#include <string>
+#include <ext/json.hpp>
 #include <fstream>
 #include <iomanip>
-#include <pbrt/options.h>
-#include <pbrt/util/error.h>
-#include <pbrt/util/args.h>
-#include <pbrt/util/file.h>
-#include <pbrt/util/image.h>
-#include <pbrt/util/spectrum.h>
-#include <pbrt/util/parallel.h>
-#include <pbrt/util/transform.h>
-#include <ext/json.hpp>
-#include <pbrt/util/log.h>
+#include <string>
 using namespace nlohmann;
 using namespace pbrt;
 
@@ -53,20 +53,21 @@ insertmicrolens options:
 }
 
 namespace pbrt {
-    void to_json(json& j, const Transform& t) {
-        SquareMatrix<4> m = t.GetMatrix();
-        for (int c = 0; c < 4; ++c) {
-            json col;
-            for (int r = 0; r < 4; ++r) {
-                col.push_back(m[c][r]);
-            }
-            j.push_back(col);
+void to_json(json &j, const Transform &t) {
+    SquareMatrix<4> m = t.GetMatrix();
+    for (int c = 0; c < 4; ++c) {
+        json col;
+        for (int r = 0; r < 4; ++r) {
+            col.push_back(m[c][r]);
         }
+        j.push_back(col);
     }
 }
+}  // namespace pbrt
 
-static bool endsWith(const std::string& str, const std::string& suffix) {
-    return str.size() >= suffix.size() && 0 == str.compare(str.size() - suffix.size(), suffix.size(), suffix);
+static bool endsWith(const std::string &str, const std::string &suffix) {
+    return str.size() >= suffix.size() &&
+           0 == str.compare(str.size() - suffix.size(), suffix.size(), suffix);
 };
 
 int convert(int argc, char *argv[]) {
@@ -78,11 +79,13 @@ int convert(int argc, char *argv[]) {
         // Skip over a leading dash or two.
         CHECK_EQ(*ptr, '-');
         ++ptr;
-        if (*ptr == '-') ++ptr;
+        if (*ptr == '-')
+            ++ptr;
 
         // Copy the flag name to the string.
         std::string flag;
-        while (*ptr && *ptr != '=') flag += *ptr++;
+        while (*ptr && *ptr != '=')
+            flag += *ptr++;
 
         if (!*ptr && i + 1 == argc)
             usage("missing value after %s flag", argv[i]);
@@ -92,33 +95,35 @@ int convert(int argc, char *argv[]) {
 
     std::pair<std::string, double> arg;
     for (i = 0; i < argc; ++i) {
-        if (argv[i][0] != '-') break;
-        if (!strcmp(argv[i], "--implicitdefaults") || !strcmp(argv[i], "-implicitdefaults"))
+        if (argv[i][0] != '-')
+            break;
+        if (!strcmp(argv[i], "--implicitdefaults") ||
+            !strcmp(argv[i], "-implicitdefaults"))
             implicitDefaults = !implicitDefaults;
         else {
             std::pair<std::string, double> arg = parseArg();
             if (std::get<0>(arg) == "inputscale") {
                 scale = std::get<1>(arg);
-                if (scale == 0) usage("--inputscale value must be non-zero");
-            }
-            else
+                if (scale == 0)
+                    usage("--inputscale value must be non-zero");
+            } else
                 usage();
         }
     }
 
     if (i >= argc)
-        usage("missing filenames for \"convert\""); 
+        usage("missing filenames for \"convert\"");
     else if (i + 1 >= argc)
         usage("missing second filename (output) for \"convert\"");
 
     const char *inFilename = argv[i], *outFilename = argv[i + 1];
 
-    json identity; 
+    json identity;
     pbrt::to_json(identity, Transform(SquareMatrix<4>()));
     json jwavelengths;
     for (int i = 0; i < NSpectrumSamples; ++i) {
-        Float t = ((Float)i)/(NSpectrumSamples-1);
-        Float lambda = (1.0 - t)*Lambda_min + t*Lambda_max;
+        Float t = ((Float)i) / (NSpectrumSamples - 1);
+        Float lambda = (1.0 - t) * Lambda_min + t * Lambda_max;
         jwavelengths.push_back(lambda);
     }
 
@@ -129,8 +134,7 @@ int convert(int argc, char *argv[]) {
         std::string name;
         std::string description;
         if (lensData.empty()) {
-            Error("Error reading lens specification file \"%s\".",
-                lensFile);
+            Error("Error reading lens specification file \"%s\".", lensFile);
             return -1;
         } else {
             // TODO: More robust extraction of names, descriptions
@@ -145,30 +149,32 @@ int convert(int argc, char *argv[]) {
                 while (descriptionLine[0] == '#') {
                     description += descriptionLine.substr(1);
                     getline(infile, descriptionLine);
-                } 
+                }
             }
         }
         if (lensData.size() % 4 != 0) {
-            // Trisha: If the size has an extra value, it's possible this lens type was meant for pbrt-v2-spectral and has an extra focal length value at the top. In this case, let's automatically convert it by removing this extra value.
+            // Trisha: If the size has an extra value, it's possible this lens type was
+            // meant for pbrt-v2-spectral and has an extra focal length value at the top.
+            // In this case, let's automatically convert it by removing this extra value.
             if (lensData.size() % 4 == 1) {
-                Warning("Extra value in lens specification file, this lens file may be for pbrt-v2-spectral. Removing extra value to make it compatible with pbrt-v3-spectral...");
+                Warning("Extra value in lens specification file, this lens file may be "
+                        "for pbrt-v2-spectral. Removing extra value to make it "
+                        "compatible with pbrt-v3-spectral...");
                 lensData.erase(lensData.begin());
-            }
-            else {
-                Error(
-                    "Excess values in lens specification file \"%s\"; "
-                    "must be multiple-of-four values, read %d.",
-                    lensFile.c_str(), (int)lensData.size());
+            } else {
+                Error("Excess values in lens specification file \"%s\"; "
+                      "must be multiple-of-four values, read %d.",
+                      lensFile.c_str(), (int)lensData.size());
                 return -1;
             }
         }
-        
+
         std::vector<json> surfaces;
         for (int i = 0; i < lensData.size(); i += 4) {
             json jsurf;
-            jsurf["radius"] = lensData[i+0];
-            jsurf["thickness"] = lensData[i+1];
-            jsurf["semi_aperture"] = lensData[i+3] / 2.0f;
+            jsurf["radius"] = lensData[i + 0];
+            jsurf["thickness"] = lensData[i + 1];
+            jsurf["semi_aperture"] = lensData[i + 3] / 2.0f;
             Float ior = lensData[i + 2];
             if (implicitDefaults) {
                 jsurf["ior"] = ior;
@@ -177,7 +183,7 @@ int convert(int argc, char *argv[]) {
                 for (int i = 0; i < NSpectrumSamples; ++i) {
                     jior.push_back(ior);
                 }
-                jsurf["ior"] = {jwavelengths,jior};
+                jsurf["ior"] = {jwavelengths, jior};
                 jsurf["conic_constant"] = (Float)0.0;
                 jsurf["transform"] = identity;
             }
@@ -192,12 +198,12 @@ int convert(int argc, char *argv[]) {
         outfile << std::setw(4) << j << std::endl;
 
         // Covert to outfile here
-        printf("Input file: %s, Ouput file: %s; %zd surfaces\n", inFilename, outFilename, surfaces.size());
-        
+        printf("Input file: %s, Ouput file: %s; %zd surfaces\n", inFilename, outFilename,
+               surfaces.size());
+
     } else {
-        Error(
-            "Input to lenstool conver must be a .dat file, but given \"%s\"; ",
-            lensFile.c_str());
+        Error("Input to lenstool conver must be a .dat file, but given \"%s\"; ",
+              lensFile.c_str());
     }
 
     return 0;
@@ -216,47 +222,51 @@ int insertmicrolens(int argc, char *argv[]) {
         // Skip over a leading dash or two.
         CHECK_EQ(*ptr, '-');
         ++ptr;
-        if (*ptr == '-') ++ptr;
+        if (*ptr == '-')
+            ++ptr;
 
         // Copy the flag name to the string.
         std::string flag;
-        while (*ptr && *ptr != '=') flag += *ptr++;
+        while (*ptr && *ptr != '=')
+            flag += *ptr++;
 
         if (!*ptr && i + 1 == argc)
             usage("missing value after %s flag", argv[i]);
         const char *value = (*ptr == '=') ? (ptr + 1) : argv[++i];
-        return{ flag, atof(value) };
-    }; 
+        return {flag, atof(value)};
+    };
 
     std::pair<std::string, double> arg;
     for (i = 0; i < argc; ++i) {
-        if (argv[i][0] != '-') break;
+        if (argv[i][0] != '-')
+            break;
         std::pair<std::string, double> arg = parseArg();
         if (std::get<0>(arg) == "xdim") {
             xDim = (int)std::get<1>(arg);
-            if (xDim <= 0) usage("--xDim value must be positive");
-        } 
-        else if (std::get<0>(arg) == "ydim") {
+            if (xDim <= 0)
+                usage("--xDim value must be positive");
+        } else if (std::get<0>(arg) == "ydim") {
             yDim = (int)std::get<1>(arg);
-            if (yDim <= 0) usage("--yDim value must be positive");
-        }
-        else if (std::get<0>(arg) == "filmwidth") {
+            if (yDim <= 0)
+                usage("--yDim value must be positive");
+        } else if (std::get<0>(arg) == "filmwidth") {
             filmWidth = (Float)std::get<1>(arg);
-            if (filmWidth <= 0) usage("--filmwidth value must be positive");
-        }
-        else if (std::get<0>(arg) == "filmheight") {
+            if (filmWidth <= 0)
+                usage("--filmwidth value must be positive");
+        } else if (std::get<0>(arg) == "filmheight") {
             filmHeight = (Float)std::get<1>(arg);
-            if (filmHeight <= 0) usage("--filmheight value must be positive");
-        }
-        else if (std::get<0>(arg) == "filmtolens") {
+            if (filmHeight <= 0)
+                usage("--filmheight value must be positive");
+        } else if (std::get<0>(arg) == "filmtolens") {
             filmToLens = (Float)std::get<1>(arg);
-            if (filmToLens <= 0) usage("--filmtolens value must be positive");
-        }
-        else if (std::get<0>(arg) == "filmtomicrolens") {
+            if (filmToLens <= 0)
+                usage("--filmtolens value must be positive");
+        } else if (std::get<0>(arg) == "filmtomicrolens") {
             filmToMicrolens = (Float)std::get<1>(arg);
-            if (filmToMicrolens != 0.0) usage("--filmtomicrolens currently must be exactly 0! More complicated algorithms NYI.");
-        }
-        else
+            if (filmToMicrolens != 0.0)
+                usage("--filmtomicrolens currently must be exactly 0! More complicated "
+                      "algorithms NYI.");
+        } else
             usage();
     }
 
@@ -267,13 +277,12 @@ int insertmicrolens(int argc, char *argv[]) {
     else if (i + 2 >= argc)
         usage("missing third filename (output file) for \"insertmicrolens\"");
 
-    const char *inFilename = argv[i], *microlensFilename = argv[i + 1], *outFilename = argv[i + 2];
+    const char *inFilename = argv[i], *microlensFilename = argv[i + 1],
+               *outFilename = argv[i + 2];
 
-
-    auto readJSONLenses = [](std::string lensFile, json& output) {
+    auto readJSONLenses = [](std::string lensFile, json &output) {
         if (!endsWith(lensFile, ".json")) {
-            Error("Invalid format for lens specification file \"%s\".",
-                lensFile.c_str());
+            Error("Invalid format for lens specification file \"%s\".", lensFile.c_str());
             return false;
         }
         // read a JSON file
@@ -281,8 +290,7 @@ int insertmicrolens(int argc, char *argv[]) {
         if (i && (i >> output)) {
             return true;
         } else {
-            Error("Error reading lens specification file \"%s\".",
-                lensFile.c_str());
+            Error("Error reading lens specification file \"%s\".", lensFile.c_str());
             return false;
         }
     };
@@ -290,31 +298,32 @@ int insertmicrolens(int argc, char *argv[]) {
     readJSONLenses(inFilename, jlens);
     readJSONLenses(microlensFilename, jmicrolens);
     if (!jmicrolens["microlens"].is_null()) {
-        Error("Error, microlens surface specification had its own microlens specification: \"%s\".",
-            microlensFilename);
+        Error("Error, microlens surface specification had its own microlens "
+              "specification: \"%s\".",
+              microlensFilename);
     }
 
     std::string mlname = jmicrolens["name"].get<std::string>();
     jlens["name"] = jlens["name"].get<std::string>() + " w/ microlens " + mlname;
-    
+
     std::string microDescript = jmicrolens["description"].get<std::string>();
     if (microDescript == std::string("")) {
         microDescript = "\nWith added microlens " + mlname;
     } else {
         microDescript = "\nWith added microlens " + mlname + ":\n" + microDescript;
     }
-    
+
     json outMicro;
-    outMicro["dimensions"] = { xDim, yDim };
+    outMicro["dimensions"] = {xDim, yDim};
     outMicro["surfaces"] = jmicrolens["surfaces"];
     json offsets;
     for (int y = 0; y < yDim; ++y) {
         for (int x = 0; x < xDim; ++x) {
-            offsets.push_back(json{ 0.0, 0.0 });
+            offsets.push_back(json{0.0, 0.0});
         }
     }
     outMicro["offsets"] = offsets;
-    
+
     jlens["microlens"] = outMicro;
     std::ofstream outfile(outFilename);
     outfile << std::setw(4) << jlens << std::endl;
@@ -327,9 +336,10 @@ int insertmicrolens(int argc, char *argv[]) {
 
 int main(int argc, char *argv[]) {
     PBRTOptions opt;
-    InitPBRT(opt); // Warning and above.
+    InitPBRT(opt);  // Warning and above.
 
-    if (argc < 2) usage();
+    if (argc < 2)
+        usage();
 
     if (!strcmp(argv[1], "convert"))
         return convert(argc - 2, argv + 2);

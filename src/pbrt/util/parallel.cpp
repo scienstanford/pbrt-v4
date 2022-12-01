@@ -320,7 +320,7 @@ void ParallelFor2D(const Bounds2i &extent, std::function<void(Bounds2i)> func) {
     int tileSize = Clamp(int(std::sqrt(extent.Diagonal().x * extent.Diagonal().y /
                                        (8 * RunningThreads()))),
                          1, 32);
-
+    
     ParallelForLoop2D loop(extent, tileSize, std::move(func));
     std::unique_lock<std::mutex> lock = ParallelJob::threadPool->AddToJobList(&loop);
 

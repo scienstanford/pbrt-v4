@@ -3671,7 +3671,7 @@ void LightfieldPathIntegrator::EvaluatePixelSample(Point2i pPixel, int sampleInd
     CameraSample cameraSample = GetCameraSample(sampler, pPixel, filter);
 
     // Generate camera ray for current sample
-    // Thomas We should have e ray differnetial for for the IO version
+    // Thomas We should have a ray differnetial for for the IO version
     pstd::optional<CameraRayDifferential> cameraRay =
     camera.GenerateRayDifferential(cameraSample, lambda);
 
