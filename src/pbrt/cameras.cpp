@@ -2353,8 +2353,9 @@ pstd::optional<std::pair<CameraRay,CameraRay>> OmniCamera::GenerateRayIO(CameraS
     if(useLookupTable()){
         // TG: check sign , why flip X?
         Point3f pixelPosition= mapLookupTable(sample.pFilm);
+        
         // TG: should we flip X position as in the legacy code?
-        pFilmMeters = Point3f(pixelPosition.x, pixelPosition.y, pixelPosition.z);
+        pFilmMeters = Point3f(-pixelPosition.x, pixelPosition.y, pixelPosition.z);
     }else{
         // Convert sample.pFilm (unitless coordinates) to the physical position on the film
         // in units (meters) --> pFilm

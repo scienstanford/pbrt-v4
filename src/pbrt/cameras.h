@@ -838,6 +838,7 @@ class OmniCamera : public LightfieldCameraBase {
 #ifdef PBRT_IS_GPU_CODE
 
         return ::__double2int_rd(arg);
+        
 #else
         return (int)(std::floor(arg));
 #endif
