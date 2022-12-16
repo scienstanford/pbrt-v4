@@ -1522,7 +1522,7 @@ HumanEyeCamera::HumanEyeCamera(CameraBaseParameters baseParameters,
                     Float retinaRadius,
                     Float retinaSemiDiam,
                     pstd::vector<Spectrum> iorSpectra,
-                    Array2D<Point3f> surfaceLookupTable,
+                    pstd::vector<Point3f> surfaceLookupTable,
                     bool diffractionEnabled,
                     Allocator alloc)
     : CameraBase(baseParameters),

@@ -611,7 +611,7 @@ class HumanEyeCamera : public CameraBase {
                    pstd::vector<LensElementEye> &eyeInterfacesData, Float pupilDiameter,
                    Float retinaDistance, Float retinaRadius, Float retinaSemiDiam,
                    pstd::vector<Spectrum> iorSpectra,
-                  Array2D<Point3f> surfaceLookupTable,
+                   pstd::vector<Point3f> surfaceLookupTable,
                      bool diffractionEnabled,
                    Allocator alloc);
     static HumanEyeCamera *Create(const ParameterDictionary &parameters,
@@ -769,10 +769,24 @@ class HumanEyeCamera : public CameraBase {
         // I implemented a function that should work on both GPU and CPU
         Point2i filmIndex=Point2i(Float2int_rd(pFilm.x),Float2int_rd(pFilm.y));
         
+        // It is not known in advance whether the caller made the film a column or row vector
+        // just assume that the largest index must be the right dimension
+        int linearIndex = filmIndex.x;
+        if(filmIndex.y>filmIndex.y){
+            int linearIndex = filmIndex.y;
+        }
 
         // DO not evaluae the lookuptable if the index is larger than its size - for whatever reason
         if((filmIndex.x < lookupTable.XSize()) && (filmIndex.y < lookupTable.YSize())){
             Point3f startingPoint = lookupTable[filmIndex];
+        
+        if(filmIndex.x < lookupTable.size()){
+        Point3f startingPoint = lookupTable[filmIndex];
+
+
+        
+ 
+
 
 
             return startingPoint;
@@ -791,7 +805,7 @@ class HumanEyeCamera : public CameraBase {
     // const bool noWeighting;
 
     // Lookup table
-    Array2D<Point3f> lookupTable;
+    pstd::vector<Point3f> lookupTable;
     Bounds2f physicalExtent;
 
 
