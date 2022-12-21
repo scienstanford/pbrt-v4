@@ -631,13 +631,13 @@ class RealisticCamera : public CameraBase {
 //   Array2D<Point2f> &lookupTable - This variable is used to return the final lookuptable
 // Returns false if unsuccesful
 PBRT_CPU_GPU
-static bool readLookupTableJson(std::string lookupTableFile,Allocator alloc,Array2D<Point3f> &lookupTable) {
+static bool readLookupTableJson(std::string lookupTableFile,Allocator alloc,pstd::vector<Point3f> &lookupTable) {
 
     //Read lookuptable if available
 //     Array2D<Point2f> lookupTable(alloc);
      if(lookupTableFile == ""){
             
-           lookupTable = Array2D<Point3f>(alloc); // Empty lookup table means it will not be used
+           lookupTable = pstd::vector<Point3f>(alloc); // Empty lookup table means it will not be used
             return false;
      }else{
             //Read out lookup table
@@ -699,18 +699,21 @@ static bool readLookupTableJson(std::string lookupTableFile,Allocator alloc,Arra
 
 
         //   Inirialize Array2D
-        Point2i nbRowCols = Point2i(toVec2i(j["rowcols"]));    
+        //Point2i nbRowCols = Point2i(toVec2i(j["rowcols"]));    
+         int nbPoints = (int) j["numberofpoints"];
+         lookupTable =  pstd::vector<Point3f>(nbPoints,alloc);  // Empty lookup table means it will not be used
 
        
-        lookupTable = Array2D<Point3f>(Bounds2i(Point2i(0,0),nbRowCols),alloc); // Empty lookup table means it will not be used
+        //lookupTable = pstd::vector<Point3f>(Bounds2i(Point2i(0,0),nbRowCols),alloc); // Empty lookup table means it will not be used
+        //lookupTable = pstd::vector<Point3f>(alloc); // Empty lookup table means it will not be used
         
-        auto aad=lookupTable[Point2i(0,0)];
         if (jsurfaces.is_array() && jsurfaces.size() > 0) {
             for (auto jsurf : jsurfaces) {
-                Point2i index = Point2i(toVec2i(jsurf["rowcol"]));
+                //Point2i index = Point2i(toVec2i(jsurf["rowcol"]));
+                int index = (int) jsurf["index"];
                 Point3f startingPoint = toPoint3f(jsurf["point"]);
                 
-                printf("index: %i,%i \n",index.x,index.y);
+                printf("index: %i \n", index);
                 printf("STARTINGPOINT: %f,%f \n",startingPoint.x,startingPoint.y);
                 lookupTable[index] = startingPoint;
                   
@@ -775,7 +778,7 @@ class OmniCamera : public LightfieldCameraBase {
 
     // OmniCamera Public Methods
     OmniCamera(CameraBaseParameters baseParameters,
-                    Array2D<Point3f> surfaceLookupTable,
+                    pstd::vector<Point3f> surfaceLookupTable,
                     pstd::vector<OmniCamera::LensElementInterface> &lensInterfaceData,
                     Float focusDistance, Float filmDistance,
                     bool caFlag, bool diffractionEnabled,
@@ -838,7 +841,7 @@ class OmniCamera : public LightfieldCameraBase {
 #ifdef PBRT_IS_GPU_CODE
 
         return ::__double2int_rd(arg);
-        
+
 #else
         return (int)(std::floor(arg));
 #endif
@@ -859,11 +862,11 @@ class OmniCamera : public LightfieldCameraBase {
         Point2i filmIndex=Point2i(Float2int_rd(pFilmUnitless.x),Float2int_rd(pFilmUnitless.y));
         
 
-        // DO not evaluae the lookuptable if the index is larger than its size - for whatever reason
-        if((filmIndex.x < lookupTable.XSize()) && (filmIndex.y < lookupTable.YSize())){
-            Point3f startingPoint = lookupTable[filmIndex];
-
-
+        // We assume that the Y index is 1 (horizontal vector image)
+        int linearIndex = filmIndex.x;
+        
+        if(linearIndex < lookupTable.size()){
+            Point3f startingPoint = lookupTable[linearIndex];
             return startingPoint;
         }else{
            // REturn empty value if index not within domain of lookupTable;
@@ -877,7 +880,7 @@ class OmniCamera : public LightfieldCameraBase {
 
 
     /*** Variables related to lookup table***/
-    Array2D<Point3f> lookupTable;
+    pstd::vector<Point3f> lookupTable;
     
 
     enum IntersectResult {MISS,CULLED_BY_APERTURE,HIT};

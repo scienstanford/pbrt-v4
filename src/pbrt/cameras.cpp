@@ -1536,7 +1536,7 @@ LightfieldCameraBase::LightfieldCameraBase(CameraBaseParameters p)
 
 // OmniCamera Method Definitions
 OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
-                                Array2D<Point3f> filmLookupTable,
+                                pstd::vector<Point3f> filmLookupTable,
                                  pstd::vector<OmniCamera::LensElementInterface> &lensInterfaceData,
                                  Float focusDistance, Float filmDistance,
                                  bool caFlag, bool diffractionEnabled,
@@ -2834,7 +2834,7 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
         return nullptr;
     }
     
-    Array2D<Point3f> lookupTable(alloc);
+    pstd::vector<Point3f> lookupTable(alloc);
     if (!(lookupTableFile.empty())) {
         bool success = readLookupTableJson(lookupTableFile,alloc,lookupTable);
         if(!success){
