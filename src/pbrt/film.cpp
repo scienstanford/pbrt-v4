@@ -1074,7 +1074,7 @@ GBufferFilm *GBufferFilm::Create(const ParameterDictionary &parameters,
         writeRelativeVariance, alloc);
 }
 
-LightfieldFilmWrapper::LightfieldFilmWrapper(FilmBaseParameters p, pstd::vector<PDSensitivity> pdArray, int nbSubpixels, Float lambdaMin,
+LightfieldFilmWrapper::LightfieldFilmWrapper(FilmBaseParameters p, Array2D<PDSensitivity> pdArray, int nbSubpixels, Float lambdaMin,
                                              Float lambdaMax, int nBuckets,
                                              const RGBColorSpace *colorSpace,
                                              Float maxComponentValue, bool writeFP16,
@@ -1331,23 +1331,18 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
     
    // Select Pixel from lookuptable
    // Lookuptable is row first. In pbrt y-dimension are rows, so we use y as rows and x as columns.
-   //Point2i pixelindex(Float2int_rd(pFilm.y),Float2int_rd(pFilm.x));
-
-    // All pixels are arranged in a horizontal vector
-    // We assume that the Y index is 1 (horizontal vector image)
-    int linearIndex = Float2int_rd(pFilm.x);
+   Point2i pixelindex(Float2int_rd(pFilm.y),Float2int_rd(pFilm.x));
 
     // Determine  which PDSensitivity to use. If the pixelindex is within the boundaries 
     // of the lookup table, use it. If the index is out of bounds, use the sensitivity curve for the first
     // pixel (0,0). This is for example useful if you want all pixels to use the same angular sensitivity curve.
     
-    
     PDSensitivity pdsensitivity;
-    if(linearIndex<pdSensitivities.size()){
-        pdsensitivity = pdSensitivities[linearIndex];
+    if(pixelindex.x<pdSensitivities.XSize() && pixelindex.y<pdSensitivities.YSize()){
+        pdsensitivity = pdSensitivities[pixelindex];
     }else{
         //Use default if pixel index is outside of defined area ( the json may not provide angular sensitivites for all pixels)
-        pdsensitivity = pdSensitivities[0];
+        pdsensitivity = pdSensitivities[Point2i(0,0)];
     }
 
 
@@ -1481,7 +1476,7 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     //This is an obscure oneliner of code but the i>>j makes json read the file
     // If reading fails it will return false and break out of the if statement.
   PDSensitivity pd;
-  pstd::vector<PDSensitivity> pdPixelArray(alloc);
+  Array2D<PDSensitivity> pdPixelArray(alloc);
   if (i && (i>>j)) {
         auto toTerms = [](json jterms)
             {
@@ -1531,14 +1526,12 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
                 Error("Number of columns in matrix do not match number of azimuth angles.");
             };
 
-
-            
            // Loop over rows and columns and store in array
             Array2D<Float> proportionArray(nbRows,nbCols,alloc); // Empty lookup table means it will not be used
             for(int r=0;r<nbRows;r++){
                 for(int c=0;c<nbCols;c++){
                   Point2i index(r,c);
-                  proportionArray[index] = proportions[r][c];
+                proportionArray[index] = proportions[r][c];
                 }
             }
 
@@ -1556,10 +1549,10 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     };
 
 
-    // Read metadata from pdsensitivity jsonfile
-    //int nbRows = (int)j["nbpixels"]["rows"];
-    //int nbColumns = (int)j["nbpixels"]["columns"];
-    int nbPixels= (int)j["nbpixels"];
+    // Red metadata from pdsensitivity jsonfile
+    int nbRows = (int)j["nbpixels"]["rows"];
+    int nbColumns = (int)j["nbpixels"]["columns"];
+    int nbPixels= nbRows*nbColumns;
     auto pixels  = j["pixels"];
      // advoid inconsistency of meta data
     if(!(nbPixels == pixels.size())){
@@ -1568,22 +1561,22 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     
     // Local variable that will be passed on later to 'pdPixelArray'
     // This is done because we only know now what size this array will be;
-    pstd::vector<PDSensitivity> pdPixelArrayLocal = pstd::vector<PDSensitivity>(nbPixels,alloc);
+    Array2D<PDSensitivity> pdPixelArrayLocal = Array2D<PDSensitivity>(nbRows,nbColumns,alloc);
 
     // Read proportions from subpixels and store into std::vector<Array2D<Float>>
     for(int p=0;p<nbPixels;p++){
-        // Read index of the pixel, to be used as index in the lookuptable
+        // Read row and column of the pixel, to be used as index in the lookuptable
         // Assumes lowest possible index is [1,1], as c++ starts at zero, we subtract one for both
         // row and column
-        int index = (int)pixels[p]["index"]-1;
-    
+        int row = (int)pixels[p]["row"]-1;
+        int column = (int)pixels[p]["column"]-1;
 
         //Generate and store PDSensitivity from json for specific pixel (lookuptable)
         PDSensitivity pdd = toPDSensitivity(pixels[p]["prd"]);
-        pdPixelArrayLocal[index] = pdd;
+        pdPixelArrayLocal[Point2i(row,column)] = pdd;
     }
     
-    pdPixelArray=pstd::vector<PDSensitivity>(pdPixelArrayLocal,alloc);
+    pdPixelArray=Array2D<PDSensitivity>(pdPixelArrayLocal,alloc);
     
     // Read number of subpixels from the first pixel, and assume this is the number use
     nbSubpixels = (int) pixels[0]["prd"]["subpixels"].size();

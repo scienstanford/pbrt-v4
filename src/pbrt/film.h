@@ -595,7 +595,7 @@ class LightfieldFilmWrapper : public SpectralFilm {
     void AddLightfieldSample(Ray raySensor, Point2i pFilm, SampledSpectrum L, const SampledWavelengths &lambda,
                    const VisibleSurface *visibleSurface, Float weight);
 
-    LightfieldFilmWrapper(FilmBaseParameters p, pstd::vector<PDSensitivity> pdArray, int nbSubpixels,Float lambdaMin, Float lambdaMax,
+    LightfieldFilmWrapper(FilmBaseParameters p, Array2D<PDSensitivity> pdArray, int nbSubpixels,Float lambdaMin, Float lambdaMax,
                  int nBuckets, const RGBColorSpace *colorSpace,
                  Float maxComponentValue = Infinity, bool writeFP16 = true,
                  Allocator alloc = {});
@@ -654,7 +654,7 @@ class LightfieldFilmWrapper : public SpectralFilm {
 
         
     // Array containing a pdSensitivity per pixel
-    pstd::vector<PDSensitivity> pdSensitivities;
+    Array2D<PDSensitivity> pdSensitivities;
     PDSensitivity pdsensitivity; // legacy, to be de
 
     SquareMatrix<3> outputRGBFromSensorRGB;
