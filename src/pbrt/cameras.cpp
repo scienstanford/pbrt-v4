@@ -1607,7 +1607,7 @@ OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
     }
     // Compute exit pupil bounds at sampled points on the film
     int nSamples = 64;
-    nSamples = 1; // Thomas: remove this (debug)
+    
     exitPupilBounds.resize(nSamples);
     ParallelFor(0, nSamples, [&](int i) {
         Float r0 = (Float)i / nSamples * film.Diagonal() / 2;
@@ -2355,7 +2355,9 @@ pstd::optional<std::pair<CameraRay,CameraRay>> OmniCamera::GenerateRayIO(CameraS
         Point3f pixelPosition= mapLookupTable(sample.pFilm);
         
         // TG: should we flip X position as in the legacy code?
-        pFilmMeters = Point3f(-pixelPosition.x, pixelPosition.y, pixelPosition.z);
+        // TG: Do not flip if we want to maintain easy conventions with Lookuptable where negative x means the pixel is on hte left side of the main lens (if the lens is above the pixel)
+        //pFilmMeters = Point3f(-pixelPosition.x, pixelPosition.y, pixelPosition.z);
+        pFilmMeters = Point3f(pixelPosition.x, pixelPosition.y, pixelPosition.z);
     }else{
         // Convert sample.pFilm (unitless coordinates) to the physical position on the film
         // in units (meters) --> pFilm
@@ -3191,6 +3193,7 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
 
 // RTFCamera Method Definitions
 RTFCamera::RTFCamera(CameraBaseParameters baseParameters, 
+                   pstd::vector<Point3f> filmLookupTable,
                     std::string bbmode,
                     Float filmDistance, bool caFlag, Float apertureDiameter,
                     Float planeOffsetInput, Float planeOffsetOutput, Float lensThickness,
@@ -3199,6 +3202,7 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
                     pstd::vector<Float> polyWavelengths_nm,
                     Allocator alloc)
     : LightfieldCameraBase(baseParameters),
+     lookupTable(filmLookupTable,alloc),
       exitPupilBounds(alloc),
       caFlag(caFlag), 
       filmDistance(filmDistance), 
@@ -3406,7 +3410,7 @@ bool RTFCamera::TraceLensesFromFilm(
     // STEP 2. Determine whether the ray will be vignetted or not
     auto passnopass = passNoPassPerWavelength[wlIndex];
     if (!passnopass->isValidRay(rotatedRay)){
-        //std::cout <<  "nopass" <<"\n";    
+       // std::cout <<  "nopass" <<"\n";    
         return false;
     }
        // std::cout <<  "Pass" <<"\n";    
@@ -3424,7 +3428,7 @@ bool RTFCamera::TraceLensesFromFilm(
     
     rLens = RotateRays(rLens, radiusAndRotation.y - 90);
     //std::cout <<  "roteded rlens" << rLens <<"\n";    
-
+    
     if ((rOut != nullptr)) {
         *rOut = (rLens);
     } else {
@@ -3575,6 +3579,7 @@ Point3f RTFCamera::SampleExitPupil(const Point2f &pFilm,
     
     Float pupilPlaneZFromFilm = (filmDistance-planeOffsetInput)+passnopass->distanceInputToIntersectPlane();
 
+    //printf("Filmdistance %f, planeOffsetInput %f, pupilPlaneZFromFilm %f,\n",filmDistance,planeOffsetInput,pupilPlaneZFromFilm);
     // Return sample point rotated by angle of _pFilm_ with $+x$ axis
     // THe exit pupil bounds were calculated for a single direction while the filmposition pFIlm 
     // can be be off axis in any direction. Therefore we first rotate the pupilplane position to the same off axis direction
@@ -3607,12 +3612,27 @@ Point3f RTFCamera::SampleExitPupil(const Point2f &pFilm,
 pstd::optional<std::pair<CameraRay,CameraRay>> RTFCamera::GenerateRayIO(CameraSample sample,
                                                        SampledWavelengths &lambda) const {
 
-    //sstd::cout << "GenerateRayIO" << "\n";
-    // Find point on film, _pFilm_, corresponding to _sample.pFilm_
-    Point2f s(sample.pFilm.x / film.FullResolution().x,
+    // Potentially use a lookuptable to move pixel position (pFilmMeters) to
+    // an arbitrary position
+    Point3f pFilmMeters; 
+    if(useLookupTable()){
+        // TG: check sign , why flip X?
+        Point3f pixelPosition= mapLookupTable(sample.pFilm);
+        
+        // TG: should we flip X position as in the legacy code?
+        // TG: Do not flip if we want to maintain easy conventions with Lookuptable where negative x means the pixel is on hte left side of the main lens (if the lens is above the pixel)
+        //pFilmMeters = Point3f(-pixelPosition.x, pixelPosition.y, pixelPosition.z);
+        pFilmMeters = Point3f(pixelPosition.x, pixelPosition.y, pixelPosition.z);
+    }else{
+        // Convert sample.pFilm (unitless coordinates) to the physical position on the film
+        // in units (meters) --> pFilm
+        // Find point on film, _pFilm_, corresponding to _sample.pFilm_
+        Point2f s(sample.pFilm.x / film.FullResolution().x,
               sample.pFilm.y / film.FullResolution().y);
-    Point2f pFilm2 = physicalExtent.Lerp(s);
-    Point3f pFilm(-pFilm2.x, pFilm2.y, 0);
+        Point2f pFilm2 = physicalExtent.Lerp(s);
+        pFilmMeters = Point3f(-pFilm2.x, pFilm2.y, 0); // in meters (why is X flipped?)
+    }
+    
 
     
 
@@ -3624,15 +3644,15 @@ pstd::optional<std::pair<CameraRay,CameraRay>> RTFCamera::GenerateRayIO(CameraSa
 
 
     /// SAMPLING STRATEGY 1 : Use precomputed bounding pboxes (defective at the moment, but this will become the preferred way )
-    pOnInputPlane = SampleExitPupil(Point2f(pFilm.x, pFilm.y), sample.pLens, &exitPupilBoundsArea);
+    pOnInputPlane = SampleExitPupil(Point2f(pFilmMeters.x, pFilmMeters.y), sample.pLens, &exitPupilBoundsArea);
     Float pupilArea=exitPupilBoundsArea;
     //std::cout << "poninputplane" <<pOnInputPlane <<"\n";
     //std::cout << "pupilarea" << pOnInputPlane <<"\n";
 
 
     // Construct the ray coming from the film to the point on the input plane
-    Ray rFilm(pFilm, pOnInputPlane - pFilm);
-    Ray rOriginOnInputPlane = Ray(pOnInputPlane, pOnInputPlane - pFilm);
+    Ray rFilm(pFilmMeters, pOnInputPlane - pFilmMeters);
+    Ray rOriginOnInputPlane = Ray(pOnInputPlane, pOnInputPlane - pFilmMeters);
     //std::cout <<  "roriigninput" << rOriginOnInputPlane <<"\n";    
 
     // CHoose which wavelength to use (and hence which polynomial)
@@ -3674,6 +3694,7 @@ pstd::optional<std::pair<CameraRay,CameraRay>> RTFCamera::GenerateRayIO(CameraSa
     //std::cout << "ray: " << ray << "\n";
     //std::cout << "rFilm: " << rFilm << "\n";
     
+    std::cout << "in: " << rFilm << "out: " << ray << "\n";
     return std::pair<CameraRay,CameraRay>(raySensor,rayScene);
 }
 
@@ -3711,6 +3732,9 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
     std::string lensFile = ResolveFilename(parameters.GetOneString("lensfile", ""));
     Float apertureDiameter = parameters.GetOneFloat("aperturediameter", -1);
 
+    // Lookuptable
+    std::string lookupTableFile = ResolveFilename(parameters.GetOneString("lookuptablefile", ""));
+
     // Hard set the film distance
     Float filmDistance = parameters.GetOneFloat("filmdistance", 0);
     // Chromatic aberration flag
@@ -3723,6 +3747,17 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
         Error(loc, "No lens description file supplied!");
         return nullptr;
     }
+
+    
+    pstd::vector<Point3f> lookupTable(alloc);
+    if (!(lookupTableFile.empty())) {
+        bool success = readLookupTableJson(lookupTableFile,alloc,lookupTable);
+        if(!success){
+             Error(loc, "No valid JSON lookuptable description file supplied!");
+        }
+    }
+
+
     // Load element data from lens description file: main lens
     pstd::vector<RTFCamera::LensPolynomialTerm> poly;
 
@@ -4088,8 +4123,7 @@ RTFCamera *RTFCamera::Create(const ParameterDictionary &parameters,
 
     std::string bbmode = parameters.GetOneString("bbmode", "polynomial");
 
-    return alloc.new_object<RTFCamera>(cameraBaseParameters, 
-                                        bbmode, 
+    return alloc.new_object<RTFCamera>(cameraBaseParameters, lookupTable, bbmode, 
                                         filmDistance, caFlag, apertureDiameter,
                                         planeOffsetInput,planeOffsetOutput,lensThickness, 
                                         polynomialMaps, 

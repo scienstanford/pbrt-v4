@@ -1325,36 +1325,46 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
                                                 const VisibleSurface *visibleSurface,
                                                 Float weight) {
     AddSample(pFilm, L, lambda, visibleSurface, weight);
-    auto dir = raySensor.d;
-    dir = Normalize(dir);
+    auto dirLensTowardsPixel = -raySensor.d; // raysensor points away from senso (z>0) . We want it to point towards the sensor because that is the convention of the PRD matrix
+    dirLensTowardsPixel = Normalize(dirLensTowardsPixel);
+    //std::cout << "Dir towards pixel" << dirLensTowardsPixel << "\n";
 
     
    // Select Pixel from lookuptable
    // Lookuptable is row first. In pbrt y-dimension are rows, so we use y as rows and x as columns.
-   Point2i pixelindex(Float2int_rd(pFilm.y),Float2int_rd(pFilm.x));
+   //Point2i pixelindex(Float2int_rd(pFilm.y),Float2int_rd(pFilm.x));
+   Point2i pixelindex(Float2int_rd(pFilm.x),1);
+   
 
     // Determine  which PDSensitivity to use. If the pixelindex is within the boundaries 
     // of the lookup table, use it. If the index is out of bounds, use the sensitivity curve for the first
     // pixel (0,0). This is for example useful if you want all pixels to use the same angular sensitivity curve.
     
     PDSensitivity pdsensitivity;
-    if(pixelindex.x<pdSensitivities.XSize() && pixelindex.y<pdSensitivities.YSize()){
+    if(pixelindex.x<pdSensitivities.XSize()){
+
         pdsensitivity = pdSensitivities[pixelindex];
     }else{
         //Use default if pixel index is outside of defined area ( the json may not provide angular sensitivites for all pixels)
+        
         pdsensitivity = pdSensitivities[Point2i(0,0)];
     }
 
 
     
     // Calculate polar angle (w.r.t to normal on film (z direction))
+    // Atan gives a result measured from the the x-y plane. We want to the 
     // We want the angle w.r.t. the normal on the film, hence we subtract it from 90 deg (pi/2)
     // we then convert it from radians to degrees.
-    Float polarAngleDeg = 180/Pi*(Pi/2-atan2(dir.z,std::sqrt(dir.x*dir.x +dir.y*dir.y)));
+    // Since we are calcualting with respect to the normal (0 0 -1) torwards sensor this corresponds to subtracting (-90) which 
+    // is the same as adding 90
+    Float polarAngleDeg =  90+180/Pi*(atan(dirLensTowardsPixel.z/std::sqrt(dirLensTowardsPixel.x*dirLensTowardsPixel.x +dirLensTowardsPixel.y*dirLensTowardsPixel.y)));
 
+    
     // Calculate azimuth angle 
     // TG: watch out for the sign of the direction vector !
-    Float azimuthAngleDeg = 180/Pi*atan2(dir.y,dir.x);
+    Float azimuthAngleDeg = 180/Pi*atan2(dirLensTowardsPixel.y,dirLensTowardsPixel.x);
+
 
 
     // Now that we have calculated the polar and azimuth angle, we need to find the closest match
@@ -1363,27 +1373,39 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
     
     // Find closest Polar angle which is at least equal in size
     int indexPolarRow=0;
-    while(polarAngleDeg>pdsensitivity.polarAngles[indexPolarRow] && indexPolarRow<pdsensitivity.polarAngles.size()){
+    while(polarAngleDeg>pdsensitivity.polarAngles[indexPolarRow] && indexPolarRow<(pdsensitivity.polarAngles.size()-1)){
         indexPolarRow++;
     }
+    
+    //if( !(indexPolarRow<pdsensitivity.polarAngles.size())){
+//        std::cout << "ErroPolar condition: "<< "Target" <<  polarAngleDeg << " - "<<  pdsensitivity.polarAngles[indexPolarRow]<< "\n";
+    //}
+
 
 
     // Find closest Azimuth angle which is at least equal in size
-    int indexPolarCol=0;
-    while(azimuthAngleDeg>pdsensitivity.azimuthAngles[indexPolarCol] && indexPolarCol<pdsensitivity.azimuthAngles.size()){
-        indexPolarCol++;
+    int indexAziCol=0;
+    while(azimuthAngleDeg>pdsensitivity.azimuthAngles[indexAziCol] && indexAziCol<(pdsensitivity.azimuthAngles.size()-1)){
+        indexAziCol++;
     }
+    //if( !(indexAziCol<pdsensitivity.azimuthAngles.size())){
+     //std::cout << "Azimuth condition: "<< "Target" <<  azimuthAngleDeg << " - "<<  pdsensitivity.azimuthAngles[indexAziCol]<< "\n";
+    //}
+
 
     // Read proportions for each subpixel from the sensitivity matrix 
     // We store the proportion for each pixel in an array for later use.
     const int nbSubpixels = pdsensitivity.proportions.size();
-    Float distributor[2]; // try to generalize to arbitrary pixels..
+    Float distributor[nbSubpixels]; // try to generalize to arbitrary pixels..
     for (int s=0;s<nbSubpixels;s++){
-        Point2i index(indexPolarRow,indexPolarCol);
+        Point2i index(indexPolarRow,indexAziCol);
         distributor[s]=pdsensitivity.proportions[s][index];
         
     }
     
+
+    //printf("polar angle: %f - azimuth:%f - propL: %f - propR: %f \n",polarAngleDeg,azimuthAngleDeg,distributor[0],distributor[1]);
+
     // Start by doing more or less what RGBFilm::AddSample() does so
     // that we can maintain accurate RGB values.
 
@@ -1555,8 +1577,9 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     int nbPixels= nbRows*nbColumns;
     auto pixels  = j["pixels"];
      // advoid inconsistency of meta data
+    
     if(!(nbPixels == pixels.size())){
-        Error("Metadata about number of pixels is inconistent with the number of provided pixels.         Check whether the field nbpixels contains error or lookuptable has missing/unwanted pixels.");
+        Error("Metadata about number of pixels is inconistent with the number of provided pixels. Check whether the field nbpixels contains error or lookuptable has missing/unwanted pixels.");
     };
     
     // Local variable that will be passed on later to 'pdPixelArray'
@@ -1570,7 +1593,7 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
         // row and column
         int row = (int)pixels[p]["row"]-1;
         int column = (int)pixels[p]["column"]-1;
-
+        
         //Generate and store PDSensitivity from json for specific pixel (lookuptable)
         PDSensitivity pdd = toPDSensitivity(pixels[p]["prd"]);
         pdPixelArrayLocal[Point2i(row,column)] = pdd;

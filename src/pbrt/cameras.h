@@ -701,6 +701,7 @@ static bool readLookupTableJson(std::string lookupTableFile,Allocator alloc,pstd
         //   Inirialize Array2D
         //Point2i nbRowCols = Point2i(toVec2i(j["rowcols"]));    
          int nbPoints = (int) j["numberofpoints"];
+         
          lookupTable =  pstd::vector<Point3f>(nbPoints,alloc);  // Empty lookup table means it will not be used
 
        
@@ -1068,6 +1069,7 @@ class RTFCamera : public LightfieldCameraBase {
 
     // RTFCamera Public Methods
     RTFCamera(CameraBaseParameters baseParameters,
+                pstd::vector<Point3f> surfaceLookupTable,
                 std::string bbmode,
                 Float filmDistance, bool caFlag, Float apertureDiameter,
                 Float planeOffsetInput, Float planeOffsetOutput, Float lensThickness,
@@ -1117,8 +1119,67 @@ class RTFCamera : public LightfieldCameraBase {
 
     std::string ToString() const;
 
+
+       PBRT_CPU_GPU
+    bool useLookupTable() const {
+         return (lookupTable.size()>0);
+         
+    }
+
+        // TG: Casting a Float to integer requires another function on GPU and CPU
+    // note that Float is a template class which has a different meaning on CPU and GPU.
+    // On GPU Float is a double.
+    // Rounding Down
+    PBRT_CPU_GPU inline int Float2int_rd(Float arg) const {
+#ifdef PBRT_IS_GPU_CODE
+
+        return ::__double2int_rd(arg);
+
+#else
+        return (int)(std::floor(arg));
+#endif
+    }
+
+    
+
+     
+    // TG: This function takes a point on the film, finds its corresponding index in the 2D lookup table and 
+    // simply returns the point given in the lookup table. The actual position of the film is meaningless since we map
+    // it to an arbitrary point given by the lookup table. 
+    // Note that of a prime number of data points are given, a rectangular grid can never represent the right number of pixels
+    // It is perfectly valid to define a film that has only one row, since we use it as a datastructure rather as a physical film
+    PBRT_CPU_GPU
+    Point3f mapLookupTable(const Point2f pFilmUnitless) const {
+
+        // We need to find the pixel index to know where to evaluate the lookupTable.
+        // pFIlm actually is already the filmindex. It is a floating point number to allow for jitter within the pixel
+        // But if you round it down (floor), you will get the pixel index starting at zero.
+        // I implemented a function that should work on both GPU and CPU
+        Point2i filmIndex=Point2i(Float2int_rd(pFilmUnitless.x),Float2int_rd(pFilmUnitless.y));
+        
+
+        // We assume that the Y index is 1 (horizontal vector image)
+        int linearIndex = filmIndex.x;
+        
+        if(linearIndex < lookupTable.size()){
+            Point3f startingPoint = lookupTable[linearIndex];
+            return startingPoint;
+        }else{
+           // REturn empty value if index not within domain of lookupTable;
+          return {};
+         }
+        
+    }
+
+
   private:
     // RTFCamera Private Declarations
+
+    /*** Variables related to lookup table***/
+    pstd::vector<Point3f> lookupTable;
+
+
+
     enum IntersectResult {MISS,CULLED_BY_APERTURE,HIT};
     const bool caFlag;
     const Float filmDistance;
@@ -1220,7 +1281,7 @@ inline pstd::optional<std::pair<CameraRay,CameraRay>> LightfieldCamera::Generate
 // But then I get NAN errors my renderings which I cannot explain
 // So for now i will break the polymorphism . 
 // Only woskf or RTF Camera
-    auto generate = [&](auto ptr) { return ((OmniCamera*)ptr)->GenerateRayIO(sample, lambda); };
+    auto generate = [&](auto ptr) { return ((RTFCamera*)ptr)->GenerateRayIO(sample, lambda); };
     return Dispatch(generate);
 }
 
