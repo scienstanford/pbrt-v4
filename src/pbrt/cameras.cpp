@@ -3469,7 +3469,7 @@ pstd::optional<CameraRay> RTFCamera::GenerateRay(CameraSample sample,
         }
         
     }
-    bool result = TraceLensesFromFilm(rFilm, &ray, wlIndex);
+    bool result = TraceLensesFromFilm(rOriginOnInputPlane, &ray, wlIndex);
     //std::cout <<  "Tracelensfromfilm" << result <<"\n";    
     if (result == 0)
         return {};
