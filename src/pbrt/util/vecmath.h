@@ -13,7 +13,9 @@
 #include <pbrt/util/print.h>
 #include <pbrt/util/pstd.h>
 
+
 #include <algorithm>
+
 #include <cmath>
 #include <iterator>
 #include <string>
@@ -1988,8 +1990,35 @@ public:
             const Vector2<T> e0 = p0 - C;
             const Vector2<T> e1 = p1 - C;
             return atan2((double)e0.y,(double)e0.x) < atan2((double)e1.y, (double)e1.x);
+        
         };
-        std::sort(pCorners, pCorners + 4, ccwWinding); 
+
+
+        // TG:The sorting of the convexQuad is needed for correct operation.
+        //std::sort of the original function  cannot be called on gpu// Howver
+        // Therefore I implemented the Insertion Sort algorithm myself which runs on GPU and is certainly efficient enough for only four elements.
+        Point2<T> temp;
+        int i = 0;
+        while (i < 4){
+            int j = i;
+            while (j>0 && !ccwWinding(pCorners[j-1],pCorners[j])){
+                        //swap
+                        temp = pCorners[j];
+                        pCorners[j] = pCorners[j-1];
+                        pCorners[j-1] = temp;
+                        j=j-1;
+            }
+            i=i+1;
+                        
+        }
+        
+
+
+
+
+
+       // ORIGINAL does not run on GPU std::sort(pCorners, pCorners + 4, ccwWinding); 
+        //}
     }
 
     PBRT_CPU_GPU
