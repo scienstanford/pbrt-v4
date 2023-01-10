@@ -12,6 +12,7 @@
 #include <libdeflate.h>
 
 #include <filesystem/path.h>
+#include <filesystem>
 #include <algorithm>
 #include <cctype>
 #include <climits>
@@ -67,10 +68,18 @@ std::string RemoveExtension(std::string filename) {
 }
 
 std::string ResolveFilename(std::string filename) {
+    
     if (searchDirectory.empty() || filename.empty() || IsAbsolutePath(filename))
         return filename;
-    else
+    else{
+        std::string filefullpath = (searchDirectory / filesystem::path(filename)).str();
+        if (!std::filesystem::exists(filefullpath)){
+           Printf("File not found: %s.\n",filefullpath); 
+        }
+
         return (searchDirectory / filesystem::path(filename)).make_absolute().str();
+    }
+
 }
 
 std::vector<std::string> MatchingFilenames(std::string filenameBase) {

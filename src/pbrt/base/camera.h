@@ -31,12 +31,13 @@ class SphericalCamera;
 class RealisticCamera;
 class OmniCamera;
 class RTFCamera;
-
+class HumanEyeCamera;
 
 // Camera Definition
 class Camera : public TaggedPointer<PerspectiveCamera, OrthographicCamera,
-                                    SphericalCamera, RealisticCamera,
-                                    OmniCamera, RTFCamera> {
+                                    SphericalCamera, RealisticCamera, 
+                                    OmniCamera, HumanEyeCamera,RTFCamera> {
+
   public:
     // Camera Interface
     using TaggedPointer::TaggedPointer;

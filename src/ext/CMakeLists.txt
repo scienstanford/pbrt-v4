@@ -23,6 +23,8 @@ add_subdirectory (libdeflate)
 set (LIBDEFLATE_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/libdeflate PARENT_SCOPE)
 set (LIBDEFLATE_LIBRARIES deflate::deflate PARENT_SCOPE)
 
+set_property (TARGET deflate PROPERTY FOLDER "ext")
+
 ###########################################################################
 # zlib
 
@@ -137,3 +139,12 @@ set (NANOVDB_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/openvdb/nanovdb PARENT_SCOPE)
 set (FLIP_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/flip PARENT_SCOPE)
 
 add_library (flip_lib STATIC ${CMAKE_CURRENT_SOURCE_DIR}/flip/flip.cpp)
+
+set_property (TARGET flip_lib PROPERTY FOLDER "ext")
+
+###########################################################################
+# utf8proc
+
+set (UTF8PROC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/utf8proc PARENT_SCOPE)
+
+add_subdirectory (utf8proc)

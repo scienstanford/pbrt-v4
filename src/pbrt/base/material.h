@@ -22,6 +22,7 @@ struct MaterialEvalContext;
 class CoatedDiffuseMaterial;
 class CoatedConductorMaterial;
 class ConductorMaterial;
+class RetroreflectiveMaterial;
 class DielectricMaterial;
 class DiffuseMaterial;
 class DiffuseTransmissionMaterial;
@@ -34,7 +35,7 @@ class MixMaterial;
 // Material Definition
 class Material
     : public TaggedPointer<  // Material Types
-          CoatedDiffuseMaterial, CoatedConductorMaterial, ConductorMaterial,
+          CoatedDiffuseMaterial, CoatedConductorMaterial, ConductorMaterial,RetroreflectiveMaterial,
           DielectricMaterial, DiffuseMaterial, DiffuseTransmissionMaterial, HairMaterial,
           MeasuredMaterial, SubsurfaceMaterial, ThinDielectricMaterial, MixMaterial
 

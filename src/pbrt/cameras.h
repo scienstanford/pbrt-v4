@@ -5,6 +5,7 @@
 #ifndef PBRT_CAMERAS_H
 #define PBRT_CAMERAS_H
 
+
 #include <pbrt/pbrt.h>
 
 #include <pbrt/base/camera.h>
@@ -24,6 +25,13 @@
 #include <iostream>
 #include <vector>
 #include <gsl/gsl_randist.h>
+
+
+// For reading json files 
+#include <fstream> 
+#include <iostream>
+#include <ext/json.hpp> 
+using json = nlohmann::json;
 
 namespace pbrt {
 
@@ -349,8 +357,8 @@ class PerspectiveCamera : public ProjectiveCamera {
     };
     // PerspectiveCamera Public Methods
     PerspectiveCamera(CameraBaseParameters baseParameters, Float fov,
-                      Bounds2f screenWindow, Float lensRadius, 
-                      Float focalDistance, PerspectiveCamera::distortionPolynomials distortionPolynomials)
+                      Bounds2f screenWindow, Float lensRadius, Float focalDistance,
+                      PerspectiveCamera::distortionPolynomials distortionPolynomials)
         : ProjectiveCamera(baseParameters, Perspective(fov, 1e-2f, 1000.f), screenWindow,
                            lensRadius, focalDistance) {
         // Compute differential changes in origin for perspective camera rays
@@ -594,21 +602,267 @@ class RealisticCamera : public CameraBase {
     pstd::vector<Bounds2f> exitPupilBounds;
 };
 
+// HumanEyeCamera Definition
+class HumanEyeCamera : public CameraBase {
+  public:
+    // HumanEyeCamera Public Declarations
+    struct LensElementEye {
+        Float radiusX;
+        Float radiusY;
+        Float thickness;
+        Float mediumIndex;
+        Float semiDiameter;
+        Float conicConstantX;
+        Float conicConstantY;
+    };
+    pstd::vector<LensElementEye> lensEls;
+
+    // HumanEyeCamera Public Methods
+    HumanEyeCamera(CameraBaseParameters baseParameters,
+                   pstd::vector<LensElementEye> &eyeInterfacesData, Float pupilDiameter,
+                   Float retinaDistance, Float retinaRadius, Float retinaSemiDiam,
+                   pstd::vector<Spectrum> iorSpectra,
+                   pstd::vector<Point3f> surfaceLookupTable,
+                     bool diffractionEnabled,
+                   Allocator alloc);
+    static HumanEyeCamera *Create(const ParameterDictionary &parameters,
+                                  const CameraTransform &cameraTransform, Film film,
+                                  Medium medium, const FileLoc *loc,
+                                  Allocator alloc = {});
+    PBRT_CPU_GPU
+    pstd::optional<CameraRay> GenerateRay(CameraSample sample,
+                                          SampledWavelengths &lambda) const;
+
+    PBRT_CPU_GPU
+    pstd::optional<CameraRayDifferential> GenerateRayDifferential(
+        CameraSample sample, SampledWavelengths &lambda) const {
+        return CameraBase::GenerateRayDifferential(this, sample, lambda);
+    }
+
+    PBRT_CPU_GPU
+    SampledSpectrum We(const Ray &ray, SampledWavelengths &lambda,
+                       Point2f *pRaster2 = nullptr) const {
+        LOG_FATAL("We() unimplemented for HumanEyeCamera");
+        return {};
+    }
+
+    PBRT_CPU_GPU
+    void PDF_We(const Ray &ray, Float *pdfPos, Float *pdfDir) const {
+        LOG_FATAL("PDF_We() unimplemented for HumanEyeCamera");
+    }
+
+    PBRT_CPU_GPU
+    pstd::optional<CameraWiSample> SampleWi(const Interaction &ref, Point2f u,
+                                            SampledWavelengths &lambda) const {
+        LOG_FATAL("SampleWi() unimplemented for HumanEyeCamera");
+        return {};
+    }
+
+    PBRT_CPU_GPU
+    bool useLookupTable() const {
+         return lookupTable.size()>0;
+         
+    }
+
+    PBRT_CPU_GPU
+    // TG: This function implements the legacy realisticEye code. 
+    // A point on the film is mapped to a spherical surface.
+    Point3f mapToSphere(const Point2f pFilm) const {
+        // Determine the size of the sensor in real world units (i.e. convert from pixels
+        // to millimeters).
+        //printf("Pfilm %f,%f:",pFilm.x,pFilm.y);
+        Point2i filmRes = film.FullResolution();
+
+        // To calculate the "film diagonal", we use the retina semi-diameter. The film
+        // diagonal is the diagonal of the rectangular image rendered out by PBRT, in real
+        // units. Since we restrict samples to a circular image, we can calculate the film
+        // diagonal to be the same as a square that circumscribes the circular image.
+        Float aspectRatio = (Float)filmRes.x / (Float)filmRes.y;
+        Float width = retinaDiag / std::sqrt((1.f + 1.f / (aspectRatio * aspectRatio)));
+        Float height = width / aspectRatio;
+
+        Point3f startingPoint;
+
+        startingPoint.x = -((pFilm.x) - filmRes.x / 2.f - .25) / (filmRes.y / 2.f);
+        startingPoint.y = ((pFilm.y) - filmRes.y / 2.f - .25) / (filmRes.y / 2.f);
+
+        // Convert starting point units to millimeters
+        startingPoint.x = startingPoint.x * width / 2.f;
+        startingPoint.y = startingPoint.y * height / 2.f;
+        startingPoint.z = -retinaDistance;
+
+        // Project sampled points onto the curved retina
+        if (retinaRadius != 0) {
+            // Right now the code only lets you curve the sensor toward the scene and not
+            // the other way around. See diagram:
+            /*
+
+                The distance between the zero point on the z-axis (i.e. the lens element
+            closest to the sensor) and the dotted line will be equal to the
+            "retinaDistance." The retina curvature is defined by the "retinaRadius" and
+            it's height in the y and x direction is defined by the "retinaSemiDiam."
+
+
+                                        :
+                                        |  :
+                                        | :
+                            | | |         |:
+            scene <------ | | | <----   |:
+                            | | |         |:
+                        Lens System      | :
+                                        |  :
+                                        :
+                                    retina
+            <---- +z
+
+                */
+
+            // Limit sample points to a circle within the retina semi-diameter
+            if ((startingPoint.x * startingPoint.x + startingPoint.y * startingPoint.y) >
+                (retinaSemiDiam * retinaSemiDiam)) {
+                return {};
+            }
+
+            // Calculate the distance of a disc that fits inside the curvature of the
+            // retina.
+            Float zDiscDistance = -1 * std::sqrt(retinaRadius * retinaRadius -
+                                                 retinaSemiDiam * retinaSemiDiam);
+
+            // If we are within this radius, project each point out onto a sphere. There
+            // may be some issues here with even sampling, since this is a direct
+            // projection...
+            Float el = atan(startingPoint.x / zDiscDistance);
+            Float az = atan(startingPoint.y / zDiscDistance);
+
+            // Convert spherical coordinates to cartesian coordinates (note: we switch up
+            // the x,y,z axis to match our conventions)
+            Float xc, yc, zc, rcoselev;
+            xc = -1 * retinaRadius * sin(el);  // TODO: Confirm this flip?
+            rcoselev = retinaRadius * cos(el);
+            zc = -1 * (rcoselev * cos(az));  // The -1 is to account for the curvature
+                                             // described above in the diagram
+            yc = -1 * rcoselev * sin(az);    // TODO: Confirm this flip?
+
+            zc = zc + -1 * retinaDistance +
+                 retinaRadius;  // Move the z coordinate out to correct retina distance
+
+            startingPoint = Point3f(xc, yc, zc);
+        }
+
+        
+        return startingPoint;
+    }
+
+    // TG: Casting a Float to integer requires another function on GPU and CPU
+    // note that Float is a template class which has a different meaning on CPU and GPU.
+    // On GPU Float is a double.
+    // Rounding Down
+    PBRT_CPU_GPU inline int Float2int_rd(Float arg) const {
+#ifdef PBRT_IS_GPU_CODE
+
+        return ::__double2int_rd(arg);
+#else
+        return (int)(std::floor(arg));
+#endif
+    }
+
+    PBRT_CPU_GPU
+    // TG: This function takes a point on the film, finds its corresponding index in the 2D lookup table and 
+    // simply returns the point given in the lookup table. The actual position of the film is meaningless since we map
+    // it to an arbitrary point given by the lookup table. 
+    // Note that of a prime number of data points are given, a rectangular grid can never represent the right number of pixels
+    // It is perfectly valid to define a film that has only one row, since we use it as a datastructure rather as a physical film
+    Point3f mapLookupTable(const Point2f pFilm) const {
+
+        // We need to find the pixel index to know where to evaluate the lookupTable.
+        // pFIlm actually is already the filmindex. It is a floating point number to allow for jitter within the pixel
+        // But if you round it down (floor), you will get the pixel index starting at zero.
+        // I implemented a function that should work on both GPU and CPU
+        Point2i filmIndex=Point2i(Float2int_rd(pFilm.x),Float2int_rd(pFilm.y));
+        
+        
+        // We assume that the Y index is 1 (horizontal vector image)
+        int linearIndex = filmIndex.x;
+        
+        if(linearIndex < lookupTable.size()){
+            Point3f startingPoint = lookupTable[linearIndex];
+            return startingPoint;
+        }else{
+           // REturn empty value if index not within domain of lookupTable;
+          return {};
+         }
+        
+    }
+
+    // std::string ToString() const; // not necessary for now --Zhenyi
+
+  private:
+    // HumanEyeCamera Private Methods
+    // const bool simpleWeighting;
+    // const bool noWeighting;
+
+    // Lookup table
+    pstd::vector<Point3f> lookupTable;
+    Bounds2f physicalExtent;
+
+
+    // Lens information
+
+    Float effectiveFocalLength;
+
+    // Specific parameters for the human eye
+    Float pupilDiameter;
+    Float retinaDistance;
+    Float retinaRadius;
+    Float retinaSemiDiam;
+    Float retinaDiag;      // This will take the place of "film->diag"
+    Float frontThickness;  // The distance from the back of the lens to the front of the
+                           // eye.
+    pstd::vector<Spectrum> iorSpectra;
+
+    // Flags for conventions
+    bool diffractionEnabled;
+    Float lensScaling;
+
+    // Private methods for tracing through lens
+    // PBRT_CPU_GPU
+    bool IntersectLensElAspheric(const Ray &r, Float *tHit, LensElementEye currElement,
+                                 Float zShift, Vector3f *n) const;
+
+    // PBRT_CPU_GPU
+    void applySnellsLaw(Float n1, Float n2, Float lensRadius, Vector3f &normalVec,
+                        Ray *ray) const;
+
+    // PBRT_CPU_GPU
+    Float lookUpIOR(int mediumIndex, const Ray &ray) const;
+
+    void diffractHURB(Point3f intersect, Float apertureRadius, const Float wavelength,
+                      const Vector3f oldDirection, Vector3f *newDirection) const;
+
+    // Handy method to explicity solve for the z(x,y) at a given point (x,y), for the
+    // biconic SAG
+    Float BiconicZ(Float x, Float y, LensElementEye currElement) const;
+
+    // ZLY: To check whether this is needed or not
+    // // GSL seed(?) for random number generation
+    gsl_rng *r;
+};
+
 // OmniCamera Definition
 class OmniCamera : public CameraBase {
   public:
     // OmniCamera Public Declarations
     struct LensElementInterface {
         LensElementInterface() {}
-        LensElementInterface(Float cRadius, Float aRadius,
-            Float thickness, Float ior, SampledSpectrum iorspectral) :
-            curvatureRadius(cRadius,cRadius),
-            apertureRadius(aRadius ,aRadius),
-            conicConstant((Float)0.0, (Float)0.0),
-            transform(Transform()),
-            thickness(thickness),
-            eta(ior),
-            etaspectral(iorspectral) {}
+        LensElementInterface(Float cRadius, Float aRadius, Float thickness, Float ior,
+                             SampledSpectrum iorspectral)
+            : curvatureRadius(cRadius, cRadius),
+              apertureRadius(aRadius, aRadius),
+              conicConstant((Float)0.0, (Float)0.0),
+              transform(Transform()),
+              thickness(thickness),
+              eta(ior),
+              etaspectral(iorspectral) {}
         Vector2f curvatureRadius;
         Vector2f apertureRadius;
         Vector2f conicConstant;
@@ -621,29 +875,37 @@ class OmniCamera : public CameraBase {
         Float zMax;
         std::string ToString() const;
     };
+
     struct MicrolensData {
         pstd::vector<LensElementInterface> elementInterfaces;
         float offsetFromSensor;
-        std::vector<Vector2f> offsets;
+        pstd::vector<Vector2f> offsets;
         Vector2i dimensions;
         // Non-physical term
         int simulationRadius;
     };
 
+    // TG: Variables not in struct as experiment for GPU compatible code
+    pstd::vector<LensElementInterface> microlensElementInterfaces;
+    float microlensOffsetFromSensor;
+    pstd::vector<Vector2f> microlensOffsets;
+    Vector2i microlensDimensions;
+    // Non-physical term
+    int microlensSimulationRadius;
+
     // OmniCamera Public Methods
     OmniCamera(CameraBaseParameters baseParameters,
-                    pstd::vector<OmniCamera::LensElementInterface> &lensInterfaceData,
-                    Float focusDistance, Float filmDistance,
-                    bool caFlag, bool diffractionEnabled,
-                    pstd::vector<OmniCamera::LensElementInterface>& microlensData,
-                    Vector2i microlensDims, std::vector<Vector2f> & microlensOffsets, Float microlensSensorOffset,
-                    int microlensSimulationRadius,
-                    Float apertureDiameter, Image apertureImage, Allocator alloc);
+               pstd::vector<OmniCamera::LensElementInterface> &lensInterfaceData,
+               Float focusDistance, Float filmDistance, bool caFlag,
+               bool diffractionEnabled,
+               pstd::vector<OmniCamera::LensElementInterface> &microlensData,
+               Vector2i microlensDims, pstd::vector<Vector2f> &microlensOffsets,
+               Float microlensSensorOffset, int microlensSimulationRadius,
+               Float apertureDiameter, Image apertureImage, Allocator alloc);
 
     static OmniCamera *Create(const ParameterDictionary &parameters,
-                                   const CameraTransform &cameraTransform, Film film,
-                                   Medium medium, const FileLoc *loc,
-                                   Allocator alloc = {});
+                              const CameraTransform &cameraTransform, Film film,
+                              Medium medium, const FileLoc *loc, Allocator alloc = {});
 
     PBRT_CPU_GPU
     pstd::optional<CameraRay> GenerateRay(CameraSample sample,
@@ -679,14 +941,18 @@ class OmniCamera : public CameraBase {
   private:
     // OmniCamera Private Declarations
 
-    enum IntersectResult {MISS,CULLED_BY_APERTURE,HIT};
+    enum IntersectResult { MISS, CULLED_BY_APERTURE, HIT };
 
     // OmniCamera Private Methods
     struct MicrolensElement {
         Point2f center;
         ConvexQuadf centeredBounds;
-        Point2i index;
-        Transform ComputeCameraToMicrolens() const;
+        Point2f corner1;
+        Point2f corner2;
+        Point2f corner3;
+        Point2f corner4;
+        Point2f index;
+        // Transform ComputeCameraToMicrolens() const;
     };
 
     PBRT_CPU_GPU
@@ -703,11 +969,17 @@ class OmniCamera : public CameraBase {
     PBRT_CPU_GPU
     Float RearElementRadius() const { return elementInterfaces.back().apertureRadius.x; }
 
-    
-    // Float TraceLensesFromFilm(const Ray &ray, const std::vector<LensElementInterface>& interfaces, Ray *rOut,
-    //     const Transform CameraToLens, const ConvexQuadf& bounds) const;
     PBRT_CPU_GPU
-    Float TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const;
+    Float TToBackLens(const Ray &ray,
+                      const pstd::vector<LensElementInterface> &interfaces,
+                      const Transform LensFromCamera, const ConvexQuadf &bounds) const;
+
+    PBRT_CPU_GPU
+    Float TraceLensesFromFilm(const Ray &rCamera,
+                              const pstd::vector<LensElementInterface> &interfaces,
+                              Ray *rOut, const Transform LensFromCamera,
+                              const ConvexQuadf &bounds) const;
+    // Float TraceLensesFromFilm(const Ray &rCamera, Ray *rOut) const;
 
     PBRT_CPU_GPU
     static bool IntersectSphericalElement(Float radius, Float zCenter, const Ray &ray,
@@ -735,10 +1007,11 @@ class OmniCamera : public CameraBase {
     }
 
     // PBRT_CPU_GPU
-    void diffractHURB(Ray &rLens, const LensElementInterface &element, const Float t) const;
+    void diffractHURB(Ray &rLens, const LensElementInterface &element,
+                      const Float t) const;
 
-      // GSL seed(?) for random number generation
-    gsl_rng * r;
+    // GSL seed(?) for random number generation
+    gsl_rng *r;
 
     PBRT_CPU_GPU
     Float TraceLensesFromScene(const Ray &rCamera, Ray *rOut) const;
@@ -756,21 +1029,46 @@ class OmniCamera : public CameraBase {
     void RenderExitPupil(Float sx, Float sy, const char *filename) const;
 
     PBRT_CPU_GPU
-    IntersectResult TraceElement(const LensElementInterface &element, const Ray& rLens, const Float& elementZ,
-         Float& t, Normal3f& n, bool& isStop, const ConvexQuadf& bounds) const;
+    IntersectResult TraceElement(const LensElementInterface &element, const Ray &rLens,
+                                 const Float &elementZ, Float &t, Normal3f &n,
+                                 bool &isStop, const ConvexQuadf &bounds) const;
 
     PBRT_CPU_GPU
     pstd::optional<ExitPupilSample> SampleExitPupil(Point2f pFilm, Point2f uLens) const;
 
     void TestExitPupilBounds() const;
 
-    Point2i MicrolensIndex(const Point2f &p) const;
-    Point2f MicrolensCenterFromIndex(const Point2i &idx) const;
-    MicrolensElement MicrolensElementFromIndex(const Point2i &idx) const;
-    MicrolensElement ComputeMicrolensElement(const Ray &filmRay) const;
+    // static Vector2f mapMul(Vector2f v0, Vector2f v1) {
+    // return Vector2f(v0.x*v1.x, v0.y*v1.y);
+    // };
+    // static Vector2f mapDiv(Vector2f v0, Vector2f v1) {
+    //     return Vector2f(v0.x/v1.x, v0.y/v1.y);
+    // }
+    // static Vector2f mapDiv(Vector2f v0, Vector2i v1) {
+    //     return Vector2f(v0.x / (pbrt::Float)v1.x, v0.y / (pbrt::Float)v1.y);
+    // }
+    // static Point2f mapDiv(Point2f v0, Vector2f v1) {
+    //     return Point2f(v0.x / v1.x, v0.y / v1.y);
+    // }
 
     PBRT_CPU_GPU
-    pstd::optional<ExitPupilSample> SampleMicrolensPupil(Point2f pFilm, Point2f uLens) const;
+    Point2f MicrolensIndex(const Point2f p) const;
+
+    PBRT_CPU_GPU
+    Point2f MicrolensCenterFromIndex(const Point2f idx) const;
+
+    PBRT_CPU_GPU
+    MicrolensElement MicrolensElementFromIndex(const Point2f idx) const;
+
+    PBRT_CPU_GPU
+    MicrolensElement ComputeMicrolensElement(const Ray filmRay) const;
+
+    PBRT_CPU_GPU
+    Float TraceFullLensSystemFromFilm(const Ray &rIn, Ray *rOut) const;
+
+    PBRT_CPU_GPU
+    pstd::optional<ExitPupilSample> SampleMicrolensPupil(Point2f pFilm,
+                                                         Point2f uLens) const;
 
     // bool HasMicrolens() const;
 
@@ -783,6 +1081,7 @@ class OmniCamera : public CameraBase {
     const bool diffractionEnabled;
     MicrolensData microlens;
 };
+
 
 // RTFCamera Definition
 class RTFCamera : public CameraBase {
@@ -970,6 +1269,7 @@ class RTFCamera : public CameraBase {
     std::vector<Bounds2f> exitPupilBoundsRTF;
     Bounds2f BoundExitPupilRTF(Float filmX0, Float filmX1) const;
 };
+
 
 
 inline pstd::optional<CameraRay> Camera::GenerateRay(CameraSample sample,
