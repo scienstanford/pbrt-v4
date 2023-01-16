@@ -158,7 +158,7 @@ class VisibleSurface {
 };
 
 // FilmBaseParameters Definition
-struct FilmBaseParameters {
+struct meters {
     FilmBaseParameters(const ParameterDictionary &parameters, Filter filter,
                        const PixelSensor *sensor, const FileLoc *loc);
     FilmBaseParameters(Point2i fullResolution, Bounds2i pixelBounds, Filter filter,

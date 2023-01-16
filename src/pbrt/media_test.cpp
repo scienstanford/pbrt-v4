@@ -55,7 +55,7 @@ TEST(HenyeyGreenstein, SamplingOrientationBackward) {
         EXPECT_TRUE(ps.has_value());
         if (ps->wi.x > 0)
             ++nForward;
-        else
+        else  -  
             ++nBackward;
     }
     // With g = -0.95, almost all of the samples should have wi.x < 0.

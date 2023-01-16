@@ -566,16 +566,24 @@ class LightfieldFilmWrapper : public SpectralFilm {
     struct PDSensitivity {
         PDSensitivity() = default;
         PDSensitivity(PDSensitivity& pdsensitivity)  = default;
-
         // Full 3D reprsentation
         
         std::vector<Float> polarAngles; // Matrix rows
         std::vector<Float> azimuthAngles; // Matrix Columns
 
+
+
+        
+
         // A vector containing proportion for all subpixels however many there may be
         // Rows (first index) are polar angles
         pstd::vector<Array2D<Float>> proportions; 
-//        Array2D<Float> sumweights; // Columns (second index) are azmith angles
+
+        // Containing the sum weights(L+R) which will account for loss of light in the system (e.g. pixel vignetting)
+        // This is supposed to just an Array2D structure. However, c++ gives a compiler error. Placig this Array2d in a vector
+        // somehow solves this. I think it has something to do with the Array2D being non copyable; For now this works
+        pstd::vector<Array2D<Float>> sumweights; 
+
     };
 
     // TG: Casting a Float to integer requires another function on GPU and CPU
@@ -595,7 +603,7 @@ class LightfieldFilmWrapper : public SpectralFilm {
     void AddLightfieldSample(Ray raySensor, Point2i pFilm, SampledSpectrum L, const SampledWavelengths &lambda,
                    const VisibleSurface *visibleSurface, Float weight);
 
-    LightfieldFilmWrapper(FilmBaseParameters p, Array2D<PDSensitivity> pdArray, int nbSubpixels,Float lambdaMin, Float lambdaMax,
+    LightfieldFilmWrapper(FilmBaseParameters p, Array2D<PDSensitivity> pdArray,  int nbSubpixels,Float lambdaMin, Float lambdaMax,
                  int nBuckets, const RGBColorSpace *colorSpace,
                  Float maxComponentValue = Infinity, bool writeFP16 = true,
                  Allocator alloc = {});

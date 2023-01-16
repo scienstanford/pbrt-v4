@@ -1608,6 +1608,7 @@ OmniCamera::OmniCamera(CameraBaseParameters baseParameters,
     // Compute exit pupil bounds at sampled points on the film
     int nSamples = 64;
     
+    //nSamples = 5;std::cout << "Warning: nSamples set to 5 intead of 64\n";
     exitPupilBounds.resize(nSamples);
     ParallelFor(0, nSamples, [&](int i) {
         Float r0 = (Float)i / nSamples * film.Diagonal() / 2;
@@ -2167,6 +2168,8 @@ Bounds2f OmniCamera::BoundExitPupil(Float filmX0, Float filmX1) const {
     pupilBounds =
         Expand(pupilBounds, 2 * Length(projRearBounds.Diagonal()) / std::sqrt(nSamples));
 
+    std::cout << 1e3*filmX0 << ":" << 1e3*pupilBounds.pMin << " - "  <<1e3*pupilBounds.pMax  <<  "\n";
+    
     return pupilBounds;
 }
 
@@ -2352,9 +2355,9 @@ pstd::optional<std::pair<CameraRay,CameraRay>> OmniCamera::GenerateRayIO(CameraS
     Point3f pFilmMeters; 
     if(useLookupTable()){
         // TG: check sign , why flip X?
-        Point3f pixelPosition= mapLookupTable(sample.pFilm);
+        Point3f pixelPosition= FilmShape::mapLookupTable(lookupTable,sample.pFilm);
         
-        // TG: should we flip X position as in the legacy code?
+        // TG: shuld we flip X position as in the legacy code?
         // TG: Do not flip if we want to maintain easy conventions with Lookuptable where negative x means the pixel is on hte left side of the main lens (if the lens is above the pixel)
         //pFilmMeters = Point3f(-pixelPosition.x, pixelPosition.y, pixelPosition.z);
         pFilmMeters = Point3f(pixelPosition.x, pixelPosition.y, pixelPosition.z);
@@ -2380,6 +2383,8 @@ pstd::optional<std::pair<CameraRay,CameraRay>> OmniCamera::GenerateRayIO(CameraS
 
     Ray rFilm(pFilmMeters, eps->pPupil - pFilmMeters);
 
+
+
     Ray ray;
     // printf("GPU DEBUG: Going into fulll lens system\n");
     Float weight = TraceFullLensSystemFromFilm(rFilm, &ray);
@@ -2387,9 +2392,14 @@ pstd::optional<std::pair<CameraRay,CameraRay>> OmniCamera::GenerateRayIO(CameraS
     if (weight == 0)
         return {};
 
+
+ 
     // Finish initialization of _OmniCamera_ ray
     ray.time = SampleTime(sample.time);
     ray.medium = medium;
+
+    
+
     ray = RenderFromCamera(ray);
     ray.d = Normalize(ray.d);
 
@@ -2402,7 +2412,11 @@ pstd::optional<std::pair<CameraRay,CameraRay>> OmniCamera::GenerateRayIO(CameraS
     }else{
         weight *= Pow<4>(cosTheta) / (eps->pdf * Sqr(LensRearZ()));
     }
-
+ 
+    
+    //std::cout << "in: " << rFilm << "\nout: " << ray << "\n";        
+    //std::cout << ray.d[0] << "," << ray.d[1] << "," << ray.d[2]  << "\n";
+    std::cout << rFilm.d[0] << "," << rFilm.d[1] << "," << rFilm.d[2]  << "\n";
     auto raySensor= CameraRay{rFilm, SampledSpectrum(weight)};
     auto rayScene= CameraRay{ray, SampledSpectrum(weight)};
 
@@ -3232,6 +3246,8 @@ RTFCamera::RTFCamera(CameraBaseParameters baseParameters,
     physicalExtent = Bounds2f(Point2f(-x / 2, -y / 2), Point2f(x / 2, y / 2));
 
     int nSamples = 64; 
+    //nSamples = 5;std::cout << "Debug! only using 5 samples for exit pupil bounds" ;
+    
     
     exitPupilBoundsRTF.resize(nSamples);
     
@@ -3617,7 +3633,7 @@ pstd::optional<std::pair<CameraRay,CameraRay>> RTFCamera::GenerateRayIO(CameraSa
     Point3f pFilmMeters; 
     if(useLookupTable()){
         // TG: check sign , why flip X?
-        Point3f pixelPosition= mapLookupTable(sample.pFilm);
+        Point3f pixelPosition= FilmShape::mapLookupTable(lookupTable,sample.pFilm);
         
         // TG: should we flip X position as in the legacy code?
         // TG: Do not flip if we want to maintain easy conventions with Lookuptable where negative x means the pixel is on hte left side of the main lens (if the lens is above the pixel)
@@ -3672,29 +3688,74 @@ pstd::optional<std::pair<CameraRay,CameraRay>> RTFCamera::GenerateRayIO(CameraSa
         }
         
     }
-    bool result = TraceLensesFromFilm(rFilm, &ray, wlIndex);
+
+// From Omni:
+//rfilm ray o: [ 0.0054800776, 0.0054997206, 0 ]
+//rfilm ray d: [ 0.0044051404, -0.0033982287, 0.08 ]
+//in ray o: [ 0.0076845847, -0.0027355938, 0.15505612 ]
+//in ray d: [ -0.06748109, -0.04551043, 0.99668205 ]
+//out ray o: [ 0.007684582, -0.002735596, 0.15505616 ]
+//out ray d: [ -0.06748109, -0.04551043, 0.99668205 ]
+
+
+   //rFilm.o[0]=0.0054800776;    rFilm.o[1]= 0.0054997206;  rFilm.o[2]=0; 
+   //rFilm.d[0]= 0.0044051404;     rFilm.d[1]=-0.0033982287;    rFilm.d[2]=0.08;
+
+
+    bool result = TraceLensesFromFilm(rOriginOnInputPlane, &ray, wlIndex);
     //std::cout <<  "Tracelensfromfilm" << result <<"\n";    
     if (result == 0)
         return {};
+
+    //std::cout << "Before camera to world:\n";        
+    //std::cout << "in: " << rFilm << "\nout: " << ray << "\n";
+    
     // Finish initialization of _OmniCamera_ ray
     ray.time = SampleTime(sample.time);
     ray.medium = medium;
+
+
+   //ray.o[0]=-0.00108064292;    ray.o[1]=0.00107761403;  ray.o[2]=0.00792700239; 
+//    ray.d[0]=-0.465100855;     ray.d[1]=0.465102404;    ray.d[2]=0.753233671;
+    //    std::cout << "rfilm ray o: " << rFilm.o << "\n"; 
+    //std::cout << "rfilm ray d: " << rFilm.d << "\n";
+    //std::cout << "in ray o: " << ray.o << "\n"; 
+    //std::cout << "in ray d: " << ray.d << "\n";
+    // origin x:-0.00108064292, y:0.00107761403,z:0.00792700239
+    // dir x:-0.465100855 y:0.465102404 z: 0.753233671
     ray = RenderFromCamera(ray);
     ray.d = Normalize(ray.d);
+    //std::cout << "out ray o: " << ray.o << "\n"; 
+    //std::cout << "out ray d: " << ray.d << "\n";
+    //out ray o: [ -0.0010806441, 0.0010776152, 0.007927004 ]
+    //out ray d: [ -0.46510085, 0.4651024, 0.7532337 ]    
+    
+
+
+
 
     Float weight = 1;
     // Compute weighting for _OmniCamera_ ray
     Float cosTheta = Normalize(rFilm.d).z;
     // weight *= Pow<4>(cosTheta) / (eps->pdf * Sqr(LensRearZ()));
+    //eps->pdf = 1/pupilarea
     weight *=Pow<4>(cosTheta) * pupilArea / (filmDistance*filmDistance);
 
-    auto raySensor= CameraRay{rFilm, SampledSpectrum(weight)};
+    // std::cout << "Box area: " << (pupilArea) << "\n";
+   // std::cout << "Cos4theta: " << (Pow<4>(cosTheta)) << "\n";
+
+    
+    auto raySensor= CameraRay{rFilm,  SampledSpectrum(weight)};
     auto rayScene= CameraRay{ray, SampledSpectrum(weight)};
     //std::cout << "result: " << result << "\n";
     //std::cout << "ray: " << ray << "\n";
     //std::cout << "rFilm: " << rFilm << "\n";
+    //std::cout <<  std::acos(cosTheta)*180/Pi << "\n" ;
+    //std::cout << "After camera to world:\n";        
+    // Output ray: std::cout << ray.d[0] << "," << ray.d[1] << "," << ray.d[2]  << "\n";
+    // Sensor Ray: 
+//    std::cout << rFilm.d[0] << "," << rFilm.d[1] << "," << rFilm.d[2]  << "\n";
     
-    std::cout << "in: " << rFilm << "out: " << ray << "\n";
     return std::pair<CameraRay,CameraRay>(raySensor,rayScene);
 }
 

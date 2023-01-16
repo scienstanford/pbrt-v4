@@ -648,6 +648,8 @@ void GBufferFilm::AddSample(Point2i pFilm, SampledSpectrum L,
 
     L *= weight * CIE_Y_integral;
 
+    
+
     // zhenyi: Add spectrum values into pixel
     for (int i = 0; i < NSpectrumSamples; ++i) {
         p.L[i] += L[i];
@@ -1140,9 +1142,11 @@ void LightfieldFilmWrapper::WriteImage(ImageMetadata metadata, Float splatScale)
     for (int sp = 0; sp < 2; sp++) {
         Image image = GetSubImage(&metadata, sp, splatScale);
         LOG_VERBOSE("Writing image %s with bounds %s", filename, pixelBounds);
-        std::cout << filename;
-        image.Write("pbrt" + std::to_string(sp) + ".exr", metadata);
-        image.Write("pbrt" + std::to_string(sp) + ".png", metadata);
+        std::cout << "Filename :" << filename << "\n";
+        size_t lastindex = filename.find_last_of("."); 
+        std::string rawfilename = filename.substr(0, lastindex); 
+        image.Write(rawfilename + "_" + std::to_string(sp) + ".exr", metadata);
+        image.Write(rawfilename + "_" + std::to_string(sp) + ".png", metadata);
         
     }
 }
@@ -1333,14 +1337,17 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
    // Select Pixel from lookuptable
    // Lookuptable is row first. In pbrt y-dimension are rows, so we use y as rows and x as columns.
    //Point2i pixelindex(Float2int_rd(pFilm.y),Float2int_rd(pFilm.x));
-   Point2i pixelindex(Float2int_rd(pFilm.x),1);
+   Point2i pixelindex(Float2int_rd(pFilm.x),0);
    
 
     // Determine  which PDSensitivity to use. If the pixelindex is within the boundaries 
     // of the lookup table, use it. If the index is out of bounds, use the sensitivity curve for the first
     // pixel (0,0). This is for example useful if you want all pixels to use the same angular sensitivity curve.
     
+    
     PDSensitivity pdsensitivity;
+
+
     if(pixelindex.x<pdSensitivities.XSize()){
 
         pdsensitivity = pdSensitivities[pixelindex];
@@ -1348,6 +1355,7 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
         //Use default if pixel index is outside of defined area ( the json may not provide angular sensitivites for all pixels)
         
         pdsensitivity = pdSensitivities[Point2i(0,0)];
+        std::cout << "Warning: same PD sensitivity used for all pixels \n" ;
     }
 
 
@@ -1397,12 +1405,14 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
     // We store the proportion for each pixel in an array for later use.
     const int nbSubpixels = pdsensitivity.proportions.size();
     Float distributor[nbSubpixels]; // try to generalize to arbitrary pixels..
+    Point2i index(indexPolarRow,indexAziCol);
     for (int s=0;s<nbSubpixels;s++){
-        Point2i index(indexPolarRow,indexAziCol);
         distributor[s]=pdsensitivity.proportions[s][index];
         
     }
-    
+    // Get sumweight to account for pixel vignetting and light loss ingeneral;
+    // The vector has only one element (a Array2D). This is an implementation detail to avoid an error in the PDSensitivity struct.
+    Float sumweight = pdsensitivity.sumweights[0][index];
 
     //printf("polar angle: %f - azimuth:%f - propL: %f - propR: %f \n",polarAngleDeg,azimuthAngleDeg,distributor[0],distributor[1]);
 
@@ -1427,7 +1437,7 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
         
         for (int c = 0; c < 3; ++c){
             for (int sp = 0; sp < pixel.subpixels.size(); ++sp) {
-            pixel.subpixels[sp].rgbSum[c] += weight * rgb[c] * distributor[sp];
+            pixel.subpixels[sp].rgbSum[c] += weight * rgb[c] * distributor[sp]*sumweight;
             }
         }
         for (int sp = 0; sp < pixel.subpixels.size(); ++sp) {
@@ -1455,7 +1465,7 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
             // in however many bins we ask for.
             int b = LambdaToBucket(lambda[i]);
             for (int sp = 0; sp < pixel.subpixels.size(); ++sp) {            
-                pixel.subpixels[sp].bucketSums[b] += distributor[sp] * L[i];
+                pixel.subpixels[sp].bucketSums[b] += distributor[sp] * L[i]*sumweight;
                 pixel.subpixels[sp].weightSums[b] += weight;  
         }
     }
@@ -1464,9 +1474,16 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
 LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     const ParameterDictionary &parameters, Float exposureTime, Filter filter,
     const RGBColorSpace *colorSpace, const FileLoc *loc, Allocator alloc) {
+
+
+        
+
     PixelSensor *sensor =
         PixelSensor::Create(parameters, colorSpace, exposureTime, loc, alloc);
     FilmBaseParameters filmBaseParameters(parameters, filter, sensor, loc);
+    
+
+
     bool writeFP16 = parameters.GetOneBool("savefp16", true);
 
     if (!HasExtension(filmBaseParameters.filename, "exr"))
@@ -1481,7 +1498,7 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
 
     // Will be determined when reading the file
     int nbSubpixels;
-
+    std::cout<<"Lightfield film wrapper\n" ;
 
     // Extract DUal pixel data
     std::string pdFile = ResolveFilename(parameters.GetOneString("pdsensitivity", ""));
@@ -1499,6 +1516,7 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     // If reading fails it will return false and break out of the if statement.
   PDSensitivity pd;
   Array2D<PDSensitivity> pdPixelArray(alloc);
+  
   if (i && (i>>j)) {
         auto toTerms = [](json jterms)
             {
@@ -1561,9 +1579,24 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
             proportionsVector.push_back(proportionArray);
         }
     
-    
+
+        // Read sumweight array
+        auto sumweightJson = j["sumweight"];
+        pstd::vector<Array2D<Float>> sumweightArrayVec(alloc);
+        Array2D<Float> sumweightArray(polarAngles.size(),azimuths.size(),alloc);
+        for(int r=0;r<polarAngles.size();r++){
+            for(int c=0;c<azimuths.size();c++){
+                Point2i index(r,c);
+                sumweightArray[index] = sumweightJson[r][c];
+                }
+        }
+        // Add the weight array as a single element
+        sumweightArrayVec.push_back(sumweightArray);
+        assert(sumweightArrayVec.size()==1);
+
         //pds.proportions=pstd::vector<Array2D<Float>>(alloc);
         pds.proportions = proportionsVector;
+        pds.sumweights = sumweightArrayVec;
         pds.azimuthAngles=azimuths;
         pds.polarAngles=polarAngles;
 
@@ -1577,6 +1610,14 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     int nbPixels= nbRows*nbColumns;
     auto pixels  = j["pixels"];
      // advoid inconsistency of meta data
+
+    Point2i filmresolution = filmBaseParameters.fullResolution;
+    if(!( filmresolution.x == nbPixels   && filmresolution.y==1)){
+        
+        auto msg = "You are using a PRDF lookuptable which stores all PRDF's ina single horizontal vector. Please set the film resolution accordingly as follows: xresolution = " + std::to_string( nbPixels ) + ", yresolution = 1 ";
+        Error(msg.c_str());
+    }
+
     
     if(!(nbPixels == pixels.size())){
         Error("Metadata about number of pixels is inconistent with the number of provided pixels. Check whether the field nbpixels contains error or lookuptable has missing/unwanted pixels.");
@@ -1584,7 +1625,7 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     
     // Local variable that will be passed on later to 'pdPixelArray'
     // This is done because we only know now what size this array will be;
-    Array2D<PDSensitivity> pdPixelArrayLocal = Array2D<PDSensitivity>(nbRows,nbColumns,alloc);
+    Array2D<PDSensitivity> pdPixelArrayLocal = Array2D<PDSensitivity>(nbColumns,nbRows,alloc);
 
     // Read proportions from subpixels and store into std::vector<Array2D<Float>>
     for(int p=0;p<nbPixels;p++){
@@ -1596,7 +1637,7 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
         
         //Generate and store PDSensitivity from json for specific pixel (lookuptable)
         PDSensitivity pdd = toPDSensitivity(pixels[p]["prd"]);
-        pdPixelArrayLocal[Point2i(row,column)] = pdd;
+        pdPixelArrayLocal[Point2i(column,0)] = pdd;
     }
     
     pdPixelArray=Array2D<PDSensitivity>(pdPixelArrayLocal,alloc);
@@ -1605,6 +1646,9 @@ LightfieldFilmWrapper *LightfieldFilmWrapper::Create(
     nbSubpixels = (int) pixels[0]["prd"]["subpixels"].size();
     
    }
+   
+
+    
 
     //pd=pdPixelArray[Point2i(0,0)];
     return alloc.new_object<LightfieldFilmWrapper>(filmBaseParameters, pdPixelArray, nbSubpixels,lambdaMin,

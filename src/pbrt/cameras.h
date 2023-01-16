@@ -714,8 +714,8 @@ static bool readLookupTableJson(std::string lookupTableFile,Allocator alloc,pstd
                 int index = (int) jsurf["index"];
                 Point3f startingPoint = toPoint3f(jsurf["point"]);
                 
-                printf("index: %i \n", index);
-                printf("STARTINGPOINT: %f,%f \n",startingPoint.x,startingPoint.y);
+                //printf("index: %i \n", index);
+                //printf("STARTINGPOINT: %f,%f \n",startingPoint.x,startingPoint.y);
                 lookupTable[index] = startingPoint;
                   
             }
@@ -834,47 +834,9 @@ class OmniCamera : public LightfieldCameraBase {
          
     }
 
-        // TG: Casting a Float to integer requires another function on GPU and CPU
-    // note that Float is a template class which has a different meaning on CPU and GPU.
-    // On GPU Float is a double.
-    // Rounding Down
-    PBRT_CPU_GPU inline int Float2int_rd(Float arg) const {
-#ifdef PBRT_IS_GPU_CODE
 
-        return ::__double2int_rd(arg);
 
-#else
-        return (int)(std::floor(arg));
-#endif
-    }
-
-    PBRT_CPU_GPU
-    // TG: This function takes a point on the film, finds its corresponding index in the 2D lookup table and 
-    // simply returns the point given in the lookup table. The actual position of the film is meaningless since we map
-    // it to an arbitrary point given by the lookup table. 
-    // Note that of a prime number of data points are given, a rectangular grid can never represent the right number of pixels
-    // It is perfectly valid to define a film that has only one row, since we use it as a datastructure rather as a physical film
-    Point3f mapLookupTable(const Point2f pFilmUnitless) const {
-
-        // We need to find the pixel index to know where to evaluate the lookupTable.
-        // pFIlm actually is already the filmindex. It is a floating point number to allow for jitter within the pixel
-        // But if you round it down (floor), you will get the pixel index starting at zero.
-        // I implemented a function that should work on both GPU and CPU
-        Point2i filmIndex=Point2i(Float2int_rd(pFilmUnitless.x),Float2int_rd(pFilmUnitless.y));
-        
-
-        // We assume that the Y index is 1 (horizontal vector image)
-        int linearIndex = filmIndex.x;
-        
-        if(linearIndex < lookupTable.size()){
-            Point3f startingPoint = lookupTable[linearIndex];
-            return startingPoint;
-        }else{
-           // REturn empty value if index not within domain of lookupTable;
-          return {};
-         }
-        
-    }
+   
 
   private:
     // OmniCamera Private Declarations
@@ -1016,6 +978,60 @@ class OmniCamera : public LightfieldCameraBase {
     MicrolensData microlens;
 };
 
+
+
+class FilmShape{
+
+    public:
+        // TG: Casting a Float to integer requires another function on GPU and CPU
+    // note that Float is a template class which has a different meaning on CPU and GPU.
+    // On GPU Float is a double.
+    // Rounding Down
+    PBRT_CPU_GPU 
+    static inline int Float2int_rd(Float arg)  {
+#ifdef PBRT_IS_GPU_CODE
+
+        return ::__double2int_rd(arg);
+
+#else
+        return (int)(std::floor(arg));
+#endif
+    }
+
+    
+
+     
+    // TG: This function takes a point on the film, finds its corresponding index in the 2D lookup table and 
+    // simply returns the point given in the lookup table. The actual position of the film is meaningless since we map
+    // it to an arbitrary point given by the lookup table. 
+    // Note that of a prime number of data points are given, a rectangular grid can never represent the right number of pixels
+    // It is perfectly valid to define a film that has only one row, since we use it as a datastructure rather as a physical film
+    PBRT_CPU_GPU
+    static  Point3f mapLookupTable(const pstd::vector<Point3f> &lookupTable, const Point2f pFilmUnitless) {
+
+        // We need to find the pixel index to know where to evaluate the lookupTable.
+        // pFIlm actually is already the filmindex. It is a floating point number to allow for jitter within the pixel
+        // But if you round it down (floor), you will get the pixel index starting at zero.
+        // I implemented a function that should work on both GPU and CPU
+        Point2i filmIndex=Point2i(Float2int_rd(pFilmUnitless.x),Float2int_rd(pFilmUnitless.y));
+        
+
+        // We assume that the Y index is 1 (horizontal vector image)
+        int linearIndex = filmIndex.x;
+        
+        if(linearIndex < lookupTable.size()){
+            Point3f startingPoint = lookupTable[linearIndex];
+            return startingPoint;
+        }else{
+           // REturn empty value if index not within domain of lookupTable;
+          return {};
+         }
+        
+    }
+
+};
+
+
 // RTFCamera Definition
 class RTFCamera : public LightfieldCameraBase {
   public:
@@ -1126,50 +1142,6 @@ class RTFCamera : public LightfieldCameraBase {
          
     }
 
-        // TG: Casting a Float to integer requires another function on GPU and CPU
-    // note that Float is a template class which has a different meaning on CPU and GPU.
-    // On GPU Float is a double.
-    // Rounding Down
-    PBRT_CPU_GPU inline int Float2int_rd(Float arg) const {
-#ifdef PBRT_IS_GPU_CODE
-
-        return ::__double2int_rd(arg);
-
-#else
-        return (int)(std::floor(arg));
-#endif
-    }
-
-    
-
-     
-    // TG: This function takes a point on the film, finds its corresponding index in the 2D lookup table and 
-    // simply returns the point given in the lookup table. The actual position of the film is meaningless since we map
-    // it to an arbitrary point given by the lookup table. 
-    // Note that of a prime number of data points are given, a rectangular grid can never represent the right number of pixels
-    // It is perfectly valid to define a film that has only one row, since we use it as a datastructure rather as a physical film
-    PBRT_CPU_GPU
-    Point3f mapLookupTable(const Point2f pFilmUnitless) const {
-
-        // We need to find the pixel index to know where to evaluate the lookupTable.
-        // pFIlm actually is already the filmindex. It is a floating point number to allow for jitter within the pixel
-        // But if you round it down (floor), you will get the pixel index starting at zero.
-        // I implemented a function that should work on both GPU and CPU
-        Point2i filmIndex=Point2i(Float2int_rd(pFilmUnitless.x),Float2int_rd(pFilmUnitless.y));
-        
-
-        // We assume that the Y index is 1 (horizontal vector image)
-        int linearIndex = filmIndex.x;
-        
-        if(linearIndex < lookupTable.size()){
-            Point3f startingPoint = lookupTable[linearIndex];
-            return startingPoint;
-        }else{
-           // REturn empty value if index not within domain of lookupTable;
-          return {};
-         }
-        
-    }
 
 
   private:
