@@ -2758,7 +2758,8 @@ int denoise_optix(std::vector<std::string> args) {
         CUdeviceptr(scratchBuffer), memorySizes.withoutOverlapScratchSizeInBytes));
 
     OptixDenoiserParams params = {};
-    params.denoiseAlpha = 0;
+    // Bad conversion as of Optix 7.6
+    // params.denoiseAlpha = 0;
     params.hdrIntensity = CUdeviceptr(intensity);
     params.blendFactor = 0;  // TODO what should this be??
 
