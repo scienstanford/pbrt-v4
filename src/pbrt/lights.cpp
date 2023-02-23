@@ -759,6 +759,7 @@ pstd::optional<LightLiSample> DiffuseAreaLight::SampleLi(LightSampleContext ctx,
     // Return _LightLiSample_ for sampled point on shape
     Vector3f wi = Normalize(ss->intr.p() - ctx.p());
     SampledSpectrum Le = L(ss->intr.p(), ss->intr.n, ss->intr.uv, -wi, lambda);
+    
     if (cosFalloffEnd >0){
         // Calculate area light spread angle attenuation
         Float cos_a = -Dot(wi, ss->intr.n);
@@ -778,6 +779,7 @@ Float DiffuseAreaLight::PDF_Li(LightSampleContext ctx, Vector3f wi,
     ShapeSampleContext shapeCtx(ctx.pi, ctx.n, ctx.ns, 0 /* time */);
     return shape.PDF(shapeCtx, wi);
 }
+
 
 SampledSpectrum DiffuseAreaLight::Phi(SampledWavelengths lambda) const {
     SampledSpectrum L(0.f);
@@ -837,24 +839,33 @@ pstd::optional<LightLeSample> DiffuseAreaLight::SampleLe(Point2f u1, Point2f u2,
     // Sample a cosine-weighted outgoing direction _w_ for area light
     Vector3f w;
     Float pdfDir;
-    if (twoSided) {
-        // Choose side of surface and sample cosine-weighted outgoing direction
-        if (u2[0] < 0.5f) {
-            u2[0] = std::min(u2[0] * 2, OneMinusEpsilon);
-            w = SampleCosineHemisphere(u2);
-        } else {
-            u2[0] = std::min((u2[0] - 0.5f) * 2, OneMinusEpsilon);
-            w = SampleCosineHemisphere(u2);
-            w.z *= -1;
-        }
-        pdfDir = CosineHemispherePDF(std::abs(w.z)) / 2;
+
+    // handle the case which spread angle less than 180 degree. -- zhenyi
+    if (cosFalloffEnd >0) {
+        w = SampleUniformCone(u1, cosFalloffEnd);
+        pdfDir = UniformConePDF(cosFalloffEnd);
 
     } else {
-        w = SampleCosineHemisphere(u2);
-        pdfDir = CosineHemispherePDF(w.z);
+        if (twoSided) {
+            // Choose side of surface and sample cosine-weighted outgoing direction
+            if (u2[0] < 0.5f) {
+                u2[0] = std::min(u2[0] * 2, OneMinusEpsilon);
+                w = SampleCosineHemisphere(u2);
+            } else {
+                u2[0] = std::min((u2[0] - 0.5f) * 2, OneMinusEpsilon);
+                w = SampleCosineHemisphere(u2);
+                w.z *= -1;
+            }
+            pdfDir = CosineHemispherePDF(std::abs(w.z)) / 2;
+
+        } else {
+            w = SampleCosineHemisphere(u2);
+            pdfDir = CosineHemispherePDF(w.z);
+        }
+        if (pdfDir == 0)
+            return {};
     }
-    if (pdfDir == 0)
-        return {};
+
 
     // Return _LightLeSample_ for ray leaving area light
     const Interaction &intr = ss->intr;
@@ -868,8 +879,13 @@ void DiffuseAreaLight::PDF_Le(const Interaction &intr, Vector3f w, Float *pdfPos
                               Float *pdfDir) const {
     CHECK_NE(intr.n, Normal3f(0, 0, 0));
     *pdfPos = shape.PDF(intr);
-    *pdfDir = twoSided ? (CosineHemispherePDF(AbsDot(intr.n, w)) / 2)
-                       : CosineHemispherePDF(Dot(intr.n, w));
+    if (cosFalloffEnd >0) {
+        *pdfDir = UniformConePDF(cosFalloffEnd);
+    } else {
+        *pdfDir = twoSided ? (CosineHemispherePDF(AbsDot(intr.n, w)) / 2)
+                        : CosineHemispherePDF(Dot(intr.n, w));
+    }
+
 }
 
 std::string DiffuseAreaLight::ToString() const {

@@ -447,6 +447,15 @@ class DiffuseAreaLight : public LightBase {
             return SampledSpectrum(0.f);
         if (AlphaMasked(Interaction(p, uv)))
             return SampledSpectrum(0.f);
+        
+        // Account for spread angle
+        if (cosFalloffEnd >0) {
+            Float cosTheta = AbsDot(w, n);
+            Float solidAngle = 2 * Pi * (1 - cosFalloffEnd);
+            
+            if (cosTheta < cosFalloffEnd) 
+                return SampledSpectrum(0.f);
+        }
 
         if (image) {
             // Return _DiffuseAreaLight_ emission using image
