@@ -10,19 +10,25 @@ pbrt, Version 4 (Early Release)
 
 This is an early release of pbrt-v4, the rendering system that will be
 described in the forthcoming fourth edition of *Physically Based Rendering:
-From Theory to Implementation*.  (We hope to have printed books available
-in Spring of 2022 and there will again be a free online version of the
-book.)
+From Theory to Implementation*.  (The printed book will be available in
+mid-February 2023; a few chapters will be made available in late Fall of
+2022; and the full contents of the book will be freely available six months
+after the book's release, like the [third edition](https://pbr-book.org) is
+already.)
 
 We are making this code available for hardy adventurers; it's not yet
 extensively documented, but if you are familiar with previous versions of
-pbrt, you should be able to make your away around it.  Our hope is that the
+pbrt, you should be able to make your way around it.  Our hope is that the
 system will be useful to some people in its current form and that any bugs
 in the current implementation might be found now, allowing us to correct
 them before the book is final.
 
-A number of scenes for pbrt-v4 are [available in a git
-repository](https://github.com/mmp/pbrt-v4-scenes).
+Resources
+---------
+
+* A number of scenes for pbrt-v4 are [available in a git repository](https://github.com/mmp/pbrt-v4-scenes).
+* The [pbrt-v4 User's Guide](https://pbrt.org/users-guide-v4.html).
+* Documentation on the [pbrt-v4 Scene Description Format](https://pbrt.org/fileformat-v4.html).
 
 Features
 --------
@@ -193,7 +199,7 @@ These requirements are effectively what makes it possible to bring pbrt to
 the GPU with limited changes to the core system.  As a practical matter,
 these capabilities are only available via CUDA and OptiX on NVIDIA GPUs
 today, though we'd be happy to see pbrt running on any other GPUs that
-provided those capabilities.
+provide those capabilities.
 
 pbrt's GPU path currently requires CUDA 11.0 or later and OptiX 7.1 or
 later.  Both Linux and Windows are supported.

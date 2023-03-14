@@ -212,8 +212,8 @@ PBRT_CPU_GPU inline Float Lerp(Float x, Float a, Float b) {
 }
 
 template <typename T>
-inline PBRT_CPU_GPU typename std::enable_if_t<std::is_integral<T>::value, T> FMA(T a, T b,
-                                                                                 T c) {
+inline PBRT_CPU_GPU typename std::enable_if_t<std::is_integral_v<T>, T> FMA(T a, T b,
+                                                                            T c) {
     return a * b + c;
 }
 
@@ -338,7 +338,7 @@ PBRT_CPU_GPU inline constexpr Float EvaluatePolynomial(Float t, C c, Args... cRe
 
 // http://www.plunk.org/~hatch/rightway.html
 PBRT_CPU_GPU inline Float SinXOverX(Float x) {
-    if (1 + x * x == 1)
+    if (1 - x * x == 1)
         return 1;
     return std::sin(x) / x;
 }

@@ -2,7 +2,9 @@
 cmake_minimum_required (VERSION 3.12)
 
 if (MSVC)
-  add_definitions(/D _CRT_SECURE_NO_WARNINGS)
+  add_definitions(/D _CRT_SECURE_NO_WARNINGS /Dstrdup=_strdup
+    /wd4018 /wd4100 /wd4101 /wd4127 /wd4146 /wd4232 /wd4242 /wd4244 /wd4245 /wd4267 /wd4305 /wd4309 
+    /wd4310 /wd4334 /wd4456 /wd4464 /wd4668 /wd4701 /wd4703 /wd4711 /wd4756 /wd4820 /wd5045 /wd5250)
 endif ()
 
 ###########################################################################
@@ -110,7 +112,7 @@ set (PTEX_BUILD_SHARED_LIBS OFF CACHE BOOL " " FORCE)
 
 set (CMAKE_MACOSX_RPATH 1)
 if (WIN32)
-  add_definitions (/D PTEX_STATIC)
+  add_definitions (/DPTEX_STATIC)
 endif ()
 
 add_subdirectory (ptex)
@@ -148,3 +150,26 @@ set_property (TARGET flip_lib PROPERTY FOLDER "ext")
 set (UTF8PROC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/utf8proc PARENT_SCOPE)
 
 add_subdirectory (utf8proc)
+
+###########################################################################
+# qoi
+
+set (QOI_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/qoi PARENT_SCOPE)
+
+###########################################################################
+# glfw / glad
+
+set (GLFW_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/glfw/include PARENT_SCOPE)
+set (GLAD_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/glad/include PARENT_SCOPE)
+
+set (GLFW_LIBRARY_TYPE STATIC CACHE STRING "" FORCE)
+set (GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set (GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set (GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+
+add_subdirectory (glfw)
+add_subdirectory (glad)
+
+set_property (TARGET glfw PROPERTY FOLDER "ext")
+set_property (TARGET glad PROPERTY FOLDER "ext")
+

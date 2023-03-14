@@ -41,10 +41,11 @@ std::string NormalBumpEvalContext::ToString() const {
 
 // DielectricMaterial Method Definitions
 std::string DielectricMaterial::ToString() const {
-    return StringPrintf("[ DielectricMaterial displacement: %s normalMap: %s uRoughness: %s "
-                        "vRoughness: %s eta: %s remapRoughness: %s ]",
-                        displacement, normalMap ? normalMap->ToString() : std::string("(nullptr)"),
-                        uRoughness, vRoughness, eta, remapRoughness);
+    return StringPrintf(
+        "[ DielectricMaterial displacement: %s normalMap: %s uRoughness: %s "
+        "vRoughness: %s eta: %s remapRoughness: %s ]",
+        displacement, normalMap ? normalMap->ToString() : std::string("(nullptr)"),
+        uRoughness, vRoughness, eta, remapRoughness);
 }
 
 DielectricMaterial *DielectricMaterial::Create(
@@ -74,9 +75,9 @@ DielectricMaterial *DielectricMaterial::Create(
 
 // ThinDielectricMaterial Method Definitions
 std::string ThinDielectricMaterial::ToString() const {
-    return StringPrintf("[ ThinDielectricMaterial displacement: %s normalMap: %s eta: %s ]",
-                        displacement, normalMap ? normalMap->ToString()
-                                                : std::string("(nullptr)"), eta);
+    return StringPrintf(
+        "[ ThinDielectricMaterial displacement: %s normalMap: %s eta: %s ]", displacement,
+        normalMap ? normalMap->ToString() : std::string("(nullptr)"), eta);
 }
 
 ThinDielectricMaterial *ThinDielectricMaterial::Create(
@@ -135,34 +136,36 @@ HairMaterial *HairMaterial::Create(const TextureParameterDictionary &parameters,
                                    const FileLoc *loc, Allocator alloc) {
     SpectrumTexture sigma_a =
         parameters.GetSpectrumTextureOrNull("sigma_a", SpectrumType::Unbounded, alloc);
-    SpectrumTexture color =
-        parameters.GetSpectrumTextureOrNull("color", SpectrumType::Albedo, alloc);
+    SpectrumTexture reflectance =
+        parameters.GetSpectrumTextureOrNull("reflectance", SpectrumType::Albedo, alloc);
+    if (!reflectance)
+        reflectance = parameters.GetSpectrumTextureOrNull("color", SpectrumType::Albedo, alloc);
     FloatTexture eumelanin = parameters.GetFloatTextureOrNull("eumelanin", alloc);
     FloatTexture pheomelanin = parameters.GetFloatTextureOrNull("pheomelanin", alloc);
     if (sigma_a) {
-        if (color)
-            Warning(loc, R"(Ignoring "color" parameter since "sigma_a" was provided.)");
+        if (reflectance)
+            Warning(loc, R"(Ignoring "reflectance" parameter since "sigma_a" was provided.)");
         if (eumelanin)
             Warning(loc, "Ignoring \"eumelanin\" parameter since \"sigma_a\" was "
                          "provided.");
         if (pheomelanin)
             Warning(loc, "Ignoring \"pheomelanin\" parameter since \"sigma_a\" was "
                          "provided.");
-    } else if (color) {
+    } else if (reflectance) {
         if (sigma_a)
-            Warning(loc, R"(Ignoring "sigma_a" parameter since "color" was provided.)");
+            Warning(loc, R"(Ignoring "sigma_a" parameter since "reflectance" was provided.)");
         if (eumelanin)
-            Warning(loc, "Ignoring \"eumelanin\" parameter since \"color\" was "
+            Warning(loc, "Ignoring \"eumelanin\" parameter since \"reflectance\" was "
                          "provided.");
         if (pheomelanin)
-            Warning(loc, "Ignoring \"pheomelanin\" parameter since \"color\" was "
+            Warning(loc, "Ignoring \"pheomelanin\" parameter since \"reflectance\" was "
                          "provided.");
     } else if (eumelanin || pheomelanin) {
         if (sigma_a)
             Warning(loc, "Ignoring \"sigma_a\" parameter since "
                          "\"eumelanin\"/\"pheomelanin\" was provided.");
-        if (color)
-            Warning(loc, "Ignoring \"color\" parameter since "
+        if (reflectance)
+            Warning(loc, "Ignoring \"reflectance\" parameter since "
                          "\"eumelanin\"/\"pheomelanin\" was provided.");
     } else {
         // Default: brown-ish hair.
@@ -176,16 +179,16 @@ HairMaterial *HairMaterial::Create(const TextureParameterDictionary &parameters,
     FloatTexture beta_n = parameters.GetFloatTexture("beta_n", 0.3f, alloc);
     FloatTexture alpha = parameters.GetFloatTexture("alpha", 2.f, alloc);
 
-    return alloc.new_object<HairMaterial>(sigma_a, color, eumelanin, pheomelanin, eta,
+    return alloc.new_object<HairMaterial>(sigma_a, reflectance, eumelanin, pheomelanin, eta,
                                           beta_m, beta_n, alpha);
 }
 
 // DiffuseMaterial Method Definitions
 std::string DiffuseMaterial::ToString() const {
-    return StringPrintf("[ DiffuseMaterial displacement: %s normapMap: %s reflectance: %s ]",
-                        displacement,
-                        normalMap ? normalMap->ToString() : std::string("(nullptr)"),
-                        reflectance);
+    return StringPrintf(
+        "[ DiffuseMaterial displacement: %s normapMap: %s reflectance: %s ]",
+        displacement, normalMap ? normalMap->ToString() : std::string("(nullptr)"),
+        reflectance);
 }
 
 DiffuseMaterial *DiffuseMaterial::Create(const TextureParameterDictionary &parameters,
@@ -207,8 +210,8 @@ std::string ConductorMaterial::ToString() const {
                         "k: %s reflectance: %s uRoughness: %s vRoughness: %s "
                         "remapRoughness: %s ]",
                         displacement,
-                        normalMap ? normalMap->ToString() : std::string("(nullptr)"),
-                        eta, k, reflectance, uRoughness, vRoughness, remapRoughness);
+                        normalMap ? normalMap->ToString() : std::string("(nullptr)"), eta,
+                        k, reflectance, uRoughness, vRoughness, remapRoughness);
 }
 
 ConductorMaterial *ConductorMaterial::Create(const TextureParameterDictionary &parameters,
@@ -337,8 +340,7 @@ std::string CoatedDiffuseMaterial::ToString() const {
     return StringPrintf(
         "[ CoatedDiffuseMaterial displacement: %s normalMap: %s reflectance: %s "
         "uRoughness: %s vRoughness: %s thickness: %s eta: %s remapRoughness: %s ]",
-        displacement,
-        normalMap ? normalMap->ToString() : std::string("(nullptr)"),
+        displacement, normalMap ? normalMap->ToString() : std::string("(nullptr)"),
         reflectance, uRoughness, vRoughness, thickness, eta, remapRoughness);
 }
 
@@ -441,16 +443,16 @@ template CoatedConductorBxDF CoatedConductorMaterial::GetBxDF(
     SampledWavelengths &lambda) const;
 
 std::string CoatedConductorMaterial::ToString() const {
-    return StringPrintf("[ CoatedConductorMaterial displacement: %s normalMap: %s "
-                        "interfaceURoughness: %s interfaceVRoughness: %s thickness: %s "
-                        "interfaceEta: %s g: %s albedo: %s conductorURoughness: %s "
-                        "conductorVRoughness: %s conductorEta: %s k: %s "
-                        "conductorReflectance: %s remapRoughness: %s maxDepth: %d nSamples: %d ]",
-                        displacement,
-                        normalMap ? normalMap->ToString() : std::string("(nullptr)"),
-                        interfaceURoughness, interfaceVRoughness, thickness,
-                        interfaceEta, g, albedo, conductorURoughness, conductorVRoughness,
-                        conductorEta, k, reflectance, remapRoughness, maxDepth, nSamples);
+    return StringPrintf(
+        "[ CoatedConductorMaterial displacement: %s normalMap: %s "
+        "interfaceURoughness: %s interfaceVRoughness: %s thickness: %s "
+        "interfaceEta: %s g: %s albedo: %s conductorURoughness: %s "
+        "conductorVRoughness: %s conductorEta: %s k: %s "
+        "conductorReflectance: %s remapRoughness: %s maxDepth: %d nSamples: %d ]",
+        displacement, normalMap ? normalMap->ToString() : std::string("(nullptr)"),
+        interfaceURoughness, interfaceVRoughness, thickness, interfaceEta, g, albedo,
+        conductorURoughness, conductorVRoughness, conductorEta, k, reflectance,
+        remapRoughness, maxDepth, nSamples);
 }
 
 CoatedConductorMaterial *CoatedConductorMaterial::Create(
@@ -717,6 +719,10 @@ Material Material::Create(const std::string &name,
             if (iter == namedMaterials.end())
                 ErrorExit("%s: named material not found.", materialNames[i]);
             materials[i] = iter->second;
+
+            if (materials[i] == nullptr)
+                ErrorExit("%s: an \"interface\" material cannot be used as an element of "
+                          "the \"mix\" material.", materialNames[i]);
         }
         material = MixMaterial::Create(materials, parameters, loc, alloc);
     } else

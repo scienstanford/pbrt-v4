@@ -329,11 +329,11 @@ class span {
 
     // Used to SFINAE-enable a function when the slice elements are const.
     template <typename U>
-    using EnableIfConstView = typename std::enable_if_t<std::is_const<T>::value, U>;
+    using EnableIfConstView = typename std::enable_if_t<std::is_const_v<T>, U>;
 
     // Used to SFINAE-enable a function when the slice elements are mutable.
     template <typename U>
-    using EnableIfMutableView = typename std::enable_if_t<!std::is_const<T>::value, U>;
+    using EnableIfMutableView = typename std::enable_if_t<!std::is_const_v<T>, U>;
 
     using value_type = typename std::remove_cv_t<T>;
     using iterator = T *;
@@ -636,7 +636,7 @@ class polymorphic_allocator {
     [[nodiscard]] Tp *allocate(size_t n) {
         return static_cast<Tp *>(resource()->allocate(n * sizeof(Tp), alignof(Tp)));
     }
-    void deallocate(Tp *p, size_t n) { resource()->deallocate(p, n); }
+    void deallocate(Tp *p, size_t n) { resource()->deallocate(p, n * sizeof(Tp)); }
 
     void *allocate_bytes(size_t nbytes, size_t alignment = alignof(max_align_t)) {
         return resource()->allocate(nbytes, alignment);

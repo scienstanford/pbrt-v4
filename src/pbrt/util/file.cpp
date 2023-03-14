@@ -71,15 +71,11 @@ std::string ResolveFilename(std::string filename) {
     
     if (searchDirectory.empty() || filename.empty() || IsAbsolutePath(filename))
         return filename;
-    else{
-        std::string filefullpath = (searchDirectory / filesystem::path(filename)).str();
-        if (!std::filesystem::exists(filefullpath)){
-           Printf("File not found: %s.\n",filefullpath); 
-        }
 
-        return (searchDirectory / filesystem::path(filename)).make_absolute().str();
-    }
-
+    filesystem::path filepath = searchDirectory / filesystem::path(filename);
+    if (filepath.exists())
+        return filepath.make_absolute().str();
+    return filename;
 }
 
 std::vector<std::string> MatchingFilenames(std::string filenameBase) {
@@ -169,24 +165,22 @@ std::string ReadDecompressedFileContents(std::string filename) {
 
     // A single libdeflate_decompressor * can't be used by multiple threads
     // concurrently, so make sure to do per-thread allocations of them.
-    static ThreadLocal<libdeflate_decompressor *> decompressors([]() {
-        return libdeflate_alloc_decompressor();
-    });
+    static ThreadLocal<libdeflate_decompressor *> decompressors(
+        []() { return libdeflate_alloc_decompressor(); });
 
     libdeflate_decompressor *d = decompressors.Get();
     std::string decompressed(size, '\0');
     int retries = 0;
     while (true) {
         size_t actualOut;
-        libdeflate_result result =
-            libdeflate_gzip_decompress(d, compressed.data(), compressed.size(),
-                                       decompressed.data(), decompressed.size(),
-                                       &actualOut);
+        libdeflate_result result = libdeflate_gzip_decompress(
+            d, compressed.data(), compressed.size(), decompressed.data(),
+            decompressed.size(), &actualOut);
         switch (result) {
         case LIBDEFLATE_SUCCESS:
             CHECK_EQ(actualOut, decompressed.size());
-            LOG_VERBOSE("Decompressed %s from %d to %d bytes", filename, compressed.size(),
-                        decompressed.size());
+            LOG_VERBOSE("Decompressed %s from %d to %d bytes", filename,
+                        compressed.size(), decompressed.size());
             return decompressed;
 
         case LIBDEFLATE_BAD_DATA:

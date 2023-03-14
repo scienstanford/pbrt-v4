@@ -413,13 +413,18 @@ OrthographicCamera *OrthographicCamera::Create(const ParameterDictionary &parame
     }
     std::vector<Float> sw = parameters.GetFloatArray("screenwindow");
     if (!sw.empty()) {
-        if (sw.size() == 4) {
-            screen.pMin.x = sw[0];
-            screen.pMax.x = sw[1];
-            screen.pMin.y = sw[2];
-            screen.pMax.y = sw[3];
-        } else
-            Error("\"screenwindow\" should have four values");
+        if (Options->fullscreen) {
+                Warning("\"screenwindow\" is ignored in fullscreen mode");
+        } else {
+            if (sw.size() == 4) {
+                screen.pMin.x = sw[0];
+                screen.pMax.x = sw[1];
+                screen.pMin.y = sw[2];
+                screen.pMax.y = sw[3];
+            } else {
+                Error("\"screenwindow\" should have four values");
+            }
+        }
     }
     return alloc.new_object<OrthographicCamera>(cameraBaseParameters, screen, lensradius,
                                                 focaldistance);
@@ -562,13 +567,18 @@ PerspectiveCamera *PerspectiveCamera::Create(const ParameterDictionary &paramete
     }
     std::vector<Float> sw = parameters.GetFloatArray("screenwindow");
     if (!sw.empty()) {
-        if (sw.size() == 4) {
-            screen.pMin.x = sw[0];
-            screen.pMax.x = sw[1];
-            screen.pMin.y = sw[2];
-            screen.pMax.y = sw[3];
-        } else
-            Error(loc, "\"screenwindow\" should have four values");
+        if (Options->fullscreen) {
+                Warning("\"screenwindow\" is ignored in fullscreen mode");
+        } else {
+            if (sw.size() == 4) {
+                screen.pMin.x = sw[0];
+                screen.pMax.x = sw[1];
+                screen.pMin.y = sw[2];
+                screen.pMax.y = sw[3];
+            } else {
+                Error(loc, "\"screenwindow\" should have four values");
+            }
+        }
     }
     Float fov = parameters.GetOneFloat("fov", 90.);
     // read distortion json file -- zhenyi
@@ -717,13 +727,18 @@ SphericalCamera *SphericalCamera::Create(const ParameterDictionary &parameters,
     }
     std::vector<Float> sw = parameters.GetFloatArray("screenwindow");
     if (!sw.empty()) {
-        if (sw.size() == 4) {
-            screen.pMin.x = sw[0];
-            screen.pMax.x = sw[1];
-            screen.pMin.y = sw[2];
-            screen.pMax.y = sw[3];
-        } else
-            Error(loc, "\"screenwindow\" should have four values");
+        if (Options->fullscreen) {
+                Warning("\"screenwindow\" is ignored in fullscreen mode");
+        } else {
+            if (sw.size() == 4) {
+                screen.pMin.x = sw[0];
+                screen.pMax.x = sw[1];
+                screen.pMin.y = sw[2];
+                screen.pMax.y = sw[3];
+            } else {
+                Error(loc, "\"screenwindow\" should have four values");
+            }
+        }
     }
     (void)lensradius;     // don't need this
     (void)focaldistance;  // don't need this
@@ -1404,7 +1419,7 @@ RealisticCamera *RealisticCamera::Create(const ParameterDictionary &parameters,
         return image;
     };
 
-    std::string apertureName = ResolveFilename(parameters.GetOneString("aperture", ""));
+    std::string apertureName = parameters.GetOneString("aperture", "");
     Image apertureImage(alloc);
     if (!apertureName.empty()) {
         // built-in diaphragm shapes
@@ -1451,7 +1466,7 @@ RealisticCamera *RealisticCamera::Create(const ParameterDictionary &parameters,
             std::reverse(vert.begin(), vert.end());
             apertureImage = rasterize(vert);
         } else {
-            ImageAndMetadata im = Image::Read(apertureName, alloc);
+            ImageAndMetadata im = Image::Read(ResolveFilename(apertureName), alloc);
             apertureImage = std::move(im.image);
             if (apertureImage.NChannels() > 1) {
                 ImageChannelDesc rgbDesc = apertureImage.GetChannelDesc({"R", "G", "B"});

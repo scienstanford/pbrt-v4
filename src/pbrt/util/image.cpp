@@ -46,6 +46,10 @@
 #define STBI_WINDOWS_UTF8
 #include <stb/stb_image.h>
 
+#define QOI_NO_STDIO
+#define QOI_IMPLEMENTATION
+#include <qoi/qoi.h>
+
 namespace pbrt {
 
 std::string ToString(PixelFormat format) {
@@ -389,12 +393,12 @@ Image::Image(PixelFormat format, Point2i resolution,
       p16(alloc),
       p32(alloc) {
     if (Is8Bit(format)) {
-        p8.resize(NChannels() * resolution[0] * resolution[1]);
+        p8.resize(NChannels() * size_t(resolution[0]) * size_t(resolution[1]));
         CHECK(encoding);
     } else if (Is16Bit(format))
-        p16.resize(NChannels() * resolution[0] * resolution[1]);
+        p16.resize(NChannels() * size_t(resolution[0]) * size_t(resolution[1]));
     else if (Is32Bit(format))
-        p32.resize(NChannels() * resolution[0] * resolution[1]);
+        p32.resize(NChannels() * size_t(resolution[0]) * size_t(resolution[1]));
     else
         LOG_FATAL("Unhandled format in Image::Image()");
 }
@@ -564,7 +568,7 @@ ImageChannelValues Image::MAE(const ImageChannelDesc &desc, const Image &ref,
 
     ImageChannelValues error(desc.size());
     for (int c = 0; c < desc.size(); ++c)
-        error[c] = sumError[c] / (Resolution().x * Resolution().y);
+        error[c] = sumError[c] / (Float(Resolution().x) * Float(Resolution().y));
     return error;
 }
 
@@ -598,7 +602,7 @@ ImageChannelValues Image::MSE(const ImageChannelDesc &desc, const Image &ref,
 
     ImageChannelValues mse(desc.size());
     for (int c = 0; c < desc.size(); ++c)
-        mse[c] = sumSE[c] / (Resolution().x * Resolution().y);
+        mse[c] = sumSE[c] / (Float(Resolution().x) * Float(Resolution().y));
     return mse;
 }
 
@@ -630,7 +634,7 @@ ImageChannelValues Image::MRSE(const ImageChannelDesc &desc, const Image &ref,
 
     ImageChannelValues mrse(desc.size());
     for (int c = 0; c < desc.size(); ++c)
-        mrse[c] = sumRSE[c] / (Resolution().x * Resolution().y);
+        mrse[c] = sumRSE[c] / (Float(Resolution().x) * Float(Resolution().y));
     return mrse;
 }
 
@@ -646,7 +650,7 @@ ImageChannelValues Image::Average(const ImageChannelDesc &desc) const {
 
     ImageChannelValues average(desc.size());
     for (int c = 0; c < desc.size(); ++c)
-        average[c] = sum[c] / (Resolution().x * Resolution().y);
+        average[c] = sum[c] / (Float(Resolution().x) * Float(Resolution().y));
     return average;
 }
 
@@ -867,6 +871,7 @@ static ImageAndMetadata ReadPNG(const std::string &name, Allocator alloc,
                                 ColorEncoding encoding);
 static ImageAndMetadata ReadPFM(const std::string &filename, Allocator alloc);
 static ImageAndMetadata ReadHDR(const std::string &filename, Allocator alloc);
+static ImageAndMetadata ReadQOI(const std::string &filename, Allocator alloc);
 
 // ImageIO Function Definitions
 ImageAndMetadata Image::Read(std::string name, Allocator alloc, ColorEncoding encoding) {
@@ -878,6 +883,8 @@ ImageAndMetadata Image::Read(std::string name, Allocator alloc, ColorEncoding en
         return ReadPFM(name, alloc);
     else if (HasExtension(name, "hdr"))
         return ReadHDR(name, alloc);
+    else if (HasExtension(name, "qoi"))
+        return ReadQOI(name, alloc);
     else {
         int x, y, n;
         unsigned char *data = stbi_load(name.c_str(), &x, &y, &n, 0);
@@ -915,7 +922,7 @@ ImageAndMetadata Image::Read(std::string name, Allocator alloc, ColorEncoding en
 
 bool Image::Write(std::string name, const ImageMetadata &metadata) const {
     if (metadata.pixelBounds)
-        CHECK_EQ(metadata.pixelBounds->Area(), resolution.x * resolution.y);
+        CHECK_EQ(metadata.pixelBounds->Area(), size_t(resolution.x) * size_t(resolution.y));
 
     if (HasExtension(name, "exr"))
         return WriteEXR(name, metadata);
@@ -942,6 +949,19 @@ bool Image::Write(std::string name, const ImageMetadata &metadata) const {
             outImage = outImage.SelectChannels(desc);
         break;
     }
+    case 4: {
+        ImageChannelDesc desc = outImage.GetChannelDesc({"R", "G", "B", "A"});
+        if (!desc)
+            // Still go for it.
+            Warning(
+                "%s: image has 4 channels but they are not R, G, B, and A. Image may be "
+                "garbled.",
+                name);
+        else
+            // Reorder them as RGBA.
+            outImage = outImage.SelectChannels(desc);
+        break;
+    }
     default: {
         ImageChannelDesc desc = outImage.GetChannelDesc({"R", "G", "B"});
         if (!desc) {
@@ -963,10 +983,11 @@ bool Image::Write(std::string name, const ImageMetadata &metadata) const {
         break;
     }
     }
-    CHECK(outImage.NChannels() == 1 || outImage.NChannels() == 3);
+    CHECK(outImage.NChannels() == 1 || outImage.NChannels() == 3 ||
+          outImage.NChannels() == 4);
 
     ImageMetadata outMetadata = metadata;
-    if (outImage.NChannels() == 3 && *metadata.GetColorSpace() != *RGBColorSpace::sRGB) {
+    if (outImage.NChannels() != 1 && *metadata.GetColorSpace() != *RGBColorSpace::sRGB) {
         Warning("%s: converting pixel colors to sRGB to match output image format.",
                 name);
         SquareMatrix<3> m =
@@ -988,6 +1009,8 @@ bool Image::Write(std::string name, const ImageMetadata &metadata) const {
         return outImage.WritePFM(name, outMetadata);
     else if (HasExtension(name, "png"))
         return outImage.WritePNG(name, outMetadata);
+    else if (HasExtension(name, "qoi"))
+        return outImage.WriteQOI(name, outMetadata);
     else {
         Error("%s: no support for writing images with this extension", name);
         return false;
@@ -1082,8 +1105,7 @@ static ImageAndMetadata ReadEXR(const std::string &name, Allocator alloc) {
         // Find any string or string vector attributes
         for (auto iter = file.header().begin(); iter != file.header().end(); ++iter) {
             if (strcmp(iter.attribute().typeName(), "string") == 0) {
-                Imf::StringAttribute &sv =
-                    (Imf::StringAttribute &)iter.attribute();
+                Imf::StringAttribute &sv = (Imf::StringAttribute &)iter.attribute();
                 metadata.strings[iter.name()] = sv.value();
             }
             if (strcmp(iter.attribute().typeName(), "stringvector") == 0) {
@@ -1404,6 +1426,21 @@ std::string Image::ToString() const {
                         encoding ? encoding.ToString().c_str() : "(nullptr)");
 }
 
+std::unique_ptr<uint8_t[]> Image::QuantizePixelsToU256(int *nOutOfGamut) const {
+    std::unique_ptr<uint8_t[]> u256 =
+        std::make_unique<uint8_t[]>(NChannels() * size_t(resolution.x) * size_t(resolution.y));
+    for (int y = 0; y < resolution.y; ++y)
+        for (int x = 0; x < resolution.x; ++x)
+            for (int c = 0; c < NChannels(); ++c) {
+                Float dither = -.5f + BlueNoise(c, {x, y});
+                Float v = GetChannel({x, y}, c);
+                if (v < 0 || v > 1)
+                    ++(*nOutOfGamut);
+                u256[NChannels() * (y * resolution.x + x) + c] = LinearToSRGB8(v, dither);
+            }
+    return u256;
+}
+
 bool Image::WritePNG(const std::string &filename, const ImageMetadata &metadata) const {
     unsigned int error = 0;
     int nOutOfGamut = 0;
@@ -1411,48 +1448,29 @@ bool Image::WritePNG(const std::string &filename, const ImageMetadata &metadata)
     unsigned char *png;
     size_t pngSize;
 
+    LodePNGColorType pngColor;
+    switch (NChannels()) {
+    case 1:
+        pngColor = LCT_GREY;
+        break;
+    case 3:
+        // TODO: it would be nice to store the color encoding used in the PNG metadata...
+        pngColor = LCT_RGB;
+        break;
+    case 4:
+        pngColor = LCT_RGBA;
+        break;
+    default:
+        LOG_FATAL("Unexpected number of channels in WritePNG()");
+    }
+
     if (format == PixelFormat::U256) {
-        if (NChannels() == 1)
-            error = lodepng_encode_memory(&png, &pngSize, p8.data(), resolution.x,
-                                          resolution.y, LCT_GREY, 8 /* bitdepth */);
-        else if (NChannels() == 3)
-            // TODO: it would be nice to store the color encoding used in the
-            // PNG metadata...
-            error = lodepng_encode_memory(&png, &pngSize, p8.data(), resolution.x,
-                                          resolution.y, LCT_RGB, 8);
-        else
-            LOG_FATAL("Unhandled channel count in WritePNG(): %d", NChannels());
-    } else if (NChannels() == 3) {
-        // It may not actually be RGB, but that's what PNG's going to
-        // assume..
-        std::unique_ptr<uint8_t[]> rgb8 =
-            std::make_unique<uint8_t[]>(3 * resolution.x * resolution.y);
-        for (int y = 0; y < resolution.y; ++y)
-            for (int x = 0; x < resolution.x; ++x)
-                for (int c = 0; c < 3; ++c) {
-                    Float dither = -.5f + BlueNoise(c, {x, y});
-                    Float v = GetChannel({x, y}, c);
-                    if (v < 0 || v > 1)
-                        ++nOutOfGamut;
-                    rgb8[3 * (y * resolution.x + x) + c] = LinearToSRGB8(v, dither);
-                }
-
-        error = lodepng_encode_memory(&png, &pngSize, rgb8.get(), resolution.x,
-                                      resolution.y, LCT_RGB, 8);
-    } else if (NChannels() == 1) {
-        std::unique_ptr<uint8_t[]> y8 =
-            std::make_unique<uint8_t[]>(resolution.x * resolution.y);
-        for (int y = 0; y < resolution.y; ++y)
-            for (int x = 0; x < resolution.x; ++x) {
-                Float dither = -.5f + BlueNoise(0, {x, y});
-                Float v = GetChannel({x, y}, 0);
-                if (v < 0 || v > 1)
-                    ++nOutOfGamut;
-                y8[y * resolution.x + x] = LinearToSRGB8(v, dither);
-            }
-
-        error = lodepng_encode_memory(&png, &pngSize, y8.get(), resolution.x,
-                                      resolution.y, LCT_GREY, 8 /* bitdepth */);
+        error = lodepng_encode_memory(&png, &pngSize, p8.data(), resolution.x,
+                                      resolution.y, pngColor, 8 /* bitdepth */);
+    } else {
+        std::unique_ptr<uint8_t[]> pix8 = QuantizePixelsToU256(&nOutOfGamut);
+        error = lodepng_encode_memory(&png, &pngSize, pix8.get(), resolution.x,
+                                      resolution.y, pngColor, 8 /* bitdepth */);
     }
 
     if (nOutOfGamut > 0)
@@ -1473,6 +1491,60 @@ bool Image::WritePNG(const std::string &filename, const ImageMetadata &metadata)
     free(png);
 
     return true;
+}
+
+bool Image::WriteQOI(const std::string &filename, const ImageMetadata &metadata) const {
+    Image image = *this;
+    void *qoiPixels = nullptr;
+    int qoiSize = 0;
+
+    qoi_desc desc;
+    desc.width = resolution.x;
+    desc.height = resolution.y;
+    desc.channels = NChannels();
+    if (Encoding() && !Encoding().Is<LinearColorEncoding>() &&
+        !Encoding().Is<sRGBColorEncoding>()) {
+        Error("%s: only linear and sRGB encodings are supported by QOI.",
+              Encoding().ToString());  // filename);
+        return false;
+    }
+    desc.colorspace = Encoding().Is<LinearColorEncoding>() ? QOI_LINEAR : QOI_SRGB;
+
+    if (NChannels() == 4) {
+        // Try to order it as QOI expects. Though continue on if we don't
+        // find these particular channel names.a
+        ImageChannelDesc desc = GetChannelDesc({"R", "G", "B", "A"});
+        if (desc)
+            image = SelectChannels(desc);
+    } else if (NChannels() == 3) {
+        // Similarly try to get the channels in order..
+        ImageChannelDesc desc = GetChannelDesc({"R", "G", "B"});
+        if (desc)
+            image = SelectChannels(desc);
+    } else {
+        Error("%s: only 3 and 4 channel images are supported for QOI", filename);
+        return false;
+    }
+
+    if (format == PixelFormat::U256)
+        qoiPixels = qoi_encode(image.RawPointer({0, 0}), &desc, &qoiSize);
+    else {
+        int nOutOfGamut = 0;
+        std::unique_ptr<uint8_t[]> rgba8 = QuantizePixelsToU256(&nOutOfGamut);
+        if (nOutOfGamut > 0)
+            Warning("%s: %d out of gamut pixel channels clamped to [0,1].", filename,
+                    nOutOfGamut);
+
+        qoiPixels = qoi_encode(rgba8.get(), &desc, &qoiSize);
+    }
+
+    bool success =
+        WriteFileContents(filename, std::string((const char *)qoiPixels, qoiSize));
+    if (!success)
+        Error("%s: error writing QOI file.", filename);
+
+    free(qoiPixels);
+    return success;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1542,7 +1614,7 @@ static int readWord(FILE *fp, char *buffer, int bufferLength) {
 static ImageAndMetadata ReadPFM(const std::string &filename, Allocator alloc) {
     pstd::vector<float> rgb32(alloc);
     char buffer[BUFFER_SIZE];
-    unsigned int nFloats;
+    size_t nFloats;
     int nChannels, width, height;
     float scale;
     bool fileLittleEndian;
@@ -1584,7 +1656,7 @@ static ImageAndMetadata ReadPFM(const std::string &filename, Allocator alloc) {
         ErrorExit("%s: unable to decode scale \"%s\"", filename, buffer);
 
     // read the data
-    nFloats = nChannels * width * height;
+    nFloats = nChannels * size_t(width) * size_t(height);
     rgb32.resize(nFloats);
     for (int y = height - 1; y >= 0; --y)
         if (fread(&rgb32[nChannels * y * width], sizeof(float), nChannels * width, fp) !=
@@ -1628,7 +1700,7 @@ static ImageAndMetadata ReadHDR(const std::string &filename, Allocator alloc) {
     if (!data)
         ErrorExit("%s: %s", filename, stbi_failure_reason());
 
-    pstd::vector<float> pixels(data, data + x * y * n, alloc);
+    pstd::vector<float> pixels(data, data + size_t(x) * size_t(y) * size_t(n), alloc);
     stbi_image_free(data);
 
     switch (n) {
@@ -1652,10 +1724,44 @@ static ImageAndMetadata ReadHDR(const std::string &filename, Allocator alloc) {
     }
 }
 
+static ImageAndMetadata ReadQOI(const std::string &filename, Allocator alloc) {
+    std::string contents = ReadFileContents(filename);
+    qoi_desc desc;
+    void *pixels = qoi_decode(contents.data(), contents.size(), &desc, 0 /* channels */);
+    CHECK(pixels != nullptr);  // qoi failure
+
+    ImageMetadata metadata;
+    metadata.colorSpace = RGBColorSpace::sRGB;
+
+    std::vector<std::string> channelNames{"R", "G", "B"};
+    if (desc.channels == 4)
+        channelNames.push_back("A");
+    else
+        CHECK_EQ(3, desc.channels);
+
+    CHECK(desc.colorspace == QOI_SRGB || desc.colorspace == QOI_LINEAR);
+    ColorEncoding encoding =
+        (desc.colorspace == QOI_SRGB) ? ColorEncoding::sRGB : ColorEncoding::Linear;
+
+    Image image(PixelFormat::U256, Point2i(desc.width, desc.height), channelNames,
+                encoding, alloc);
+    std::memcpy(image.RawPointer({0, 0}), pixels,
+                size_t(desc.width) * size_t(desc.height) * desc.channels);
+
+    free(pixels);
+
+    return ImageAndMetadata{image, metadata};
+}
+
 bool Image::WritePFM(const std::string &filename, const ImageMetadata &metadata) const {
     FILE *fp = FOpenWrite(filename);
     if (!fp) {
-        Error("Unable to open output PFM file \"%s\"", filename);
+        Error("%s: unable to open output PFM file.", filename);
+        return false;
+    }
+
+    if (NChannels() != 3) {
+        Error("%s: only 3-channel images are supported for PFM.");
         return false;
     }
 

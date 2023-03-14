@@ -18,7 +18,7 @@ option (PBRT_DBG_LOGGING "Enable (very verbose!) debug logging" OFF)
 option (PBRT_NVTX "Insert NVTX annotations for NVIDIA Profiling and Debugging Tools" OFF)
 option (PBRT_NVML "Use NVML for GPU performance measurement" OFF)
 option (PBRT_USE_PREGENERATED_RGB_TO_SPECTRUM_TABLES "Use pregenerated rgbspectrum_*.cpp files rather than running rgb2spec_opt to generate them at build time" OFF)
-set (PBRT_OPTIX7_PATH "" CACHE PATH "Path to OptiX 7 SDK")
+set (PBRT_OPTIX7_PATH $ENV{PBRT_OPTIX7_PATH} CACHE PATH "Path to OptiX 7 SDK")
 set (PBRT_GPU_SHADER_MODEL "" CACHE STRING "")
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -62,18 +62,21 @@ check_ext ("OpenVDB" "openvdb/nanovdb" 414bed84c2fc22e188eac7b611aa85c7edd7a5a9)
 check_ext ("Ptex" "ptex/src" 4cd8e9a6db2b06e478dfbbd8c26eb6df97f84483)
 check_ext ("double-conversion" "double-conversion/cmake" cc1f75a114aca8d2af69f73a5a959aecbab0e87a)
 check_ext ("filesystem" "filesystem/filesystem" c5f9de30142453eb3c6fe991e82dfc2583373116)
+check_ext ("glfw" "glfw/docs" 4cb36872a5fe448c205d0b46f0e8c8b57530cfe0)
 check_ext ("libdeflate" "libdeflate/common" 1fd0bea6ca2073c68493632dafc4b1ddda1bcbc3)
 check_ext ("lodepng" "lodepng/examples" 8c6a9e30576f07bf470ad6f09458a2dcd7a6a84a)
+check_ext ("qoi" "qoi" 028c75fd26e5e0758c7c711216c00404994c1ad3)
 check_ext ("stb" "stb/tools" af1a5bc352164740c1cc1354942b1c6b72eacb8a)
 check_ext ("utf8proc" "utf8proc/bench" 2484e2ed5e1d9c19edcccf392a7d9920ad90dfaf)
 check_ext ("zlib" "zlib/doc" 54d591eabf9fe0e84c725638f8d5d8d202a093fa)
-
 add_compile_definitions ("$<$<CONFIG:DEBUG>:PBRT_DEBUG_BUILD>")
 
 enable_testing ()
 
 find_package (Sanitizers)
 find_package (Threads)
+
+find_package(OpenGL REQUIRED)
 
 set_property (GLOBAL PROPERTY USE_FOLDERS ON)
 
@@ -134,6 +137,7 @@ target_compile_options (
         "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4843>" # double -> float conversion
         "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd26451>" # arithmetic on 4-byte value, then cast to 8-byte
         "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd26495>" # uninitialized member variable
+        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4334>" # 32 to 64 bit displacement
 )
 
 add_library (pbrt_opt INTERFACE)
@@ -529,6 +533,10 @@ set (PBRT_SOURCE
 
   src/pbrt/cmd/pspec_gpu.cpp
   )
+  
+if (MSVC)
+    set (PBRT_SOURCE ${PBRT_SOURCE} src/pbrt/visualstudio.natvis)
+endif ()
 
 set (PBRT_SOURCE_HEADERS
   src/pbrt/bsdf.h
@@ -601,6 +609,7 @@ SET (PBRT_UTIL_SOURCE
   src/pbrt/util/error.cpp
   src/pbrt/util/file.cpp
   src/pbrt/util/float.cpp
+  src/pbrt/util/gui.cpp
   src/pbrt/util/image.cpp
   src/pbrt/util/log.cpp
   src/pbrt/util/loopsubdiv.cpp
@@ -640,6 +649,7 @@ SET (PBRT_UTIL_SOURCE_HEADERS
   src/pbrt/util/error.h
   src/pbrt/util/file.h
   src/pbrt/util/float.h
+  src/pbrt/util/gui.h
   src/pbrt/util/hash.h
   src/pbrt/util/image.h
   src/pbrt/util/log.h
@@ -673,11 +683,14 @@ SET (PBRT_UTIL_SOURCE_HEADERS
 if (PBRT_CUDA_ENABLED)
   set (PBRT_GPU_SOURCE
     src/pbrt/gpu/aggregate.cpp
+    src/pbrt/gpu/denoiser.cpp
     src/pbrt/gpu/memory.cpp
     src/pbrt/gpu/util.cpp
   )
   set (PBRT_GPU_SOURCE_HEADERS
     src/pbrt/gpu/aggregate.h
+    src/pbrt/gpu/cudagl.h
+    src/pbrt/gpu/denoiser.h
     src/pbrt/gpu/memory.h
     src/pbrt/gpu/optix.h
     src/pbrt/gpu/util.h
@@ -831,6 +844,7 @@ target_include_directories (pbrt_lib PUBLIC
   src
   src/ext
   ${STB_INCLUDE}
+  ${QOI_INCLUDE}
   ${OPENEXR_INCLUDE}
   ${ZLIB_INCLUDE_DIRS}
   ${LIBDEFLATE_INCLUDE_DIRS}
@@ -840,7 +854,10 @@ target_include_directories (pbrt_lib PUBLIC
   ${NANOVDB_INCLUDE}
   ${CMAKE_CURRENT_BINARY_DIR}
   ${GSL_INCLUDE_DIR}
+  ${GLFW_INCLUDE}
+  ${GLAD_INCLUDE}
 )
+
 if (PBRT_CUDA_ENABLED AND PBRT_OPTIX7_PATH)
     target_include_directories (pbrt_lib SYSTEM PUBLIC ${PBRT_OPTIX7_PATH}/include)
 endif ()
@@ -867,7 +884,9 @@ set (ALL_PBRT_LIBS
   double-conversion
   ${PBRT_CUDA_LIB}
   utf8proc
-)
+  glfw
+  glad
+  OpenGL::GL)
 
 if (PBRT_CUDA_ENABLED)
   set_property (TARGET pbrt_lib PROPERTY CUDA_SEPARABLE_COMPILATION ON)

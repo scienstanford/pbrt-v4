@@ -298,6 +298,8 @@ class RGBFilm : public FilmBase {
         return outputRGBFromSensorRGB * sensorRGB;
     }
 
+    PBRT_CPU_GPU void ResetPixel(Point2i p) { std::memset(&pixels[p], 0, sizeof(Pixel)); }
+
   private:
     // RGBFilm::Pixel Definition
     struct Pixel {
@@ -374,6 +376,8 @@ class GBufferFilm : public FilmBase {
     Image GetImage(ImageMetadata *metadata, Float splatScale = 1);
 
     std::string ToString() const;
+
+    PBRT_CPU_GPU void ResetPixel(Point2i p) { std::memset(&pixels[p], 0, sizeof(Pixel)); }
 
   private:
     // GBufferFilm::Pixel Definition
@@ -479,10 +483,9 @@ class SpectralFilm : public FilmBase {
     PBRT_CPU_GPU
     RGB GetPixelRGB(Point2i p, Float splatScale = 1) const;
 
-    SpectralFilm(FilmBaseParameters p, Float lambdaMin, Float lambdaMax,
-                 int nBuckets, const RGBColorSpace *colorSpace,
-                 Float maxComponentValue = Infinity, bool writeFP16 = true,
-                 Allocator alloc = {});
+    SpectralFilm(FilmBaseParameters p, Float lambdaMin, Float lambdaMax, int nBuckets,
+                 const RGBColorSpace *colorSpace, Float maxComponentValue = Infinity,
+                 bool writeFP16 = true, Allocator alloc = {});
 
     static SpectralFilm *Create(const ParameterDictionary &parameters, Float exposureTime,
                                 Filter filter, const RGBColorSpace *colorSpace,
@@ -506,6 +509,16 @@ class SpectralFilm : public FilmBase {
                   "in the SPPM integrator, which is inherently very much based on "
                   "RGB output.");
         return {};
+    }
+
+    PBRT_CPU_GPU void ResetPixel(Point2i p) {
+        Pixel &pix = pixels[p];
+        pix.rgbSum[0] = pix.rgbSum[1] = pix.rgbSum[2] = 0.;
+        pix.rgbWeightSum = 0.;
+        pix.rgbSplat[0] = pix.rgbSplat[1] = pix.rgbSplat[2] = 0.;
+        std::memset(pix.bucketSums, 0, nBuckets * sizeof(double));
+        std::memset(pix.weightSums, 0, nBuckets * sizeof(double));
+        std::memset(pix.bucketSplats, 0, nBuckets * sizeof(AtomicDouble));
     }
 
   private:
@@ -608,6 +621,12 @@ PBRT_CPU_GPU
 inline const PixelSensor *Film::GetPixelSensor() const {
     auto filter = [&](auto ptr) { return ptr->GetPixelSensor(); };
     return Dispatch(filter);
+}
+
+PBRT_CPU_GPU
+inline void Film::ResetPixel(Point2i p) {
+    auto rp = [&](auto ptr) { ptr->ResetPixel(p); };
+    return Dispatch(rp);
 }
 
 }  // namespace pbrt

@@ -26,8 +26,7 @@ TEST(BVHLightSampling, OneSpot) {
     std::vector<Light> lights;
     ConstantSpectrum one(1.f);
     lights.push_back(new SpotLight(id, MediumInterface(), &one, 1.f /* scale */,
-                                   45.f /* total width */,
-                                   44.f /* falloff start */));
+                                   45.f /* total width */, 44.f /* falloff start */));
     BVHLightSampler distrib(lights, Allocator());
 
     RNG rng;
@@ -96,8 +95,7 @@ TEST(BVHLightSampling, Point) {
             ASSERT_TRUE((bool)sampledLight);
 
             EXPECT_GT(sampledLight->p, 0);
-            sumWt[lightToIndex[sampledLight->light]] +=
-                1 / (sampledLight->p * nSamples);
+            sumWt[lightToIndex[sampledLight->light]] += 1 / (sampledLight->p * nSamples);
 
             EXPECT_FLOAT_EQ(sampledLight->p, distrib.PMF(intr, sampledLight->light));
         }
@@ -233,8 +231,8 @@ TEST(BVHLightSampling, OneTri) {
     }
 }
 
-static std::tuple<std::vector<Light>, std::vector<Shape>> randomLights(
-    int n, Allocator alloc) {
+static std::tuple<std::vector<Light>, std::vector<Shape>> randomLights(int n,
+                                                                       Allocator alloc) {
     std::vector<Light> lights;
     std::vector<Shape> allTris;
     RNG rng(6502);
@@ -248,9 +246,8 @@ static std::tuple<std::vector<Light>, std::vector<Shape>> randomLights(
             std::vector<Point3f> p{Point3f{r(), r(), r()}, Point3f{r(), r(), r()},
                                    Point3f{r(), r(), r()}};
             // leaks...
-            TriangleMesh *mesh = new TriangleMesh(id, false /* rev orientation */,
-                                                  indices, p, {}, {}, {}, {},
-                                                  Allocator());
+            TriangleMesh *mesh = new TriangleMesh(
+                id, false /* rev orientation */, indices, p, {}, {}, {}, {}, Allocator());
             auto tris = Triangle::CreateTriangles(mesh, Allocator());
             CHECK_EQ(1, tris.size());  // EXPECT doesn't work since this is in a
                                        // function :-p

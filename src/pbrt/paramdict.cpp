@@ -217,7 +217,7 @@ typename ParameterTypeTraits<PT>::ReturnType ParameterDictionary::lookupSingle(
         // Issue error if an incorrect number of parameter values were provided
         if (values.empty())
             ErrorExit(&p->loc, "No values provided for parameter \"%s\".", name);
-        if (values.size() > traits::nPerItem)
+        if (values.size() != traits::nPerItem)
             ErrorExit(&p->loc, "Expected %d values for parameter \"%s\".",
                       traits::nPerItem, name);
 
@@ -417,6 +417,10 @@ std::vector<Spectrum> ParameterDictionary::extractSpectrumArray(
             ErrorExit(&param.loc, "Found odd number of values for \"%s\"", param.name);
 
         int nSamples = param.floats.size() / 2;
+        if (nSamples == 1) {
+            Warning(&param.loc, "Specified spectrum is only non-zero at a single wavelength. "
+                    "This is probably unintended.");
+        }
         return returnArray<Spectrum>(
             param.floats, param, param.floats.size(),
             [this, nSamples, &alloc, param](const Float *v,

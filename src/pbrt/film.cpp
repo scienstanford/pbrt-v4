@@ -19,6 +19,7 @@
 #include <pbrt/util/colorspace.h>
 #include <pbrt/util/error.h>
 #include <pbrt/util/file.h>
+#include <pbrt/util/gui.h>
 #include <pbrt/util/image.h>
 #include <pbrt/util/lowdiscrepancy.h>
 #include <pbrt/util/memory.h>
@@ -85,8 +86,16 @@ FilmBaseParameters::FilmBaseParameters(const ParameterDictionary &parameters,
     } else if (filename.empty())
         filename = "pbrt.exr";
 
-    fullResolution = Point2i(parameters.GetOneInt("xresolution", 1280),
-                             parameters.GetOneInt("yresolution", 720));
+    if (Options->fullscreen) {
+        fullResolution = GUI::GetResolution();
+
+        // Omit unused parameter error
+        auto unusedX = parameters.GetOneInt("xresolution", 1280);
+        auto unusedY = parameters.GetOneInt("yresolution", 720);
+    } else {
+        fullResolution = Point2i(parameters.GetOneInt("xresolution", 1280),
+                                 parameters.GetOneInt("yresolution", 720));
+    }
     if (Options->quickRender) {
         fullResolution.x = std::max(1, fullResolution.x / 4);
         fullResolution.y = std::max(1, fullResolution.y / 4);
@@ -1119,7 +1128,8 @@ SpectralFilm::SpectralFilm(FilmBaseParameters p, Float lambdaMin, Float lambdaMa
 
     filterIntegral = filter.Integral();
     CHECK(!pixelBounds.IsEmpty());
-    filmPixelMemory += pixelBounds.Area() * (sizeof(Pixel) + 3 * nBuckets * sizeof(double));
+    filmPixelMemory +=
+        pixelBounds.Area() * (sizeof(Pixel) + 3 * nBuckets * sizeof(double));
 
     // Allocate memory for the pixel buffers in big arrays. Note that it's
     // wasteful (but convenient) to be storing three pointers in each
@@ -1162,7 +1172,8 @@ RGB SpectralFilm::GetPixelRGB(Point2i p, Float splatScale) const {
     return rgb;
 }
 
-void SpectralFilm::AddSplat(Point2f p, SampledSpectrum L, const SampledWavelengths &lambda) {
+void SpectralFilm::AddSplat(Point2f p, SampledSpectrum L,
+                            const SampledWavelengths &lambda) {
     // This, too, is similar to RGBFilm::AddSplat(), with additions for
     // spectra.
 
@@ -1222,8 +1233,8 @@ Image SpectralFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     for (int i = 0; i < nBuckets; ++i) {
         // The OpenEXR spectral layout takes the bucket center (and then
         // determines bucket widths based on the neighbor wavelengths).
-        std::string lambda = StringPrintf("%.3fnm",
-                                          Lerp((i + 0.5f) / nBuckets, lambdaMin, lambdaMax));
+        std::string lambda =
+            StringPrintf("%.3fnm", Lerp((i + 0.5f) / nBuckets, lambdaMin, lambdaMax));
         // Convert any '.' to ',' in the number since OpenEXR uses '.' for
         // separating layers.
         std::replace(lambda.begin(), lambda.end(), '.', ',');
@@ -1283,14 +1294,16 @@ Image SpectralFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
 }
 
 std::string SpectralFilm::ToString() const {
-    return StringPrintf(
-        "[ SpectralFilm %s lambdaMin: %f lambdaMax: %f nBuckets: %d writeFP16: %s maxComponentValue: %f ]",
-        BaseToString(), lambdaMin, lambdaMax, nBuckets, writeFP16, maxComponentValue);
+    return StringPrintf("[ SpectralFilm %s lambdaMin: %f lambdaMax: %f nBuckets: %d "
+                        "writeFP16: %s maxComponentValue: %f ]",
+                        BaseToString(), lambdaMin, lambdaMax, nBuckets, writeFP16,
+                        maxComponentValue);
 }
 
-SpectralFilm *SpectralFilm::Create(const ParameterDictionary &parameters, Float exposureTime,
-                                   Filter filter, const RGBColorSpace *colorSpace,
-                                   const FileLoc *loc, Allocator alloc) {
+SpectralFilm *SpectralFilm::Create(const ParameterDictionary &parameters,
+                                   Float exposureTime, Filter filter,
+                                   const RGBColorSpace *colorSpace, const FileLoc *loc,
+                                   Allocator alloc) {
     PixelSensor *sensor =
         PixelSensor::Create(parameters, colorSpace, exposureTime, loc, alloc);
     FilmBaseParameters filmBaseParameters(parameters, filter, sensor, loc);
@@ -1305,8 +1318,9 @@ SpectralFilm *SpectralFilm::Create(const ParameterDictionary &parameters, Float 
     Float lambdaMax = parameters.GetOneFloat("lambdamax", Lambda_max);
     Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
 
-    return alloc.new_object<SpectralFilm>(filmBaseParameters, lambdaMin, lambdaMax, nBuckets,
-                                          colorSpace, maxComponentValue, writeFP16, alloc);
+    return alloc.new_object<SpectralFilm>(filmBaseParameters, lambdaMin, lambdaMax,
+                                          nBuckets, colorSpace, maxComponentValue,
+                                          writeFP16, alloc);
 }
 
 Film Film::Create(const std::string &name, const ParameterDictionary &parameters,

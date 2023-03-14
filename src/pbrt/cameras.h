@@ -284,6 +284,7 @@ class ProjectiveCamera : public CameraBase {
         cameraFromRaster = Inverse(screenFromCamera) * screenFromRaster;
     }
 
+  protected:
     // ProjectiveCamera Protected Members
     Transform screenFromCamera, cameraFromRaster;
     Transform rasterFromScreen, screenFromRaster;

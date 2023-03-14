@@ -251,6 +251,32 @@ PBRT_CPU_GPU R Dispatch(F &&func, void *ptr, int index) {
 
 template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
           typename T4, typename T5, typename T6, typename T7>
+PBRT_CPU_GPU R Dispatch(F &&func, const void *ptr, int index) {
+    DCHECK_GE(index, 0);
+    DCHECK_LT(index, 8);
+
+    switch (index) {
+    case 0:
+        return func((const T0 *)ptr);
+    case 1:
+        return func((const T1 *)ptr);
+    case 2:
+        return func((const T2 *)ptr);
+    case 3:
+        return func((const T3 *)ptr);
+    case 4:
+        return func((const T4 *)ptr);
+    case 5:
+        return func((const T5 *)ptr);
+    case 6:
+        return func((const T6 *)ptr);
+    default:
+        return func((const T7 *)ptr);
+    }
+}
+
+template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
+          typename T4, typename T5, typename T6, typename T7>
 PBRT_CPU_GPU R Dispatch(F &&func, void *ptr, int index) {
     DCHECK_GE(index, 0);
     DCHECK_LT(index, 8);
@@ -276,7 +302,8 @@ PBRT_CPU_GPU R Dispatch(F &&func, void *ptr, int index) {
 }
 
 template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-          typename T4, typename T5, typename T6, typename T7, typename... Ts>
+          typename T4, typename T5, typename T6, typename T7, typename... Ts,
+          typename = typename std::enable_if_t<(sizeof...(Ts) > 0)>>
 PBRT_CPU_GPU R Dispatch(F &&func, const void *ptr, int index) {
     DCHECK_GE(index, 0);
 
@@ -303,7 +330,8 @@ PBRT_CPU_GPU R Dispatch(F &&func, const void *ptr, int index) {
 }
 
 template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-          typename T4, typename T5, typename T6, typename T7, typename... Ts>
+          typename T4, typename T5, typename T6, typename T7, typename... Ts,
+          typename = typename std::enable_if_t<(sizeof...(Ts) > 0)>>
 PBRT_CPU_GPU R Dispatch(F &&func, void *ptr, int index) {
     DCHECK_GE(index, 0);
 
@@ -561,6 +589,32 @@ auto DispatchCPU(F &&func, void *ptr, int index) {
 
 template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
           typename T4, typename T5, typename T6, typename T7>
+auto DispatchCPU(F &&func, const void *ptr, int index) {
+    DCHECK_GE(index, 0);
+    DCHECK_LT(index, 8);
+
+    switch (index) {
+    case 0:
+        return func((const T0 *)ptr);
+    case 1:
+        return func((const T1 *)ptr);
+    case 2:
+        return func((const T2 *)ptr);
+    case 3:
+        return func((const T3 *)ptr);
+    case 4:
+        return func((const T4 *)ptr);
+    case 5:
+        return func((const T5 *)ptr);
+    case 6:
+        return func((const T6 *)ptr);
+    default:
+        return func((const T7 *)ptr);
+    }
+}
+
+template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
+          typename T4, typename T5, typename T6, typename T7>
 auto DispatchCPU(F &&func, void *ptr, int index) {
     DCHECK_GE(index, 0);
     DCHECK_LT(index, 8);
@@ -586,7 +640,8 @@ auto DispatchCPU(F &&func, void *ptr, int index) {
 }
 
 template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-          typename T4, typename T5, typename T6, typename T7, typename... Ts>
+          typename T4, typename T5, typename T6, typename T7, typename... Ts,
+          typename = typename std::enable_if_t<(sizeof...(Ts) > 0)>>
 auto DispatchCPU(F &&func, const void *ptr, int index) {
     DCHECK_GE(index, 0);
 
@@ -613,7 +668,8 @@ auto DispatchCPU(F &&func, const void *ptr, int index) {
 }
 
 template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-          typename T4, typename T5, typename T6, typename T7, typename... Ts>
+          typename T4, typename T5, typename T6, typename T7, typename... Ts,
+          typename = typename std::enable_if_t<(sizeof...(Ts) > 0)>>
 auto DispatchCPU(F &&func, void *ptr, int index) {
     DCHECK_GE(index, 0);
 
@@ -652,8 +708,7 @@ struct IsSameType<T> {
 
 template <typename T, typename U, typename... Ts>
 struct IsSameType<T, U, Ts...> {
-    static constexpr bool value =
-        (std::is_same<T, U>::value && IsSameType<U, Ts...>::value);
+    static constexpr bool value = (std::is_same_v<T, U> && IsSameType<U, Ts...>::value);
 };
 
 template <typename... Ts>
@@ -687,10 +742,10 @@ class TaggedPointer {
     TaggedPointer() = default;
     template <typename T>
     PBRT_CPU_GPU TaggedPointer(T *ptr) {
-        uintptr_t iptr = reinterpret_cast<uintptr_t>(ptr);
+        uint64_t iptr = reinterpret_cast<uint64_t>(ptr);
         DCHECK_EQ(iptr & ptrMask, iptr);
         constexpr unsigned int type = TypeIndex<T>();
-        bits = iptr | ((uintptr_t)type << tagShift);
+        bits = iptr | ((uint64_t)type << tagShift);
     }
 
     PBRT_CPU_GPU
@@ -803,13 +858,14 @@ class TaggedPointer {
     }
 
   private:
-    static_assert(sizeof(uintptr_t) == 8, "Expected uintptr_t to be 64 bits");
+    static_assert(sizeof(uintptr_t) <= sizeof(uint64_t),
+                  "Expected pointer size to be <= 64 bits");
     // TaggedPointer Private Members
     static constexpr int tagShift = 57;
     static constexpr int tagBits = 64 - tagShift;
     static constexpr uint64_t tagMask = ((1ull << tagBits) - 1) << tagShift;
     static constexpr uint64_t ptrMask = ~tagMask;
-    uintptr_t bits = 0;
+    uint64_t bits = 0;
 };
 
 }  // namespace pbrt

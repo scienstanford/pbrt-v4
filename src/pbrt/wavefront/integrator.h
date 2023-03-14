@@ -26,6 +26,7 @@
 namespace pbrt {
 
 class BasicScene;
+class GUI;
 
 // WavefrontAggregate Definition
 class WavefrontAggregate {
@@ -58,9 +59,9 @@ class WavefrontPathIntegrator {
     // WavefrontPathIntegrator Public Methods
     Float Render();
 
-    void GenerateCameraRays(int y0, int sampleIndex);
+    void GenerateCameraRays(int y0, Transform movingFromcamera, int sampleIndex);
     template <typename Sampler>
-    void GenerateCameraRays(int y0, int sampleIndex);
+    void GenerateCameraRays(int y0, Transform movingFromCamera, int sampleIndex);
 
     void GenerateRaySamples(int wavefrontDepth, int sampleIndex);
     template <typename Sampler>
@@ -75,11 +76,12 @@ class WavefrontPathIntegrator {
     void HandleEscapedRays();
     void HandleEmissiveIntersection();
 
-    void EvaluateMaterialsAndBSDFs(int wavefrontDepth);
+    void EvaluateMaterialsAndBSDFs(int wavefrontDepth, Transform movingFromCamera);
     template <typename ConcreteMaterial>
-    void EvaluateMaterialAndBSDF(int wavefrontDepth);
+    void EvaluateMaterialAndBSDF(int wavefrontDepth, Transform movingFromCamera);
     template <typename ConcreteMaterial, typename TextureEvaluator>
-    void EvaluateMaterialAndBSDF(MaterialEvalQueue *evalQueue, int wavefrontDepth);
+    void EvaluateMaterialAndBSDF(MaterialEvalQueue *evalQueue, Transform movingFromCamera,
+                                 int wavefrontDepth);
 
     void UpdateFilm();
 
@@ -116,6 +118,18 @@ class WavefrontPathIntegrator {
     RayQueue *NextRayQueue(int wavefrontDepth) {
         return rayQueues[(wavefrontDepth + 1) & 1];
     }
+
+#ifdef PBRT_BUILD_GPU_RENDERER
+    void PrefetchGPUAllocations();
+#endif  // PBRT_BUILD_GPU_RENDERER
+
+    // --display-server methods
+    void StartDisplayThread();
+    void UpdateDisplayRGBFromFilm(Bounds2i pixelBounds);
+    void StopDisplayThread();
+
+    // --interactive support
+    void UpdateFramebufferFromFilm(Bounds2i pixelBounds, Float exposure, RGB *rgb);
 
     // WavefrontPathIntegrator Member Variables
     bool initializeVisibleSurface;
@@ -169,6 +183,10 @@ class WavefrontPathIntegrator {
 
     GetBSSRDFAndProbeRayQueue *bssrdfEvalQueue = nullptr;
     SubsurfaceScatterQueue *subsurfaceScatterQueue = nullptr;
+
+    RGB *displayRGB = nullptr, *displayRGBHost = nullptr;
+    std::atomic<bool> *exitCopyThread;
+    std::thread *copyThread;
 };
 
 }  // namespace pbrt

@@ -44,6 +44,7 @@ Rendering options:
   --debugstart <values>         Inform the Integrator where to start rendering for
                                 faster debugging. (<values> are Integrator-specific
                                 and come from error message text.)
+  --disable-image-textures      Always return the average value of image textures.
   --disable-pixel-jitter        Always sample pixels at their centers.
   --disable-texture-filtering   Point-sample all textures.
   --disable-wavelength-jitter   Always sample the same %d wavelengths of light.
@@ -51,7 +52,8 @@ Rendering options:
                                 (Default: 1)
   --display-server <addr:port>  Connect to display server at given address and port
                                 to display the image as it's being rendered.
-  --force-diffuse               Convert all materials to be diffuse.)"
+  --force-diffuse               Convert all materials to be diffuse.)
+  --fullscreen                  Render fullscreen. Only supported with --interactive.)"
 #ifdef PBRT_BUILD_GPU_RENDERER
             R"(
   --gpu                         Use the GPU for rendering. (Default: disabled)
@@ -59,6 +61,7 @@ Rendering options:
 #endif
             R"(
   --help                        Print this help text.
+  --interactive                 Enable interactive rendering mode.
   --mse-reference-image         Filename for reference image to use for MSE computation.
   --mse-reference-out           File to write MSE error vs spp results.
   --nthreads <num>              Use specified number of threads for rendering.
@@ -163,6 +166,8 @@ int main(int argc, char *argv[]) {
             ParseArg(&iter, args.end(), "gpu-device", &options.gpuDevice, onError) ||
 #endif
             ParseArg(&iter, args.end(), "debugstart", &options.debugStart, onError) ||
+            ParseArg(&iter, args.end(), "disable-image-textures",
+                     &options.disableImageTextures, onError) ||
             ParseArg(&iter, args.end(), "disable-pixel-jitter",
                      &options.disablePixelJitter, onError) ||
             ParseArg(&iter, args.end(), "disable-texture-filtering",
@@ -180,6 +185,8 @@ int main(int argc, char *argv[]) {
             ParseArg(&iter, args.end(), "log-utilization", &options.logUtilization,
                      onError) ||
             ParseArg(&iter, args.end(), "log-file", &options.logFile, onError) ||
+            ParseArg(&iter, args.end(), "interactive", &options.interactive, onError) ||
+            ParseArg(&iter, args.end(), "fullscreen", &options.fullscreen, onError) ||
             ParseArg(&iter, args.end(), "mse-reference-image", &options.mseReferenceImage,
                      onError) ||
             ParseArg(&iter, args.end(), "mse-reference-out", &options.mseReferenceOutput,
@@ -257,6 +264,18 @@ int main(int argc, char *argv[]) {
     if (options.pixelMaterial && options.wavefront) {
         Warning("Disabling --wavefront since --pixelmaterial was specified.");
         options.wavefront = false;
+    }
+
+    if (options.interactive && !(options.useGPU || options.wavefront))
+        ErrorExit("The --interactive option is only supported with the --gpu "
+                  "and --wavefront integrators.");
+
+    if (options.fullscreen && !options.interactive) {
+        ErrorExit("The --fullscreen option is only supported in interactive mode");
+    }
+
+    if (options.interactive && options.quickRender) {
+        ErrorExit("The --quick option is not supported in interactive mode");
     }
 
     options.logLevel = LogLevelFromString(logLevel);

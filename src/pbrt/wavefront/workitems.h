@@ -35,10 +35,6 @@ struct RaySamples {
         Float uc;
         Point2f u;
     } subsurface;
-    bool haveMedia;
-    struct {
-        Float uDist, uMode;
-    } media;
 };
 
 template <>
@@ -62,7 +58,6 @@ struct SOA<RaySamples> {
         rs.direct.uc = dir.v[2];
 
         rs.haveSubsurface = int(dir.v[3]) & 1;
-        rs.haveMedia = int(dir.v[3]) & 2;
 
         Float4 ind = Load4(indirect + i);
         rs.indirect.uc = ind.v[0];
@@ -75,11 +70,6 @@ struct SOA<RaySamples> {
             rs.subsurface.u = Point2f(ss.v[1], ss.v[2]);
         }
 
-        if (rs.haveMedia) {
-            rs.media.uDist = mediaDist[i];
-            rs.media.uMode = mediaMode[i];
-        }
-
         return rs;
     }
 
@@ -89,7 +79,7 @@ struct SOA<RaySamples> {
 
         PBRT_CPU_GPU
         void operator=(RaySamples rs) {
-            int flags = (rs.haveSubsurface ? 1 : 0) | (rs.haveMedia ? 2 : 0);
+            int flags = rs.haveSubsurface ? 1 : 0;
             soa->direct[index] =
                 Float4{rs.direct.u[0], rs.direct.u[1], rs.direct.uc, Float(flags)};
             soa->indirect[index] = Float4{rs.indirect.uc, rs.indirect.rr,
@@ -97,10 +87,6 @@ struct SOA<RaySamples> {
             if (rs.haveSubsurface)
                 soa->subsurface[index] =
                     Float4{rs.subsurface.uc, rs.subsurface.u.x, rs.subsurface.u.y, 0.f};
-            if (rs.haveMedia) {
-                soa->mediaDist[index] = rs.media.uDist;
-                soa->mediaMode[index] = rs.media.uMode;
-            }
         }
 
         SOA *soa;
@@ -136,7 +122,7 @@ struct RayWorkItem {
     int depth;
     SampledWavelengths lambda;
     int pixelIndex;
-    SampledSpectrum beta, inv_w_u, inv_w_l;
+    SampledSpectrum beta, r_u, r_l;
     LightSampleContext prevIntrCtx;
     Float etaScale;
     int specularBounce;
@@ -153,7 +139,7 @@ struct EscapedRayWorkItem {
     int pixelIndex;
     SampledSpectrum beta;
     int specularBounce;
-    SampledSpectrum inv_w_u, inv_w_l;
+    SampledSpectrum r_u, r_l;
     LightSampleContext prevIntrCtx;
 };
 
@@ -167,7 +153,7 @@ struct HitAreaLightWorkItem {
     Vector3f wo;
     SampledWavelengths lambda;
     int depth;
-    SampledSpectrum beta, inv_w_u, inv_w_l;
+    SampledSpectrum beta, r_u, r_l;
     LightSampleContext prevIntrCtx;
     int specularBounce;
     int pixelIndex;
@@ -181,7 +167,7 @@ struct ShadowRayWorkItem {
     Ray ray;
     Float tMax;
     SampledWavelengths lambda;
-    SampledSpectrum Ld, inv_w_u, inv_w_l;
+    SampledSpectrum Ld, r_u, r_l;
     int pixelIndex;
 };
 
@@ -201,7 +187,7 @@ struct GetBSSRDFAndProbeRayWorkItem {
 
     Material material;
     SampledWavelengths lambda;
-    SampledSpectrum beta, inv_w_u;
+    SampledSpectrum beta, r_u;
     Point3f p;
     Vector3f wo;
     Normal3f n, ns;
@@ -220,7 +206,7 @@ struct SubsurfaceScatterWorkItem {
     Material material;
     TabulatedBSSRDF bssrdf;
     SampledWavelengths lambda;
-    SampledSpectrum beta, inv_w_u;
+    SampledSpectrum beta, r_u;
     Float reservoirPDF;
     Float uLight;
     SubsurfaceInteraction ssi;
@@ -237,8 +223,8 @@ struct MediumSampleWorkItem {
     Float tMax;
     SampledWavelengths lambda;
     SampledSpectrum beta;
-    SampledSpectrum inv_w_u;
-    SampledSpectrum inv_w_l;
+    SampledSpectrum r_u;
+    SampledSpectrum r_l;
     int pixelIndex;
     LightSampleContext prevIntrCtx;
     int specularBounce;
@@ -266,7 +252,7 @@ struct MediumScatterWorkItem {
     Point3f p;
     int depth;
     SampledWavelengths lambda;
-    SampledSpectrum beta, inv_w_u;
+    SampledSpectrum beta, r_u;
     const PhaseFunction *phase;
     Vector3f wo;
     Float time;
@@ -333,7 +319,7 @@ struct MaterialEvalWorkItem {
     int pixelIndex;
     int anyNonSpecularBounces;
     Vector3f wo;
-    SampledSpectrum beta, inv_w_u;
+    SampledSpectrum beta, r_u;
     Float etaScale;
     MediumInterface mediumInterface;
 };
@@ -350,8 +336,8 @@ class RayQueue : public WorkQueue<RayWorkItem> {
 
     PBRT_CPU_GPU
     int PushIndirectRay(const Ray &ray, int depth, const LightSampleContext &prevIntrCtx,
-                        const SampledSpectrum &beta, const SampledSpectrum &inv_w_u,
-                        const SampledSpectrum &inv_w_l, const SampledWavelengths &lambda,
+                        const SampledSpectrum &beta, const SampledSpectrum &r_u,
+                        const SampledSpectrum &r_l, const SampledWavelengths &lambda,
                         Float etaScale, bool specularBounce, bool anyNonSpecularBounces,
                         int pixelIndex);
 };
@@ -368,8 +354,8 @@ inline int RayQueue::PushCameraRay(const Ray &ray, const SampledWavelengths &lam
     this->beta[index] = SampledSpectrum(1.f);
     this->etaScale[index] = 1.f;
     this->anyNonSpecularBounces[index] = false;
-    this->inv_w_u[index] = SampledSpectrum(1.f);
-    this->inv_w_l[index] = SampledSpectrum(1.f);
+    this->r_u[index] = SampledSpectrum(1.f);
+    this->r_l[index] = SampledSpectrum(1.f);
     this->specularBounce[index] = false;
     return index;
 }
@@ -377,8 +363,8 @@ inline int RayQueue::PushCameraRay(const Ray &ray, const SampledWavelengths &lam
 PBRT_CPU_GPU
 inline int RayQueue::PushIndirectRay(
     const Ray &ray, int depth, const LightSampleContext &prevIntrCtx,
-    const SampledSpectrum &beta, const SampledSpectrum &inv_w_u,
-    const SampledSpectrum &inv_w_l, const SampledWavelengths &lambda, Float etaScale,
+    const SampledSpectrum &beta, const SampledSpectrum &r_u,
+    const SampledSpectrum &r_l, const SampledWavelengths &lambda, Float etaScale,
     bool specularBounce, bool anyNonSpecularBounces, int pixelIndex) {
     int index = AllocateEntry();
     DCHECK(!ray.HasNaN());
@@ -387,8 +373,8 @@ inline int RayQueue::PushIndirectRay(
     this->pixelIndex[index] = pixelIndex;
     this->prevIntrCtx[index] = prevIntrCtx;
     this->beta[index] = beta;
-    this->inv_w_u[index] = inv_w_u;
-    this->inv_w_l[index] = inv_w_l;
+    this->r_u[index] = r_u;
+    this->r_l[index] = r_l;
     this->lambda[index] = lambda;
     this->anyNonSpecularBounces[index] = anyNonSpecularBounces;
     this->specularBounce[index] = specularBounce;
@@ -413,7 +399,7 @@ class EscapedRayQueue : public WorkQueue<EscapedRayWorkItem> {
 
 inline int EscapedRayQueue::Push(RayWorkItem r) {
     return Push(EscapedRayWorkItem{r.ray.o, r.ray.d, r.depth, r.lambda, r.pixelIndex,
-                                   r.beta, (int)r.specularBounce, r.inv_w_u, r.inv_w_l,
+                                   r.beta, (int)r.specularBounce, r.r_u, r.r_l,
                                    r.prevIntrCtx});
 }
 
@@ -424,14 +410,14 @@ class GetBSSRDFAndProbeRayQueue : public WorkQueue<GetBSSRDFAndProbeRayWorkItem>
 
     PBRT_CPU_GPU
     int Push(Material material, SampledWavelengths lambda, SampledSpectrum beta,
-             SampledSpectrum inv_w_u, Point3f p, Vector3f wo, Normal3f n, Normal3f ns,
+             SampledSpectrum r_u, Point3f p, Vector3f wo, Normal3f n, Normal3f ns,
              Vector3f dpdus, Point2f uv, int depth, MediumInterface mediumInterface,
              Float etaScale, int pixelIndex) {
         int index = AllocateEntry();
         this->material[index] = material;
         this->lambda[index] = lambda;
         this->beta[index] = beta;
-        this->inv_w_u[index] = inv_w_u;
+        this->r_u[index] = r_u;
         this->p[index] = p;
         this->wo[index] = wo;
         this->n[index] = n;
@@ -453,7 +439,7 @@ class SubsurfaceScatterQueue : public WorkQueue<SubsurfaceScatterWorkItem> {
 
     PBRT_CPU_GPU
     int Push(Point3f p0, Point3f p1, int depth, Material material, TabulatedBSSRDF bssrdf,
-             SampledWavelengths lambda, SampledSpectrum beta, SampledSpectrum inv_w_u,
+             SampledWavelengths lambda, SampledSpectrum beta, SampledSpectrum r_u,
              MediumInterface mediumInterface, Float etaScale, int pixelIndex) {
         int index = AllocateEntry();
         this->p0[index] = p0;
@@ -463,7 +449,7 @@ class SubsurfaceScatterQueue : public WorkQueue<SubsurfaceScatterWorkItem> {
         this->bssrdf[index] = bssrdf;
         this->lambda[index] = lambda;
         this->beta[index] = beta;
-        this->inv_w_u[index] = inv_w_u;
+        this->r_u[index] = r_u;
         this->mediumInterface[index] = mediumInterface;
         this->etaScale[index] = etaScale;
         this->pixelIndex[index] = pixelIndex;
@@ -480,7 +466,7 @@ class MediumSampleQueue : public WorkQueue<MediumSampleWorkItem> {
 
     PBRT_CPU_GPU
     int Push(Ray ray, Float tMax, SampledWavelengths lambda, SampledSpectrum beta,
-             SampledSpectrum inv_w_u, SampledSpectrum inv_w_l, int pixelIndex,
+             SampledSpectrum r_u, SampledSpectrum r_l, int pixelIndex,
              LightSampleContext prevIntrCtx, int specularBounce,
              int anyNonSpecularBounces, Float etaScale) {
         int index = AllocateEntry();
@@ -488,8 +474,8 @@ class MediumSampleQueue : public WorkQueue<MediumSampleWorkItem> {
         this->tMax[index] = tMax;
         this->lambda[index] = lambda;
         this->beta[index] = beta;
-        this->inv_w_u[index] = inv_w_u;
-        this->inv_w_l[index] = inv_w_l;
+        this->r_u[index] = r_u;
+        this->r_l[index] = r_l;
         this->pixelIndex[index] = pixelIndex;
         this->prevIntrCtx[index] = prevIntrCtx;
         this->specularBounce[index] = specularBounce;
@@ -500,7 +486,7 @@ class MediumSampleQueue : public WorkQueue<MediumSampleWorkItem> {
 
     PBRT_CPU_GPU
     int Push(RayWorkItem r, Float tMax) {
-        return Push(r.ray, tMax, r.lambda, r.beta, r.inv_w_u, r.inv_w_l, r.pixelIndex,
+        return Push(r.ray, tMax, r.lambda, r.beta, r.r_u, r.r_l, r.pixelIndex,
                     r.prevIntrCtx, r.specularBounce, r.anyNonSpecularBounces, r.etaScale);
     }
 };

@@ -78,7 +78,7 @@ pstd::optional<BSDFSample> DielectricBxDF::Sample_f(
     Vector3f wo, Float uc, Point2f u, TransportMode mode,
     BxDFReflTransFlags sampleFlags) const {
     if (eta == 1 || mfDistrib.EffectivelySmooth()) {
-        // Sample perfectly specular dielectric BSDF
+        // Sample perfect specular dielectric BSDF
         Float R = FrDielectric(CosTheta(wo), eta), T = 1 - R;
         // Compute probabilities _pr_ and _pt_ for sampling reflection and transmission
         Float pr = R, pt = T;
@@ -317,7 +317,7 @@ SampledSpectrum HairBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const 
     Float cosTheta_i = SafeSqrt(1 - Sqr(sinTheta_i));
     Float phi_i = std::atan2(wi.z, wi.y);
 
-    // Compute $\cos \thetat$ for refracted ray
+    // Compute $\cos\,\thetat$ for refracted ray
     Float sinTheta_t = sinTheta_o / eta;
     Float cosTheta_t = SafeSqrt(1 - Sqr(sinTheta_t));
 
@@ -334,8 +334,9 @@ SampledSpectrum HairBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const 
     Float phi = phi_i - phi_o;
     pstd::array<SampledSpectrum, pMax + 1> ap = Ap(cosTheta_o, eta, h, T);
     SampledSpectrum fsum(0.);
+
     for (int p = 0; p < pMax; ++p) {
-        // Compute $\sin \thetao$ and $\cos \thetao$ terms accounting for scales
+        // Compute $\sin\,\thetao$ and $\cos\,\thetao$ terms accounting for scales
         Float sinThetap_o, cosThetap_o;
         if (p == 0) {
             sinThetap_o = sinTheta_o * cos2kAlpha[1] - cosTheta_o * sin2kAlpha[1];
@@ -353,7 +354,7 @@ SampledSpectrum HairBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const 
             cosThetap_o = cosTheta_o;
         }
 
-        // Handle out-of-range $\cos \thetao$ from scale adjustment
+        // Handle out-of-range $\cos\,\thetao$ from scale adjustment
         cosThetap_o = std::abs(cosThetap_o);
 
         fsum += Mp(cosTheta_i, cosThetap_o, sinTheta_i, sinThetap_o, v[p]) * ap[p] *
@@ -372,7 +373,7 @@ SampledSpectrum HairBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const 
 pstd::array<Float, HairBxDF::pMax + 1> HairBxDF::ApPDF(Float cosTheta_o) const {
     // Initialize array of $A_p$ values for _cosTheta_o_
     Float sinTheta_o = SafeSqrt(1 - Sqr(cosTheta_o));
-    // Compute $\cos \thetat$ for refracted ray
+    // Compute $\cos\,\thetat$ for refracted ray
     Float sinTheta_t = sinTheta_o / eta;
     Float cosTheta_t = SafeSqrt(1 - Sqr(sinTheta_t));
 
@@ -411,7 +412,7 @@ pstd::optional<BSDFSample> HairBxDF::Sample_f(Vector3f wo, Float uc, Point2f u,
     pstd::array<Float, pMax + 1> apPDF = ApPDF(cosTheta_o);
     int p = SampleDiscrete(apPDF, uc, nullptr, &uc);
 
-    // Compute $\sin \thetao$ and $\cos \thetao$ terms accounting for scales
+    // Compute $\sin\,\thetao$ and $\cos\,\thetao$ terms accounting for scales
     Float sinThetap_o, cosThetap_o;
     if (p == 0) {
         sinThetap_o = sinTheta_o * cos2kAlpha[1] - cosTheta_o * sin2kAlpha[1];
@@ -429,7 +430,7 @@ pstd::optional<BSDFSample> HairBxDF::Sample_f(Vector3f wo, Float uc, Point2f u,
         cosThetap_o = cosTheta_o;
     }
 
-    // Handle out-of-range $\cos \thetao$ from scale adjustment
+    // Handle out-of-range $\cos\,\thetao$ from scale adjustment
     cosThetap_o = std::abs(cosThetap_o);
 
     // Sample $M_p$ to compute $\thetai$
@@ -460,7 +461,7 @@ pstd::optional<BSDFSample> HairBxDF::Sample_f(Vector3f wo, Float uc, Point2f u,
     // Compute PDF for sampled hair scattering direction _wi_
     Float pdf = 0;
     for (int p = 0; p < pMax; ++p) {
-        // Compute $\sin \thetao$ and $\cos \thetao$ terms accounting for scales
+        // Compute $\sin\,\thetao$ and $\cos\,\thetao$ terms accounting for scales
         Float sinThetap_o, cosThetap_o;
         if (p == 0) {
             sinThetap_o = sinTheta_o * cos2kAlpha[1] - cosTheta_o * sin2kAlpha[1];
@@ -478,10 +479,10 @@ pstd::optional<BSDFSample> HairBxDF::Sample_f(Vector3f wo, Float uc, Point2f u,
             cosThetap_o = cosTheta_o;
         }
 
-        // Handle out-of-range $\cos \thetao$ from scale adjustment
+        // Handle out-of-range $\cos\,\thetao$ from scale adjustment
         cosThetap_o = std::abs(cosThetap_o);
 
-        // Handle out-of-range $\cos \thetao$ from scale adjustment
+        // Handle out-of-range $\cos\,\thetao$ from scale adjustment
         cosThetap_o = std::abs(cosThetap_o);
 
         pdf += Mp(cosTheta_i, cosThetap_o, sinTheta_i, sinThetap_o, v[p]) * apPDF[p] *
@@ -520,7 +521,7 @@ Float HairBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
     Float phi = phi_i - phi_o;
     Float pdf = 0;
     for (int p = 0; p < pMax; ++p) {
-        // Compute $\sin \thetao$ and $\cos \thetao$ terms accounting for scales
+        // Compute $\sin\,\thetao$ and $\cos\,\thetao$ terms accounting for scales
         Float sinThetap_o, cosThetap_o;
         if (p == 0) {
             sinThetap_o = sinTheta_o * cos2kAlpha[1] - cosTheta_o * sin2kAlpha[1];
@@ -538,7 +539,7 @@ Float HairBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
             cosThetap_o = cosTheta_o;
         }
 
-        // Handle out-of-range $\cos \thetao$ from scale adjustment
+        // Handle out-of-range $\cos\,\thetao$ from scale adjustment
         cosThetap_o = std::abs(cosThetap_o);
 
         pdf += Mp(cosTheta_i, cosThetap_o, sinTheta_i, sinThetap_o, v[p]) * apPDF[p] *
@@ -1015,7 +1016,7 @@ SampledSpectrum MeasuredBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) co
         return SampledSpectrum(0);
     wm = Normalize(wm);
 
-    // Map $\wo$ and $\wm$ to the unit square $[0, 1]^2$
+    // Map $\wo$ and $\wm$ to the unit square $[0,\,1]^2$
     Float theta_o = SphericalTheta(wo), phi_o = std::atan2(wo.y, wo.x);
     Float theta_m = SphericalTheta(wm), phi_m = std::atan2(wm.y, wm.x);
     Point2f u_wo(theta2u(theta_o), phi2u(phi_o));
@@ -1140,7 +1141,7 @@ SampledSpectrum BxDF::rho(Vector3f wo, pstd::span<const Float> uc,
     for (size_t i = 0; i < uc.size(); ++i) {
         // Compute estimate of $\rho_\roman{hd}$
         pstd::optional<BSDFSample> bs = Sample_f(wo, uc[i], u2[i]);
-        if (bs)
+        if (bs && bs->pdf > 0)
             r += bs->f * AbsCosTheta(bs->wi) / bs->pdf;
     }
     return r / uc.size();
@@ -1158,7 +1159,7 @@ SampledSpectrum BxDF::rho(pstd::span<const Point2f> u1, pstd::span<const Float> 
             continue;
         Float pdfo = UniformHemispherePDF();
         pstd::optional<BSDFSample> bs = Sample_f(wo, uc[i], u2[i]);
-        if (bs)
+        if (bs && bs->pdf > 0)
             r += bs->f * AbsCosTheta(bs->wi) * AbsCosTheta(wo) / (pdfo * bs->pdf);
     }
     return r / (Pi * uc.size());

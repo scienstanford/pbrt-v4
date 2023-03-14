@@ -25,11 +25,11 @@ void DisconnectFromDisplayServer();
 
 void DisplayStatic(
     std::string title, Point2i resolution, std::vector<std::string> channelNames,
-    std::function<void(Bounds2i, pstd::span<pstd::span<Float>>)> getValues);
+    std::function<void(Bounds2i, pstd::span<pstd::span<float>>)> getValues);
 
 void DisplayDynamic(
     std::string title, Point2i resolution, std::vector<std::string> channelNames,
-    std::function<void(Bounds2i, pstd::span<pstd::span<Float>>)> getValues);
+    std::function<void(Bounds2i, pstd::span<pstd::span<float>>)> getValues);
 
 void DisplayStatic(std::string title, const Image &image,
                    pstd::optional<ImageChannelDesc> channelDesc = {});
@@ -37,12 +37,12 @@ void DisplayDynamic(std::string title, const Image &image,
                     pstd::optional<ImageChannelDesc> channelDesc = {});
 
 template <typename T>
-inline typename std::enable_if_t<std::is_arithmetic<T>::value, void> DisplayStatic(
+inline typename std::enable_if_t<std::is_arithmetic_v<T>, void> DisplayStatic(
     const std::string &title, pstd::span<const T> values, int xResolution) {
     CHECK_EQ(0, values.size() % xResolution);
     int yResolution = values.size() / xResolution;
     DisplayStatic(title, {xResolution, yResolution}, {"value"},
-                  [=](Bounds2i b, pstd::span<pstd::span<Float>> displayValue) {
+                  [=](Bounds2i b, pstd::span<pstd::span<float>> displayValue) {
                       DCHECK_EQ(1, displayValue.size());
                       int index = 0;
                       for (Point2i p : b)
@@ -51,12 +51,12 @@ inline typename std::enable_if_t<std::is_arithmetic<T>::value, void> DisplayStat
 }
 
 template <typename T>
-inline typename std::enable_if_t<std::is_arithmetic<T>::value, void> DisplayDynamic(
+inline typename std::enable_if_t<std::is_arithmetic_v<T>, void> DisplayDynamic(
     const std::string &title, pstd::span<const T> values, int xResolution) {
     CHECK_EQ(0, values.size() % xResolution);
     int yResolution = values.size() / xResolution;
     DisplayDynamic(title, {xResolution, yResolution}, {"value"},
-                   [=](Bounds2i b, pstd::span<pstd::span<Float>> displayValue) {
+                   [=](Bounds2i b, pstd::span<pstd::span<float>> displayValue) {
                        DCHECK_EQ(1, displayValue.size());
                        int index = 0;
                        for (Point2i p : b)
@@ -91,7 +91,7 @@ DisplayStatic(const std::string &title, pstd::span<const T> values,
     CHECK_EQ(0, values.size() % xResolution);
     int yResolution = values.size() / xResolution;
     DisplayStatic(title, {xResolution, yResolution}, channelNames,
-                  [=](Bounds2i b, pstd::span<pstd::span<Float>> displayValue) {
+                  [=](Bounds2i b, pstd::span<pstd::span<float>> displayValue) {
                       DCHECK_EQ(channelNames.size(), displayValue.size());
                       int index = 0;
                       for (Point2i p : b) {
@@ -110,7 +110,7 @@ DisplayDynamic(const std::string &title, pstd::span<const T> values,
     CHECK_EQ(0, values.size() % xResolution);
     int yResolution = values.size() / xResolution;
     DisplayDynamic(title, {xResolution, yResolution}, channelNames,
-                   [=](Bounds2i b, pstd::span<pstd::span<Float>> displayValue) {
+                   [=](Bounds2i b, pstd::span<pstd::span<float>> displayValue) {
                        DCHECK_EQ(channelNames.size(), displayValue.size());
                        int index = 0;
                        for (Point2i p : b) {

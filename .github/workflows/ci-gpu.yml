@@ -15,8 +15,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        optix: [ optix-7.1.0, optix-7.2.0, optix-7.3.0, optix-7.4.0 ]
-        cuda: [ '11.0.3', '11.1.1', '11.2.2', '11.4.3', '11.5.0' ]  # 11.3.0 fails for unclear reasons
+        optix: [ optix-7.1.0, optix-7.2.0, optix-7.3.0, optix-7.4.0 optix-7.5.0 ]
+        cuda: [ '11.2.2', '11.4.3', '11.5.2', '11.6.1', '11.7.0' ]  # 11.3.0 fails for unclear reasons
         os: [ ubuntu-20.04, windows-latest ]
 
     name: GPU Build Only (${{ matrix.os }}, CUDA ${{ matrix.cuda }}, ${{ matrix.optix }})
@@ -24,7 +24,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: mmp/cuda-toolkit@master
+    - uses: jimver/cuda-toolkit@v0.2.6
       id: cuda-toolkit
       with:
         cuda: ${{ matrix.cuda }}
@@ -35,12 +35,12 @@ jobs:
       run: nvcc -V
 
     - name: Checkout pbrt
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
       with:
         submodules: true
 
     - name: Checkout rgb2spectrum tables
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
       with:
         repository: mmp/rgb2spectrum
         path: build
@@ -52,7 +52,7 @@ jobs:
         key: optix-7.12345
 
     - name: Checkout OptiX headers
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
       with:
         ssh-key: ${{ secrets.CHECKOUT_KEY }}
         repository: mmp/optix-headers
@@ -64,6 +64,10 @@ jobs:
     - name: Install OpenEXR
       if: ${{ matrix.os == 'ubuntu-20.04' }}
       run: sudo apt-get -y install libopenexr-dev
+
+    - name: Install OpenGL
+      if: ${{ matrix.os == 'ubuntu-20.04' }}
+      run: sudo apt-get install -y --no-install-recommends libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libxext-dev libxfixes-dev libgl1-mesa-dev
 
     - name: Configure
       run: |

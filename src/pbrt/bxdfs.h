@@ -432,7 +432,7 @@ class ConductorBxDF {
         if (!(sampleFlags & BxDFReflTransFlags::Reflection))
             return {};
         if (mfDistrib.EffectivelySmooth()) {
-            // Sample perfectly specular conductor BRDF
+            // Sample perfect specular conductor BRDF
             Vector3f wi(-wo.x, -wo.y, wo.z);
             SampledSpectrum f = FrComplex(AbsCosTheta(wi), eta, k) / AbsCosTheta(wi);
             return BSDFSample(f, wi, 1, BxDFFlags::SpecularReflection);
@@ -492,12 +492,12 @@ class ConductorBxDF {
         if (mfDistrib.EffectivelySmooth())
             return 0;
         // Evaluate sampling PDF of rough conductor BRDF
-        Vector3f wh = wo + wi;
-        CHECK_RARE(1e-5f, LengthSquared(wh) == 0);
-        if (LengthSquared(wh) == 0)
+        Vector3f wm = wo + wi;
+        CHECK_RARE(1e-5f, LengthSquared(wm) == 0);
+        if (LengthSquared(wm) == 0)
             return 0;
-        wh = FaceForward(Normalize(wh), Normal3f(0, 0, 1));
-        return mfDistrib.PDF(wo, wh) / (4 * AbsDot(wo, wh));
+        wm = FaceForward(Normalize(wm), Normal3f(0, 0, 1));
+        return mfDistrib.PDF(wo, wm) / (4 * AbsDot(wo, wm));
     }
 
     PBRT_CPU_GPU
@@ -610,7 +610,7 @@ class LayeredBxDF {
     SampledSpectrum f(Vector3f wo, Vector3f wi, TransportMode mode) const {
         SampledSpectrum f(0.);
         // Estimate _LayeredBxDF_ value _f_ using random sampling
-        // Set _wi_ and _wi_ for layered BSDF evaluation
+        // Set _wo_ and _wi_ for layered BSDF evaluation
         if (twoSided && wo.z < 0) {
             wo = -wo;
             wi = -wi;
@@ -672,7 +672,7 @@ class LayeredBxDF {
                 PBRT_DBG("beta: %f %f %f %f, w: %f %f %f, f: %f %f %f %f\n", beta[0],
                          beta[1], beta[2], beta[3], w.x, w.y, w.z, f[0], f[1], f[2],
                          f[3]);
-                // Possibly terminate layered BSDF random walk with Russian Roulette
+                // Possibly terminate layered BSDF random walk with Russian roulette
                 if (depth > 3 && beta.MaxComponentValue() < 0.25f) {
                     Float q = std::max<Float>(0, 1 - beta.MaxComponentValue());
                     if (r() < q)
@@ -871,6 +871,9 @@ class LayeredBxDF {
                 f *= Tr(thickness, w);
             }
             // Initialize _interface_ for current interface surface
+#ifdef interface  // That's enough out of you, Windows.
+#undef interface
+#endif
             TopOrBottomBxDF<TopBxDF, BottomBxDF> interface;
             if (z == 0)
                 interface = &bottom;
@@ -908,7 +911,7 @@ class LayeredBxDF {
     Float PDF(Vector3f wo, Vector3f wi, TransportMode mode,
               BxDFReflTransFlags sampleFlags = BxDFReflTransFlags::All) const {
         CHECK(sampleFlags == BxDFReflTransFlags::All);  // for now
-        // Set _wi_ and _wi_ for layered BSDF evaluation
+        // Set _wo_ and _wi_ for layered BSDF evaluation
         if (twoSided && wo.z < 0) {
             wo = -wo;
             wi = -wi;

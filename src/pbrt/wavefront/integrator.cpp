@@ -18,6 +18,7 @@
 #include <pbrt/util/colorspace.h>
 #include <pbrt/util/display.h>
 #include <pbrt/util/file.h>
+#include <pbrt/util/gui.h>
 #include <pbrt/util/image.h>
 #include <pbrt/util/log.h>
 #include <pbrt/util/print.h>
@@ -47,6 +48,7 @@ static void updateMaterialNeeds(
     Material m, pstd::array<bool, Material::NumTags()> *haveBasicEvalMaterial,
     pstd::array<bool, Material::NumTags()> *haveUniversalEvalMaterial,
     bool *haveSubsurface, bool *haveMedia) {
+    *haveMedia |= (m == nullptr);  // interface material
     if (!m)
         return;
 
@@ -66,7 +68,6 @@ static void updateMaterialNeeds(
     }
 
     *haveSubsurface |= m.HasSubsurfaceScattering();
-    *haveMedia |= (m == nullptr);  // interface material
 
     FloatTexture displace = m.GetDisplacement();
     if (m.CanEvaluateTextures(BasicTextureEvaluator()) &&
@@ -78,7 +79,7 @@ static void updateMaterialNeeds(
 
 WavefrontPathIntegrator::WavefrontPathIntegrator(
     pstd::pmr::memory_resource *memoryResource, BasicScene &scene)
-    : memoryResource(memoryResource) {
+    : memoryResource(memoryResource), exitCopyThread(new std::atomic<bool>(false)) {
     ThreadLocal<Allocator> threadAllocators(
         [memoryResource]() { return Allocator(memoryResource); });
 
@@ -145,6 +146,14 @@ WavefrontPathIntegrator::WavefrontPathIntegrator(
                             &haveSubsurface, &haveMedia);
     LOG_VERBOSE("Finished creating materials");
 
+    // Retrieve these here so that the CPU isn't writing to managed memory
+    // concurrently with the OptiX acceleration-structure construction work
+    // that follows. (Verbotten on Windows.)
+    camera = scene.GetCamera();
+    film = camera.GetFilm();
+    filter = film.GetFilter();
+    sampler = scene.GetSampler();
+
     if (Options->useGPU) {
 #ifdef PBRT_BUILD_GPU_RENDERER
         CUDATrackedMemoryResource *mr =
@@ -186,11 +195,6 @@ WavefrontPathIntegrator::WavefrontPathIntegrator(
     // Integrator parameters
     regularize = scene.integrator.parameters.GetOneBool("regularize", false);
     maxDepth = scene.integrator.parameters.GetOneInt("maxdepth", 5);
-
-    camera = scene.GetCamera();
-    film = camera.GetFilm();
-    filter = film.GetFilter();
-    sampler = scene.GetSampler();
 
     initializeVisibleSurface = film.UsesVisibleSurface();
     samplesPerPixel = sampler.SamplesPerPixel();
@@ -286,126 +290,31 @@ WavefrontPathIntegrator::WavefrontPathIntegrator(
 Float WavefrontPathIntegrator::Render() {
     Bounds2i pixelBounds = film.PixelBounds();
     Vector2i resolution = pixelBounds.Diagonal();
+
+    GUI *gui = nullptr;
+    // FIXME: camera animation; whatever...
+    Transform renderFromCamera =
+        camera.GetCameraTransform().RenderFromCamera().startTransform;
+    Transform cameraFromRender = Inverse(renderFromCamera);
+    Transform cameraFromWorld =
+        camera.GetCameraTransform().CameraFromWorld(camera.SampleTime(0.f));
+    if (Options->interactive) {
+        if (!Options->displayServer.empty())
+            ErrorExit(
+                "--interactive and --display-server cannot be used at the same time.");
+        gui = new GUI(film.GetFilename(), resolution, aggregate->Bounds());
+    }
+
     Timer timer;
     // Prefetch allocations to GPU memory
 #ifdef PBRT_BUILD_GPU_RENDERER
-    if (Options->useGPU) {
-        int deviceIndex;
-        CUDA_CHECK(cudaGetDevice(&deviceIndex));
-        int hasConcurrentManagedAccess;
-        CUDA_CHECK(cudaDeviceGetAttribute(&hasConcurrentManagedAccess,
-                                          cudaDevAttrConcurrentManagedAccess,
-                                          deviceIndex));
-
-        // Copy all of the scene data structures over to GPU memory.  This
-        // ensures that there isn't a big performance hitch for the first batch
-        // of rays as that stuff is copied over on demand.
-        if (hasConcurrentManagedAccess) {
-            // Set things up so that we can still have read from the
-            // WavefrontPathIntegrator struct on the CPU without hurting
-            // performance. (This makes it possible to use the values of things
-            // like WavefrontPathIntegrator::haveSubsurface to conditionally launch
-            // kernels according to what's in the scene...)
-            CUDA_CHECK(cudaMemAdvise(this, sizeof(*this), cudaMemAdviseSetReadMostly,
-                                     /* ignored argument */ 0));
-            CUDA_CHECK(cudaMemAdvise(this, sizeof(*this),
-                                     cudaMemAdviseSetPreferredLocation, deviceIndex));
-
-            // Copy all of the scene data structures over to GPU memory.  This
-            // ensures that there isn't a big performance hitch for the first batch
-            // of rays as that stuff is copied over on demand.
-            CUDATrackedMemoryResource *mr =
-                dynamic_cast<CUDATrackedMemoryResource *>(memoryResource);
-            CHECK(mr);
-            mr->PrefetchToGPU();
-        } else {
-            // TODO: on systems with basic unified memory, just launching a
-            // kernel should cause everything to be copied over. Is an empty
-            // kernel sufficient?
-        }
-    }
+    if (Options->useGPU)
+        PrefetchGPUAllocations();
 #endif  // PBRT_BUILD_GPU_RENDERER
 
     // Launch thread to copy image for display server, if enabled
-    RGB *displayRGB = nullptr, *displayRGBHost = nullptr;
-    std::atomic<bool> exitCopyThread{false};
-    std::thread copyThread;
-
-    if (!Options->displayServer.empty()) {
-#ifdef PBRT_BUILD_GPU_RENDERER
-        if (Options->useGPU) {
-            // Allocate staging memory on the GPU to store the current WIP
-            // image.
-            CUDA_CHECK(
-                cudaMalloc(&displayRGB, resolution.x * resolution.y * sizeof(RGB)));
-            CUDA_CHECK(
-                cudaMemset(displayRGB, 0, resolution.x * resolution.y * sizeof(RGB)));
-
-            // Host-side memory for the WIP Image.  We'll just let this leak so
-            // that the lambda passed to DisplayDynamic below doesn't access
-            // freed memory after Render() returns...
-            displayRGBHost = new RGB[resolution.x * resolution.y];
-
-            copyThread = std::thread([&]() {
-                GPURegisterThread("DISPLAY_SERVER_COPY_THREAD");
-
-                // Copy back to the CPU using a separate stream so that we can
-                // periodically but asynchronously pick up the latest results
-                // from the GPU.
-                cudaStream_t memcpyStream;
-                CUDA_CHECK(cudaStreamCreate(&memcpyStream));
-                GPUNameStream(memcpyStream, "DISPLAY_SERVER_COPY_STREAM");
-
-                // Copy back to the host from the GPU buffer, without any
-                // synthronization.
-                while (!exitCopyThread) {
-                    CUDA_CHECK(cudaMemcpyAsync(displayRGBHost, displayRGB,
-                                               resolution.x * resolution.y * sizeof(RGB),
-                                               cudaMemcpyDeviceToHost, memcpyStream));
-                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
-                    CUDA_CHECK(cudaStreamSynchronize(memcpyStream));
-                }
-
-                // Copy one more time to get the final image before exiting.
-                CUDA_CHECK(cudaMemcpy(displayRGBHost, displayRGB,
-                                      resolution.x * resolution.y * sizeof(RGB),
-                                      cudaMemcpyDeviceToHost));
-                CUDA_CHECK(cudaDeviceSynchronize());
-            });
-
-            // Now on the CPU side, give the display system a lambda that
-            // copies values from |displayRGBHost| into its buffers used for
-            // sending messages to the display program (i.e., tev).
-            DisplayDynamic(film.GetFilename(), {resolution.x, resolution.y},
-                           {"R", "G", "B"},
-                           [resolution, displayRGBHost](
-                               Bounds2i b, pstd::span<pstd::span<Float>> displayValue) {
-                               int index = 0;
-                               for (Point2i p : b) {
-                                   RGB rgb = displayRGBHost[p.x + p.y * resolution.x];
-                                   displayValue[0][index] = rgb.r;
-                                   displayValue[1][index] = rgb.g;
-                                   displayValue[2][index] = rgb.b;
-                                   ++index;
-                               }
-                           });
-        } else
-#endif  // PBRT_BUILD_GPU_RENDERER
-            DisplayDynamic(
-                film.GetFilename(), Point2i(pixelBounds.Diagonal()), {"R", "G", "B"},
-                [pixelBounds, this](Bounds2i b,
-                                    pstd::span<pstd::span<Float>> displayValue) {
-                    int index = 0;
-                    for (Point2i p : b) {
-                        RGB rgb =
-                            film.GetPixelRGB(pixelBounds.pMin + p, 1.f /* splat scale */);
-                        for (int c = 0; c < 3; ++c)
-                            displayValue[c][index] = rgb[c];
-                        ++index;
-                    }
-                });
-    }
+    if (!Options->displayServer.empty())
+        StartDisplayThread();
 
     // Loop over sample indices and evaluate pixel samples
     int firstSampleIndex = 0, lastSampleIndex = samplesPerPixel;
@@ -423,8 +332,8 @@ Float WavefrontPathIntegrator::Render() {
     }
 
     ProgressReporter progress(lastSampleIndex - firstSampleIndex, "Rendering",
-                              Options->quiet, Options->useGPU);
-    for (int sampleIndex = firstSampleIndex; sampleIndex < lastSampleIndex;
+                              Options->quiet || Options->interactive, Options->useGPU);
+    for (int sampleIndex = firstSampleIndex; sampleIndex < lastSampleIndex || gui;
          ++sampleIndex) {
         // Attempt to work around issue #145.
 #if !(defined(PBRT_IS_WINDOWS) && defined(PBRT_BUILD_GPU_RENDERER) && \
@@ -436,103 +345,139 @@ Float WavefrontPathIntegrator::Render() {
         });
 #endif
 
-        // Render image for sample _sampleIndex_
-        LOG_VERBOSE("Starting to submit work for sample %d", sampleIndex);
-        for (int y0 = pixelBounds.pMin.y; y0 < pixelBounds.pMax.y;
-             y0 += scanlinesPerPass) {
-            // Generate camera rays for current scanline range
-            RayQueue *cameraRayQueue = CurrentRayQueue(0);
-            Do(
-                "Reset ray queue", PBRT_CPU_GPU_LAMBDA() {
-                    PBRT_DBG("Starting scanlines at y0 = %d, sample %d / %d\n", y0,
-                             sampleIndex, samplesPerPixel);
-                    cameraRayQueue->Reset();
-                });
-            GenerateCameraRays(y0, sampleIndex);
-            Do(
-                "Update camera ray stats",
-                PBRT_CPU_GPU_LAMBDA() { stats->cameraRays += cameraRayQueue->Size(); });
-
-            // Trace rays and estimate radiance up to maximum ray depth
-            for (int wavefrontDepth = 0; true; ++wavefrontDepth) {
-                // Reset queues before tracing rays
-                RayQueue *nextQueue = NextRayQueue(wavefrontDepth);
+        // Keep running the outer for loop but don't take more samples if
+        // the GUI is being used so that the user can move the camera, etc.
+        if (sampleIndex < lastSampleIndex) {
+            // Render image for sample _sampleIndex_
+            LOG_VERBOSE("Starting to submit work for sample %d", sampleIndex);
+            for (int y0 = pixelBounds.pMin.y; y0 < pixelBounds.pMax.y;
+                 y0 += scanlinesPerPass) {
+                // Generate camera rays for current scanline range
+                RayQueue *cameraRayQueue = CurrentRayQueue(0);
                 Do(
-                    "Reset queues before tracing rays", PBRT_CPU_GPU_LAMBDA() {
-                        nextQueue->Reset();
-                        // Reset queues before tracing next batch of rays
-                        if (mediumSampleQueue)
-                            mediumSampleQueue->Reset();
-                        if (mediumScatterQueue)
-                            mediumScatterQueue->Reset();
+                   "Reset ray queue", PBRT_CPU_GPU_LAMBDA() {
+                       PBRT_DBG("Starting scanlines at y0 = %d, sample %d / %d\n", y0,
+                                sampleIndex, samplesPerPixel);
+                       cameraRayQueue->Reset();
+                   });
 
-                        if (escapedRayQueue)
-                            escapedRayQueue->Reset();
-                        hitAreaLightQueue->Reset();
+                Transform cameraMotion;
+                if (gui)
+                    cameraMotion =
+                        renderFromCamera * gui->GetCameraTransform() * cameraFromRender;
+                GenerateCameraRays(y0, cameraMotion, sampleIndex);
+                Do(
+                   "Update camera ray stats",
+                   PBRT_CPU_GPU_LAMBDA() { stats->cameraRays += cameraRayQueue->Size(); });
 
-                        basicEvalMaterialQueue->Reset();
-                        universalEvalMaterialQueue->Reset();
-
-                        if (bssrdfEvalQueue)
-                            bssrdfEvalQueue->Reset();
-                        if (subsurfaceScatterQueue)
-                            subsurfaceScatterQueue->Reset();
-                    });
-
-                // Follow active ray paths and accumulate radiance estimates
-                GenerateRaySamples(wavefrontDepth, sampleIndex);
-
-                // Find closest intersections along active rays
-                aggregate->IntersectClosest(
-                    maxQueueSize, CurrentRayQueue(wavefrontDepth), escapedRayQueue,
-                    hitAreaLightQueue, basicEvalMaterialQueue, universalEvalMaterialQueue,
-                    mediumSampleQueue, NextRayQueue(wavefrontDepth));
-
-                if (wavefrontDepth > 0) {
-                    // As above, with the indexing...
-                    RayQueue *statsQueue = CurrentRayQueue(wavefrontDepth);
+                // Trace rays and estimate radiance up to maximum ray depth
+                for (int wavefrontDepth = 0; true; ++wavefrontDepth) {
+                    // Reset queues before tracing rays
+                    RayQueue *nextQueue = NextRayQueue(wavefrontDepth);
                     Do(
-                        "Update indirect ray stats", PBRT_CPU_GPU_LAMBDA() {
-                            stats->indirectRays[wavefrontDepth] += statsQueue->Size();
-                        });
+                       "Reset queues before tracing rays", PBRT_CPU_GPU_LAMBDA() {
+                           nextQueue->Reset();
+                           // Reset queues before tracing next batch of rays
+                           if (mediumSampleQueue)
+                               mediumSampleQueue->Reset();
+                           if (mediumScatterQueue)
+                               mediumScatterQueue->Reset();
+
+                           if (escapedRayQueue)
+                               escapedRayQueue->Reset();
+                           hitAreaLightQueue->Reset();
+
+                           basicEvalMaterialQueue->Reset();
+                           universalEvalMaterialQueue->Reset();
+
+                           if (bssrdfEvalQueue)
+                               bssrdfEvalQueue->Reset();
+                           if (subsurfaceScatterQueue)
+                               subsurfaceScatterQueue->Reset();
+                       });
+
+                    // Follow active ray paths and accumulate radiance estimates
+                    GenerateRaySamples(wavefrontDepth, sampleIndex);
+
+                    // Find closest intersections along active rays
+                    aggregate->IntersectClosest(
+                                                maxQueueSize, CurrentRayQueue(wavefrontDepth), escapedRayQueue,
+                                                hitAreaLightQueue, basicEvalMaterialQueue, universalEvalMaterialQueue,
+                                                mediumSampleQueue, NextRayQueue(wavefrontDepth));
+
+                    if (wavefrontDepth > 0) {
+                        // As above, with the indexing...
+                        RayQueue *statsQueue = CurrentRayQueue(wavefrontDepth);
+                        Do(
+                           "Update indirect ray stats", PBRT_CPU_GPU_LAMBDA() {
+                               stats->indirectRays[wavefrontDepth] += statsQueue->Size();
+                           });
+                    }
+
+                    SampleMediumInteraction(wavefrontDepth);
+
+                    HandleEscapedRays();
+
+                    HandleEmissiveIntersection();
+
+                    if (wavefrontDepth == maxDepth)
+                        break;
+
+                    EvaluateMaterialsAndBSDFs(wavefrontDepth, cameraMotion);
+
+                    // Do immediately so that we have space for shadow rays for subsurface..
+                    TraceShadowRays(wavefrontDepth);
+
+                    SampleSubsurface(wavefrontDepth);
                 }
 
-                SampleMediumInteraction(wavefrontDepth);
-
-                HandleEscapedRays();
-
-                HandleEmissiveIntersection();
-
-                if (wavefrontDepth == maxDepth)
-                    break;
-
-                EvaluateMaterialsAndBSDFs(wavefrontDepth);
-
-                // Do immediately so that we have space for shadow rays for subsurface..
-                TraceShadowRays(wavefrontDepth);
-
-                SampleSubsurface(wavefrontDepth);
+                UpdateFilm();
             }
 
-            UpdateFilm();
-            // Copy updated film pixels to buffer for display
-#ifdef PBRT_BUILD_GPU_RENDERER
+            // Copy updated film pixels to buffer for the display server.
             if (Options->useGPU && !Options->displayServer.empty())
-                GPUParallelFor(
-                    "Update Display RGB Buffer", maxQueueSize,
-                    PBRT_CPU_GPU_LAMBDA(int pixelIndex) {
-                        Point2i pPixel = pixelSampleState.pPixel[pixelIndex];
-                        if (!InsideExclusive(pPixel, film.PixelBounds()))
-                            return;
+                UpdateDisplayRGBFromFilm(pixelBounds);
 
-                        Point2i p(pPixel - film.PixelBounds().pMin);
-                        displayRGB[p.x + p.y * resolution.x] = film.GetPixelRGB(pPixel);
-                    });
-#endif  //  PBRT_BUILD_GPU_RENDERER
+            progress.Update();
         }
 
-        progress.Update();
+        if (gui) {
+            RGB *rgb = gui->MapFramebuffer();
+            UpdateFramebufferFromFilm(pixelBounds, gui->exposure, rgb);
+            gui->UnmapFramebuffer();
+
+            if (gui->printCameraTransform) {
+                SquareMatrix<4> cfw =
+                    (Inverse(gui->GetCameraTransform()) * cameraFromWorld).GetMatrix();
+                Printf("Current camera transform:\nTransform [ ");
+                for (int i = 0; i < 16; ++i)
+                    Printf("%f ", cfw[i % 4][i / 4]);
+                Printf("]\n");
+                std::fflush(stdout);
+                gui->printCameraTransform = false;
+            }
+
+            DisplayState state = gui->RefreshDisplay();
+            if (state == DisplayState::EXIT)
+                break;
+            else if (state == DisplayState::RESET) {
+                sampleIndex = firstSampleIndex - 1;
+                ParallelFor(
+                    "Reset pixels", resolution.x * resolution.y,
+                    PBRT_CPU_GPU_LAMBDA(int i) {
+                        int x = i % resolution.x, y = i / resolution.x;
+                        film.ResetPixel(pixelBounds.pMin + Vector2i(x, y));
+                    });
+            }
+        }
+
     }
+
+    if (gui) {
+        delete gui;
+        gui = nullptr;
+    }
+
     progress.Done();
 
 #ifdef PBRT_BUILD_GPU_RENDERER
@@ -540,21 +485,9 @@ Float WavefrontPathIntegrator::Render() {
         GPUWait();
 #endif  // PBRT_BUILD_GPU_RENDERER
     Float seconds = timer.ElapsedSeconds();
-    // Shut down display server thread, if active
-#ifdef PBRT_BUILD_GPU_RENDERER
-    if (Options->useGPU) {
-        // Wait until rendering is all done before we start to shut down the
-        // display stuff..
-        if (!Options->displayServer.empty()) {
-            exitCopyThread = true;
-            copyThread.join();
-        }
 
-        // Another synchronization to make sure no kernels are running on the
-        // GPU so that we can safely access unified memory from the CPU.
-        GPUWait();
-    }
-#endif  // PBRT_BUILD_GPU_RENDERER
+    // Shut down display server thread, if active
+    StopDisplayThread();
 
     return seconds;
 }
@@ -570,22 +503,24 @@ void WavefrontPathIntegrator::HandleEscapedRays() {
             for (const auto &light : *infiniteLights) {
                 if (SampledSpectrum Le = light.Le(Ray(w.rayo, w.rayd), w.lambda); Le) {
                     // Compute path radiance contribution from infinite light
-                    PBRT_DBG("L %f %f %f %f beta %f %f %f %f Le %f %f %f %f", L[0], L[1],
+                    PBRT_DBG("L %f %f %f %f beta %f %f %f %f Le %f %f %f %f\n", L[0], L[1],
                              L[2], L[3], w.beta[0], w.beta[1], w.beta[2], w.beta[3],
                              Le[0], Le[1], Le[2], Le[3]);
-                    PBRT_DBG("pdf uni %f %f %f %f pdf nee %f %f %f %f", w.inv_w_u[0],
-                             w.inv_w_u[1], w.inv_w_u[2], w.inv_w_u[3], w.inv_w_l[0],
-                             w.inv_w_l[1], w.inv_w_l[2], w.inv_w_l[3]);
+                    PBRT_DBG("depth %d specularBounce %d pdf uni %f %f %f %f "
+                             "pdf nee %f %f %f %f\n",
+                             w.depth, w.specularBounce,
+                             w.r_u[0], w.r_u[1], w.r_u[2], w.r_u[3],
+                             w.r_l[0], w.r_l[1], w.r_l[2], w.r_l[3]);
 
                     if (w.depth == 0 || w.specularBounce) {
-                        L += w.beta * Le / w.inv_w_u.Average();
+                        L += w.beta * Le / w.r_u.Average();
                     } else {
                         // Compute MIS-weighted radiance contribution from infinite light
                         LightSampleContext ctx = w.prevIntrCtx;
                         Float lightChoicePDF = lightSampler.PMF(ctx, light);
-                        SampledSpectrum inv_w_l =
-                            w.inv_w_l * lightChoicePDF * light.PDF_Li(ctx, w.rayd, true);
-                        L += w.beta * Le / (w.inv_w_u + inv_w_l).Average();
+                        SampledSpectrum r_l =
+                            w.r_l * lightChoicePDF * light.PDF_Li(ctx, w.rayd, true);
+                        L += w.beta * Le / (w.r_u + r_l).Average();
                     }
                 }
             }
@@ -615,7 +550,7 @@ void WavefrontPathIntegrator::HandleEmissiveIntersection() {
             // Compute area light's weighted radiance contribution to the path
             SampledSpectrum L(0.f);
             if (w.depth == 0 || w.specularBounce) {
-                L = w.beta * Le / w.inv_w_u.Average();
+                L = w.beta * Le / w.r_u.Average();
             } else {
                 // Compute MIS-weighted radiance contribution from area light
                 Vector3f wi = -w.wo;
@@ -623,9 +558,9 @@ void WavefrontPathIntegrator::HandleEmissiveIntersection() {
                 Float lightChoicePDF = lightSampler.PMF(ctx, w.areaLight);
                 Float lightPDF = lightChoicePDF * w.areaLight.PDF_Li(ctx, wi, true);
 
-                SampledSpectrum inv_w_u = w.inv_w_u;
-                SampledSpectrum inv_w_l = w.inv_w_l * lightPDF;
-                L = w.beta * Le / (inv_w_u + inv_w_l).Average();
+                SampledSpectrum r_u = w.r_u;
+                SampledSpectrum r_l = w.r_l * lightPDF;
+                L = w.beta * Le / (r_u + r_l).Average();
             }
 
             PBRT_DBG("Added L %f %f %f %f for pixel index %d\n", L[0], L[1], L[2], L[3],
@@ -664,6 +599,165 @@ std::string WavefrontPathIntegrator::Stats::Print() const {
         s += StringPrintf("    %-42s               %12" PRIu64 "\n",
                           StringPrintf("Shadow rays, depth %-3d", i), shadowRays[i]);
     return s;
+}
+
+#ifdef PBRT_BUILD_GPU_RENDERER
+void WavefrontPathIntegrator::PrefetchGPUAllocations() {
+    int deviceIndex;
+    CUDA_CHECK(cudaGetDevice(&deviceIndex));
+    int hasConcurrentManagedAccess;
+    CUDA_CHECK(cudaDeviceGetAttribute(&hasConcurrentManagedAccess,
+                                      cudaDevAttrConcurrentManagedAccess, deviceIndex));
+
+    // Copy all of the scene data structures over to GPU memory.  This
+    // ensures that there isn't a big performance hitch for the first batch
+    // of rays as that stuff is copied over on demand.
+    if (hasConcurrentManagedAccess) {
+        // Set things up so that we can still have read from the
+        // WavefrontPathIntegrator struct on the CPU without hurting
+        // performance. (This makes it possible to use the values of things
+        // like WavefrontPathIntegrator::haveSubsurface to conditionally launch
+        // kernels according to what's in the scene...)
+        CUDA_CHECK(cudaMemAdvise(this, sizeof(*this), cudaMemAdviseSetReadMostly,
+                                 /* ignored argument */ 0));
+        CUDA_CHECK(cudaMemAdvise(this, sizeof(*this), cudaMemAdviseSetPreferredLocation,
+                                 deviceIndex));
+
+        // Copy all of the scene data structures over to GPU memory.  This
+        // ensures that there isn't a big performance hitch for the first batch
+        // of rays as that stuff is copied over on demand.
+        CUDATrackedMemoryResource *mr =
+            dynamic_cast<CUDATrackedMemoryResource *>(memoryResource);
+        CHECK(mr);
+        mr->PrefetchToGPU();
+    } else {
+        // TODO: on systems with basic unified memory, just launching a
+        // kernel should cause everything to be copied over. Is an empty
+        // kernel sufficient?
+    }
+}
+#endif  // PBRT_BUILD_GPU_RENDERER
+
+void WavefrontPathIntegrator::StartDisplayThread() {
+    Bounds2i pixelBounds = film.PixelBounds();
+    Vector2i resolution = pixelBounds.Diagonal();
+
+#ifdef PBRT_BUILD_GPU_RENDERER
+    if (Options->useGPU) {
+        // Allocate staging memory on the GPU to store the current WIP
+        // image.
+        CUDA_CHECK(cudaMalloc(&displayRGB, resolution.x * resolution.y * sizeof(RGB)));
+        CUDA_CHECK(cudaMemset(displayRGB, 0, resolution.x * resolution.y * sizeof(RGB)));
+
+        // Host-side memory for the WIP Image.  We'll just let this leak so
+        // that the lambda passed to DisplayDynamic below doesn't access
+        // freed memory after Render() returns...
+        displayRGBHost = new RGB[resolution.x * resolution.y];
+
+        // Note that we can't just capture |this| for the member variables
+        // below because with managed memory on Windows, the CPU and GPU
+        // can't be accessing the same memory concurrently...
+        copyThread = new std::thread([exitCopyThread = this->exitCopyThread,
+                                      displayRGBHost = this->displayRGBHost,
+                                      displayRGB = this->displayRGB, resolution]() {
+            GPURegisterThread("DISPLAY_SERVER_COPY_THREAD");
+
+            // Copy back to the CPU using a separate stream so that we can
+            // periodically but asynchronously pick up the latest results
+            // from the GPU.
+            cudaStream_t memcpyStream;
+            CUDA_CHECK(cudaStreamCreate(&memcpyStream));
+            GPUNameStream(memcpyStream, "DISPLAY_SERVER_COPY_STREAM");
+
+            // Copy back to the host from the GPU buffer, without any
+            // synthronization.
+            while (!*exitCopyThread) {
+                CUDA_CHECK(cudaMemcpyAsync(displayRGBHost, displayRGB,
+                                           resolution.x * resolution.y * sizeof(RGB),
+                                           cudaMemcpyDeviceToHost, memcpyStream));
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+                CUDA_CHECK(cudaStreamSynchronize(memcpyStream));
+            }
+
+            // Copy one more time to get the final image before exiting.
+            CUDA_CHECK(cudaMemcpy(displayRGBHost, displayRGB,
+                                  resolution.x * resolution.y * sizeof(RGB),
+                                  cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaDeviceSynchronize());
+        });
+
+        // Now on the CPU side, give the display system a lambda that
+        // copies values from |displayRGBHost| into its buffers used for
+        // sending messages to the display program (i.e., tev).
+        DisplayDynamic(
+            film.GetFilename(), {resolution.x, resolution.y}, {"R", "G", "B"},
+            [resolution, this](Bounds2i b, pstd::span<pstd::span<float>> displayValue) {
+                int index = 0;
+                for (Point2i p : b) {
+                    RGB rgb = displayRGBHost[p.x + p.y * resolution.x];
+                    displayValue[0][index] = rgb.r;
+                    displayValue[1][index] = rgb.g;
+                    displayValue[2][index] = rgb.b;
+                    ++index;
+                }
+            });
+    } else
+#endif  // PBRT_BUILD_GPU_RENDERER
+        DisplayDynamic(
+            film.GetFilename(), Point2i(pixelBounds.Diagonal()), {"R", "G", "B"},
+            [pixelBounds, this](Bounds2i b, pstd::span<pstd::span<float>> displayValue) {
+                int index = 0;
+                for (Point2i p : b) {
+                    RGB rgb =
+                        film.GetPixelRGB(pixelBounds.pMin + p, 1.f /* splat scale */);
+                    for (int c = 0; c < 3; ++c)
+                        displayValue[c][index] = rgb[c];
+                    ++index;
+                }
+            });
+}
+
+void WavefrontPathIntegrator::UpdateDisplayRGBFromFilm(Bounds2i pixelBounds) {
+#ifdef PBRT_BUILD_GPU_RENDERER
+    Vector2i resolution = pixelBounds.Diagonal();
+    GPUParallelFor(
+        "Update Display RGB Buffer", resolution.x * resolution.y,
+        PBRT_CPU_GPU_LAMBDA(int index) {
+            Point2i p(index % resolution.x, index / resolution.x);
+            displayRGB[index] = film.GetPixelRGB(p + pixelBounds.pMin);
+        });
+#endif  //  PBRT_BUILD_GPU_RENDERER
+}
+
+void WavefrontPathIntegrator::StopDisplayThread() {
+#ifdef PBRT_BUILD_GPU_RENDERER
+    if (Options->useGPU) {
+        // Wait until rendering is all done before we start to shut down the
+        // display stuff..
+        if (!Options->displayServer.empty()) {
+            *exitCopyThread = true;
+            copyThread->join();
+            delete copyThread;
+            copyThread = nullptr;
+        }
+
+        // Another synchronization to make sure no kernels are running on the
+        // GPU so that we can safely access unified memory from the CPU.
+        GPUWait();
+    }
+#endif  // PBRT_BUILD_GPU_RENDERER
+}
+
+void WavefrontPathIntegrator::UpdateFramebufferFromFilm(Bounds2i pixelBounds,
+                                                        Float exposure, RGB *rgb) {
+    Vector2i resolution = pixelBounds.Diagonal();
+    ParallelFor(
+        "Update framebuffer", resolution.x * resolution.y,
+        PBRT_CPU_GPU_LAMBDA(int index) {
+            Point2i p(index % resolution.x, index / resolution.x);
+            rgb[index] = exposure * film.GetPixelRGB(p + film.PixelBounds().pMin);
+        });
 }
 
 }  // namespace pbrt
