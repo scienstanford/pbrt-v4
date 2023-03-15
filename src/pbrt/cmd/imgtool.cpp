@@ -14,6 +14,7 @@
 #include <pbrt/util/check.h>
 #include <pbrt/util/color.h>
 #include <pbrt/util/colorspace.h>
+#include <pbrt/util/error.h>
 #include <pbrt/util/file.h>
 #include <pbrt/util/image.h>
 #include <pbrt/util/log.h>
@@ -899,6 +900,7 @@ int average(std::vector<std::string> args) {
 
     // Compute average image
     ThreadLocal<Image> avgImages;
+    ThreadLocal<const RGBColorSpace *> colorSpaces;
     std::atomic<bool> failed{false};
 
     ParallelFor(0, filenames.size(), [&](size_t i) {
@@ -906,7 +908,7 @@ int average(std::vector<std::string> args) {
         Image &im = imRead.image;
 
         Image &avg = avgImages.Get();
-        if (avg.Resolution() == Point2i(0, 0))
+        if (avg.Resolution() == Point2i(0, 0)) {
             avg = Image(PixelFormat::Float, im.Resolution(), im.ChannelNames());
             colorSpaces.Get() = imRead.metadata.GetColorSpace();
         } else if (!checkImageCompatibility(filenames[i], im,
@@ -1020,6 +1022,7 @@ int error(std::vector<std::string> args) {
     ThreadLocal<double> sumErrors;
     std::vector<int> spp(filenames.size());
     std::atomic<bool> failed{false};
+
     ParallelFor(0, filenames.size(), [&](size_t i) {
         ImageAndMetadata imRead = Image::Read(filenames[i]);
         Image &im = imRead.image;
@@ -1910,6 +1913,14 @@ int convert(std::vector<std::string> args) {
         return 0;
     }
 
+    ImageMetadata outMetadata;
+    // These are the only entries it makes sense to copy along (so far).
+    outMetadata.colorSpace = metadata.colorSpace;
+    outMetadata.cameraFromWorld = metadata.cameraFromWorld;
+    outMetadata.NDCFromWorld = metadata.NDCFromWorld;
+    outMetadata.pixelBounds = metadata.pixelBounds;
+    outMetadata.fullResolution = metadata.fullResolution;
+
     if (channelNames.empty()) {
         // If the input image has AOVs and the target image is a regular
         // format, then just grab R,G,B...
@@ -2162,7 +2173,7 @@ int convert(std::vector<std::string> args) {
         res = image.Resolution();
     }
 
-    if (flipy)
+    if (flipy) {
         image.FlipY();
         if (outMetadata.pixelBounds && outMetadata.fullResolution) {
             // Flip the pixel bounds in the metadata as well
