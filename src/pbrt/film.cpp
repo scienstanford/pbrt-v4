@@ -1351,11 +1351,12 @@ void LightfieldFilmWrapper::AddLightfieldSample(Ray raySensor, Point2i pFilm,
     if(pixelindex.x<pdSensitivities.XSize()){
 
         pdsensitivity = pdSensitivities[pixelindex];
+        
     }else{
         //Use default if pixel index is outside of defined area ( the json may not provide angular sensitivites for all pixels)
         
         pdsensitivity = pdSensitivities[Point2i(0,0)];
-        std::cout << "Warning: same PD sensitivity used for all pixels \n" ;
+        //std::cout << "Warning: same PD sensitivity used for all pixels \n" ;
     }
 
 

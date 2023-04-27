@@ -3574,7 +3574,7 @@ Bounds2f RTFCamera::BoundExitPupilRTF(Float pFilmX0, Float pFilmX1) const {
 //1. It generates a random sample in the box 
 //2. Generates a corresponding ray
 //3. Rotates to the proper off axis angle (because boxes where estimated for a specific off axis direction)
-Point3f RTFCamera::SampleExitPupil(const Point2f &pFilm,
+Point3f RTFCamera::SampleBoundingBox(const Point2f &pFilm,
                                          const Point2f &lensSample,
                                          Float *sampleBoundsArea) const {
     
@@ -3638,7 +3638,16 @@ pstd::optional<std::pair<CameraRay,CameraRay>> RTFCamera::GenerateRayIO(CameraSa
         // TG: should we flip X position as in the legacy code?
         // TG: Do not flip if we want to maintain easy conventions with Lookuptable where negative x means the pixel is on hte left side of the main lens (if the lens is above the pixel)
         //pFilmMeters = Point3f(-pixelPosition.x, pixelPosition.y, pixelPosition.z);
-        pFilmMeters = Point3f(pixelPosition.x, pixelPosition.y, pixelPosition.z);
+        Float scale = 1;
+        static RNG rng;
+
+        // Jitter within pixel area
+        Float pixelsize_meters = 1.2e-6; // micron 
+        Point3f jitter{pixelsize_meters*(rng.Uniform<Float>()-0.5), pixelsize_meters*(rng.Uniform<Float>()-0.5),0};
+        
+        //std::cout << rng.Uniform<Float>() << "\n" ;
+        pFilmMeters = jitter+Point3f(scale*pixelPosition.x,scale*pixelPosition.y, pixelPosition.z);
+
     }else{
         // Convert sample.pFilm (unitless coordinates) to the physical position on the film
         // in units (meters) --> pFilm
@@ -3660,8 +3669,8 @@ pstd::optional<std::pair<CameraRay,CameraRay>> RTFCamera::GenerateRayIO(CameraSa
 
 
     /// SAMPLING STRATEGY 1 : Use precomputed bounding pboxes (defective at the moment, but this will become the preferred way )
-    pOnInputPlane = SampleExitPupil(Point2f(pFilmMeters.x, pFilmMeters.y), sample.pLens, &exitPupilBoundsArea);
-    Float pupilArea=exitPupilBoundsArea;
+    pOnInputPlane = SampleBoundingBox(Point2f(pFilmMeters.x, pFilmMeters.y), sample.pLens, &exitPupilBoundsArea);
+    Float boundingBoxArea=exitPupilBoundsArea;
     //std::cout << "poninputplane" <<pOnInputPlane <<"\n";
     //std::cout << "pupilarea" << pOnInputPlane <<"\n";
 
@@ -3739,7 +3748,7 @@ pstd::optional<std::pair<CameraRay,CameraRay>> RTFCamera::GenerateRayIO(CameraSa
     Float cosTheta = Normalize(rFilm.d).z;
     // weight *= Pow<4>(cosTheta) / (eps->pdf * Sqr(LensRearZ()));
     //eps->pdf = 1/pupilarea
-    weight *=Pow<4>(cosTheta) * pupilArea / (filmDistance*filmDistance);
+    weight *=Pow<4>(cosTheta) * boundingBoxArea / (filmDistance*filmDistance);
 
     // std::cout << "Box area: " << (pupilArea) << "\n";
    // std::cout << "Cos4theta: " << (Pow<4>(cosTheta)) << "\n";

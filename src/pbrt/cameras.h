@@ -1212,7 +1212,7 @@ class RTFCamera : public LightfieldCameraBase {
     // PBRT_CPU_GPU
     // pstd::optional<ExitPupilSample> SampleExitPupil(Point2f pFilm, Point2f uLens) const;
     // pstd::optional<ExitPupilSample> SampleMicrolensPupil(Point2f pFilm, Point2f uLens) const;
-    Point3f SampleExitPupil(const Point2f &pFilm, const Point2f &lensSample,
+    Point3f SampleBoundingBox(const Point2f &pFilm, const Point2f &lensSample,
                             Float *sampleBoundsArea) const;
     Point3f SampleExitPupilVignetting(const Point2f &pFilm, const Point2f &lensSample,RTFVignettingTerms &vignettingTerms) const;
     Point3f SampleMainCircle(const Point2f &pFilm, const Point2f &lensSample,RTFVignettingTerms &vignettingTerms, Float *sampleBoundsArea) const;
