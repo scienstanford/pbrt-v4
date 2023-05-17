@@ -116,7 +116,9 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL Linux)
 else ()
   message (SEND_ERROR "Unknown system name: " + CMAKE_SYSTEM_NAME)
 endif()
-
+if (CMAKE_SYSTEM_NAME STREQUAL Darwin)
+  add_definitions(-Wno-deprecated-declarations) # silent deprecated 'snprintf' message under MacOS arm64
+endif()
 # libgoogle-perftools-dev
 find_library (PROFILE_LIB profiler)
 if (NOT PROFILE_LIB)
@@ -138,6 +140,7 @@ target_compile_options (
         "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd26451>" # arithmetic on 4-byte value, then cast to 8-byte
         "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd26495>" # uninitialized member variable
         "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4334>" # 32 to 64 bit displacement
+        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4146>" # NanoVDB: unary minus operator applied to unsigned type, result still unsigned
 )
 
 add_library (pbrt_opt INTERFACE)
@@ -1006,6 +1009,23 @@ set_target_properties (plytool PROPERTIES OUTPUT_NAME plytool)
 add_sanitizers (plytool)
 
 set_property (TARGET plytool PROPERTY FOLDER "cmd")
+
+######################
+# nanovdb2pbrt
+
+add_executable (nanovdb2pbrt src/pbrt/cmd/nanovdb2pbrt.cpp)
+add_executable (pbrt::nanovdb2pbrt ALIAS nanovdb2pbrt)
+
+target_compile_definitions (nanovdb2pbrt PRIVATE ${PBRT_DEFINITIONS})
+target_compile_options (nanovdb2pbrt PUBLIC ${PBRT_CXX_FLAGS})
+target_include_directories (nanovdb2pbrt PUBLIC src src/ext)
+target_link_libraries (nanovdb2pbrt PRIVATE ${ALL_PBRT_LIBS} pbrt_warnings pbrt_opt)
+
+set_target_properties (nanovdb2pbrt PROPERTIES OUTPUT_NAME nanovdb2pbrt)
+
+add_sanitizers (nanovdb2pbrt)
+
+set_property (TARGET nanovdb2pbrt PROPERTY FOLDER "cmd")
 
 ######################
 # cyhair2pbrt
