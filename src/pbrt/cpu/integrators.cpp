@@ -40,6 +40,7 @@
 #include <pbrt/util/stats.h>
 #include <pbrt/util/string.h>
 
+#include <cmath>
 #include <algorithm>
 
 namespace pbrt {
@@ -2462,6 +2463,487 @@ std::unique_ptr<BDPTIntegrator> BDPTIntegrator::Create(
                                             regularize);
 }
 
+// SpectralPathIntegrator Method Definitions
+void SpectralPathIntegrator::Render() {
+    // Handle debugStart, if set
+    if (!Options->debugStart.empty()) {
+        std::vector<int> c = SplitStringToInts(Options->debugStart, ',');
+        if (c.empty())
+            ErrorExit("Didn't find integer values after --debugstart: %s",
+                      Options->debugStart);
+        if (c.size() != 3)
+            ErrorExit("Didn't find three integer values after --debugstart: %s",
+                      Options->debugStart);
+
+        Point2i pPixel(c[0], c[1]);
+        int sampleIndex = c[2];
+
+        ScratchBuffer scratchBuffer(65536);
+        Sampler tileSampler = samplerPrototype.Clone(Allocator());
+        tileSampler.StartPixelSample(pPixel, sampleIndex);
+
+        EvaluatePixelSample(pPixel, sampleIndex, tileSampler, scratchBuffer);
+
+        return;
+    }
+
+    thread_local Point2i threadPixel;
+    thread_local int threadSampleIndex;
+    CheckCallbackScope _([&]() {
+        return StringPrintf("Rendering failed at pixel (%d, %d) sample %d. Debug with "
+                            "\"--debugstart %d,%d,%d\"\n",
+                            threadPixel.x, threadPixel.y, threadSampleIndex,
+                            threadPixel.x, threadPixel.y, threadSampleIndex);
+    });
+
+    // Declare common variables for rendering image in tiles
+    ThreadLocal<ScratchBuffer> scratchBuffers([]() { return ScratchBuffer(); });
+
+    ThreadLocal<Sampler> samplers([this]() { return samplerPrototype.Clone(); });
+
+    Bounds2i pixelBounds = camera.GetFilm().PixelBounds();
+    int spp = samplerPrototype.SamplesPerPixel();
+    ProgressReporter progress(int64_t(spp) * pixelBounds.Area(), "Rendering",
+                              Options->quiet);
+
+    int waveStart = 0, waveEnd = 1, nextWaveSize = 1;
+
+    if (Options->recordPixelStatistics)
+        StatsEnablePixelStats(pixelBounds,
+                              RemoveExtension(camera.GetFilm().GetFilename()));
+    // Handle MSE reference image, if provided
+    pstd::optional<Image> referenceImage;
+    FILE *mseOutFile = nullptr;
+    if (!Options->mseReferenceImage.empty()) {
+        auto mse = Image::Read(Options->mseReferenceImage);
+        referenceImage = mse.image;
+
+        Bounds2i msePixelBounds =
+            mse.metadata.pixelBounds
+                ? *mse.metadata.pixelBounds
+                : Bounds2i(Point2i(0, 0), referenceImage->Resolution());
+        if (!Inside(pixelBounds, msePixelBounds))
+            ErrorExit("Output image pixel bounds %s aren't inside the MSE "
+                      "image's pixel bounds %s.",
+                      pixelBounds, msePixelBounds);
+
+        // Transform the pixelBounds of the image we're rendering to the
+        // coordinate system with msePixelBounds.pMin at the origin, which
+        // in turn gives us the section of the MSE image to crop. (This is
+        // complicated by the fact that Image doesn't support pixel
+        // bounds...)
+        Bounds2i cropBounds(Point2i(pixelBounds.pMin - msePixelBounds.pMin),
+                            Point2i(pixelBounds.pMax - msePixelBounds.pMin));
+        *referenceImage = referenceImage->Crop(cropBounds);
+        CHECK_EQ(referenceImage->Resolution(), Point2i(pixelBounds.Diagonal()));
+
+        mseOutFile = FOpenWrite(Options->mseReferenceOutput);
+        if (!mseOutFile)
+            ErrorExit("%s: %s", Options->mseReferenceOutput, ErrorString());
+    }
+
+
+    // Connect to display server if needed
+    if (!Options->displayServer.empty()) {
+        Film film = camera.GetFilm();
+        DisplayDynamic(film.GetFilename(), Point2i(pixelBounds.Diagonal()),
+                       {"R", "G", "B"},
+                       [&](Bounds2i b, pstd::span<pstd::span<float>> displayValue) {
+                           int index = 0;
+                           for (Point2i p : b) {
+                               RGB rgb = film.GetPixelRGB(pixelBounds.pMin + p,
+                                                          2.f / (waveStart + waveEnd));
+                               for (int c = 0; c < 3; ++c)
+                                   displayValue[c][index] = rgb[c];
+                               ++index;
+                           }
+                       });
+    }
+
+    // Render image in waves
+    while (waveStart < spp) {
+        // Render current wave's image tiles in parallel
+        ParallelFor2D(pixelBounds, [&](Bounds2i tileBounds) {
+            // Render image tile given by _tileBounds_
+            ScratchBuffer &scratchBuffer = scratchBuffers.Get();
+            Sampler &sampler = samplers.Get();
+            PBRT_DBG("Starting image tile (%d,%d)-(%d,%d) waveStart %d, waveEnd %d\n",
+                     tileBounds.pMin.x, tileBounds.pMin.y, tileBounds.pMax.x,
+                     tileBounds.pMax.y, waveStart, waveEnd);
+
+            // Calculate corresponding index positions on sampled spectrum 
+            // (e.g. if NSpectrumSamples = 32 and nCABands = 3, 
+            // we want to divide the indices into (1 to 11), (12 to 22), 
+            // and (23 to 32.) This delta index defines the spacing.)
+
+            int deltaIndex = round((float)NSpectrumSamples/(float)numCABands);
+            float deltaWave = (Lambda_max-Lambda_min)/NSpectrumSamples;
+            float deltaWaveCA = deltaWave*deltaIndex;
+
+            for (Point2i pPixel : tileBounds) {
+                StatsReportPixelStart(pPixel);
+                threadPixel = pPixel;
+                // Render samples in pixel _pPixel_
+                for (int sampleIndex = waveStart; sampleIndex < waveEnd; ++sampleIndex) {
+                    threadSampleIndex = sampleIndex;
+                    sampler.StartPixelSample(pPixel, sampleIndex);
+//----------------------------Rewrite EvaluatePixelSample--------------------------------------------
+
+                    // EvaluatePixelSample(pPixel, sampleIndex, sampler, scratchBuffer);-----
+
+                    // Sample wavelengths for the ray
+                    Float lu = sampler.Get1D();
+                    if (Options->disableWavelengthJitter)
+                        lu = 0.5;
+                    SampledWavelengths lambda = camera.GetFilm().SampleWavelengths(lu);
+
+                    // Initialize _CameraSample_ for current sample
+                    Filter filter = camera.GetFilm().GetFilter();
+                    CameraSample cameraSample = GetCameraSample(sampler, pPixel, filter);
+                    
+                    // Trace _cameraRay_ if valid
+                    SampledSpectrum L(0.);
+                    
+                    VisibleSurface visibleSurface;
+
+                    for (int s = 0; s < numCABands; s++) {
+
+                        // Attach a wavelength value
+                        // Use middle wavelength of the spectrum band 
+                        Float currentWavelength = Lambda_min + deltaWaveCA * s + (deltaWaveCA/2);
+                        SampledWavelengths lambda_temp = SampledWavelengths::SampleUniform(0.5, currentWavelength, currentWavelength);
+                        SampledWavelengths lambda = SampledWavelengths::SampleUniform(0.5);
+                        // lambda_temp.lambda[0] = currentWavelength;
+                        // lambda_temp.pdf[0] = 1;
+                        // Generate camera ray for current sample
+                        // We need to pass wavelength into GenerationRay function, so that wavelength
+                        // dependent lens IOR in humanEyeCamera can be properly included in the following
+                        // calculation. Here we overwrite lambda PDF, allow only interested wavelength to 
+                        // be 1, and 0 for the rest, true lambda can always be recalculated.
+                        pstd::optional<CameraRayDifferential> cameraRay =
+                            camera.GenerateRayDifferential(cameraSample, lambda_temp);
+
+                        if (cameraRay) {
+                            // Double check that the ray's direction is normalized.
+                            DCHECK_GT(Length(cameraRay->ray.d), .999f);
+                            DCHECK_LT(Length(cameraRay->ray.d), 1.001f);
+
+
+
+                            SampledSpectrum Ls(0.);
+                            // Scale camera ray differentials based on image sampling rate
+                            Float rayDiffScale =
+                                std::max<Float>(.125f, 1 / std::sqrt((Float)sampler.SamplesPerPixel()));
+                            if (!Options->disablePixelJitter)
+                                cameraRay->ray.ScaleDifferentials(rayDiffScale);
+
+                            ++nCameraRays;
+                            // Evaluate radiance along camera ray
+                            bool initializeVisibleSurface = camera.GetFilm().UsesVisibleSurface();
+                            Ls = cameraRay->weight * Li(cameraRay->ray, lambda, sampler, scratchBuffer,
+                                                        initializeVisibleSurface ? &visibleSurface : nullptr);
+
+                            // Issue warning if unexpected radiance value is returned
+                            if (Ls.HasNaNs()) {
+                                LOG_ERROR("Not-a-number radiance value returned for pixel (%d, "
+                                            "%d), sample %d. Setting to black.",
+                                            pPixel.x, pPixel.y, sampleIndex);
+                                Ls = SampledSpectrum(0.f);
+                            } else if (IsInf(Ls.y(lambda))) {
+                                LOG_ERROR("Infinite radiance value returned for pixel (%d, %d), "
+                                            "sample %d. Setting to black.",
+                                            pPixel.x, pPixel.y, sampleIndex);
+                                Ls = SampledSpectrum(0.f);
+                            }
+
+                            if (cameraRay)
+                                PBRT_DBG(
+                                    "%s\n",
+                                    StringPrintf("Camera sample: %s -> ray %s -> L = %s, visibleSurface %s",
+                                                    cameraSample, cameraRay->ray, Ls,
+                                                    (visibleSurface ? visibleSurface.ToString() : "(none)"))
+                                        .c_str());
+                            else
+                                PBRT_DBG("%s\n",
+                                            StringPrintf("Camera sample: %s -> no ray generated", cameraSample)
+                                                .c_str());
+                            
+                            // Isolate the returned radiance for this wavelength
+                            // Get value at this wavelength
+                            Float Ls_lambda;
+                            Ls.GetValueAtWavelength(cameraRay->ray.wavelength, &Ls_lambda);
+                            // Assign the result to all wavelengths sampled around the target wavelength. 
+                            // For example, if nWaveBands = 3, then we would split the spectrum into three 
+                            // equal parts and assign the result from the first wavelength to the first third, 
+                            // the second wavelength to the second third, etc.
+                            int bottomIndex = deltaIndex * s;
+                            int topIndex = std::min(deltaIndex * (s+1), NSpectrumSamples);
+                            for(int waveIndex = bottomIndex; waveIndex < topIndex; waveIndex++){
+                                L[waveIndex] = Ls_lambda ;
+                            } 
+                        }
+                    }
+                
+                    // Add camera ray's contribution to image
+                    camera.GetFilm().AddSample(pPixel, L, lambda, &visibleSurface,
+                                               cameraSample.filterWeight);
+//----------------------------------------EvaluatePixelSample----------------------------------
+                    scratchBuffer.Reset();
+                }
+
+                StatsReportPixelEnd(pPixel);
+            }
+            PBRT_DBG("Finished image tile (%d,%d)-(%d,%d)\n", tileBounds.pMin.x,
+                     tileBounds.pMin.y, tileBounds.pMax.x, tileBounds.pMax.y);
+            progress.Update((waveEnd - waveStart) * tileBounds.Area());
+        });
+
+        // Update start and end wave
+        waveStart = waveEnd;
+        waveEnd = std::min(spp, waveEnd + nextWaveSize);
+        if (!referenceImage)
+            nextWaveSize = std::min(2 * nextWaveSize, 64);
+        if (waveStart == spp)
+            progress.Done();
+
+        // Optionally write current image to disk
+        if (waveStart == spp || Options->writePartialImages || referenceImage) {
+            LOG_VERBOSE("Writing image with spp = %d", waveStart);
+            ImageMetadata metadata;
+            metadata.renderTimeSeconds = progress.ElapsedSeconds();
+            metadata.samplesPerPixel = waveStart;
+            if (referenceImage) {
+                ImageMetadata filmMetadata;
+                Image filmImage =
+                    camera.GetFilm().GetImage(&filmMetadata, 1.f / waveStart);
+                ImageChannelValues mse =
+                    filmImage.MSE(filmImage.AllChannelsDesc(), *referenceImage);
+                fprintf(mseOutFile, "%d, %.9g\n", waveStart, mse.Average());
+                metadata.MSE = mse.Average();
+                fflush(mseOutFile);
+            }
+            if (waveStart == spp || Options->writePartialImages) {
+                camera.InitMetadata(&metadata);
+                camera.GetFilm().WriteImage(metadata, 1.0f / waveStart);
+            }
+        }
+    }
+
+    if (mseOutFile)
+        fclose(mseOutFile);
+    DisconnectFromDisplayServer();
+    LOG_VERBOSE("Rendering finished");
+}
+SpectralPathIntegrator::SpectralPathIntegrator(int maxDepth, Camera camera, Sampler sampler,
+                               Primitive aggregate, std::vector<Light> lights,
+                               const std::string &lightSampleStrategy, bool regularize,
+                               int numCABands)
+    : RayIntegrator(camera, sampler, aggregate, lights),
+      maxDepth(maxDepth),
+      lightSampler(LightSampler::Create(lightSampleStrategy, lights, Allocator())),
+      regularize(regularize),
+      numCABands(numCABands) {}
+
+SampledSpectrum SpectralPathIntegrator::Li(RayDifferential ray, SampledWavelengths &lambda,
+                                   Sampler sampler, ScratchBuffer &scratchBuffer,
+                                   VisibleSurface *visibleSurf) const {
+    // Declare local variables for _SpectralPathIntegrator::Li()_
+    SampledSpectrum L(0.f), beta(1.f);
+    int depth = 0;
+
+    Float p_b, etaScale = 1;
+    bool specularBounce = false, anyNonSpecularBounces = false;
+    LightSampleContext prevIntrCtx;
+
+    // Sample path from camera and accumulate radiance estimate
+    while (true) {
+        // Trace ray and find closest path vertex and its BSDF
+        pstd::optional<ShapeIntersection> si = Intersect(ray);
+        // Add emitted light at intersection point or from the environment
+        if (!si) {
+            // Incorporate emission from infinite lights for escaped ray
+            for (const auto &light : infiniteLights) {
+                SampledSpectrum Le = light.Le(ray, lambda);
+                if (depth == 0 || specularBounce)
+                    L += beta * Le;
+                else {
+                    // Compute MIS weight for infinite light
+                    Float p_l = lightSampler.PMF(prevIntrCtx, light) *
+                                light.PDF_Li(prevIntrCtx, ray.d, true);
+                    Float w_b = PowerHeuristic(1, p_b, 1, p_l);
+
+                    L += beta * w_b * Le;
+                }
+            }
+
+            break;
+        }
+        // Incorporate emission from surface hit by ray
+        SampledSpectrum Le = si->intr.Le(-ray.d, lambda);
+        if (Le) {
+            if (depth == 0 || specularBounce)
+                L += beta * Le;
+            else {
+                // Compute MIS weight for area light
+                Light areaLight(si->intr.areaLight);
+                Float p_l = lightSampler.PMF(prevIntrCtx, areaLight) *
+                            areaLight.PDF_Li(prevIntrCtx, ray.d, true);
+                Float w_l = PowerHeuristic(1, p_b, 1, p_l);
+
+                L += beta * w_l * Le;
+            }
+        }
+
+        SurfaceInteraction &isect = si->intr;
+        // Get BSDF and skip over medium boundaries
+        BSDF bsdf = isect.GetBSDF(ray, lambda, camera, scratchBuffer, sampler);
+        if (!bsdf) {
+            specularBounce = true;  // disable MIS if the indirect ray hits a light
+            isect.SkipIntersection(&ray, si->tHit);
+            continue;
+        }
+
+        // Initialize _visibleSurf_ at first intersection
+        if (depth == 0 && visibleSurf) {
+            // Estimate BSDF's albedo
+            // Define sample arrays _ucRho_ and _uRho_ for reflectance estimate
+            constexpr int nRhoSamples = 16;
+            const Float ucRho[nRhoSamples] = {
+                0.75741637, 0.37870818, 0.7083487, 0.18935409, 0.9149363, 0.35417435,
+                0.5990858,  0.09467703, 0.8578725, 0.45746812, 0.686759,  0.17708716,
+                0.9674518,  0.2995429,  0.5083201, 0.047338516};
+            const Point2f uRho[nRhoSamples] = {
+                Point2f(0.855985, 0.570367), Point2f(0.381823, 0.851844),
+                Point2f(0.285328, 0.764262), Point2f(0.733380, 0.114073),
+                Point2f(0.542663, 0.344465), Point2f(0.127274, 0.414848),
+                Point2f(0.964700, 0.947162), Point2f(0.594089, 0.643463),
+                Point2f(0.095109, 0.170369), Point2f(0.825444, 0.263359),
+                Point2f(0.429467, 0.454469), Point2f(0.244460, 0.816459),
+                Point2f(0.756135, 0.731258), Point2f(0.516165, 0.152852),
+                Point2f(0.180888, 0.214174), Point2f(0.898579, 0.503897)};
+
+            SampledSpectrum albedo = bsdf.rho(isect.wo, ucRho, uRho);
+
+            *visibleSurf = VisibleSurface(isect, albedo, lambda);
+        }
+
+        // Possibly regularize the BSDF
+        if (regularize && anyNonSpecularBounces) {
+            ++regularizedBSDFs;
+            bsdf.Regularize();
+        }
+
+        ++totalBSDFs;
+
+        // End path if maximum depth reached
+        if (depth++ == maxDepth)
+            break;
+
+        // Sample direct illumination from the light sources
+        if (IsNonSpecular(bsdf.Flags())) {
+            ++totalPaths;
+            SampledSpectrum Ld = SampleLd(isect, &bsdf, lambda, sampler);
+            if (!Ld)
+                ++zeroRadiancePaths;
+            L += beta * Ld;
+        }
+
+        // Sample BSDF to get new path direction
+        Vector3f wo = -ray.d;
+        Float u = sampler.Get1D();
+        pstd::optional<BSDFSample> bs = bsdf.Sample_f(wo, u, sampler.Get2D());
+        if (!bs)
+            break;
+        // Update path state variables after surface scattering
+        beta *= bs->f * AbsDot(bs->wi, isect.shading.n) / bs->pdf;
+        p_b = bs->pdfIsProportional ? bsdf.PDF(wo, bs->wi) : bs->pdf;
+        DCHECK(!IsInf(beta.y(lambda)));
+        specularBounce = bs->IsSpecular();
+        anyNonSpecularBounces |= !bs->IsSpecular();
+        if (bs->IsTransmission())
+            etaScale *= Sqr(bs->eta);
+        prevIntrCtx = si->intr;
+
+        ray = isect.SpawnRay(ray, bsdf, bs->wi, bs->flags, bs->eta);
+        // Possibly terminate the path with Russian roulette
+        SampledSpectrum rrBeta = beta * etaScale;
+        if (rrBeta.MaxComponentValue() < 1 && depth > 1) {
+            Float q = std::max<Float>(0, 1 - rrBeta.MaxComponentValue());
+            if (sampler.Get1D() < q)
+                break;
+            beta /= 1 - q;
+            DCHECK(!IsInf(beta.y(lambda)));
+        }
+    }
+    pathLength << depth;
+    return L;
+}
+
+SampledSpectrum SpectralPathIntegrator::SampleLd(const SurfaceInteraction &intr, const BSDF *bsdf,
+                                         SampledWavelengths &lambda,
+                                         Sampler sampler) const {
+    // Initialize _LightSampleContext_ for light sampling
+    LightSampleContext ctx(intr);
+    // Try to nudge the light sampling position to correct side of the surface
+    BxDFFlags flags = bsdf->Flags();
+    if (IsReflective(flags) && !IsTransmissive(flags))
+        ctx.pi = intr.OffsetRayOrigin(intr.wo);
+    else if (IsTransmissive(flags) && !IsReflective(flags))
+        ctx.pi = intr.OffsetRayOrigin(-intr.wo);
+
+    // Choose a light source for the direct lighting calculation
+    Float u = sampler.Get1D();
+    pstd::optional<SampledLight> sampledLight = lightSampler.Sample(ctx, u);
+    Point2f uLight = sampler.Get2D();
+    if (!sampledLight)
+        return {};
+
+    // Sample a point on the light source for direct lighting
+    Light light = sampledLight->light;
+    DCHECK(light && sampledLight->p > 0);
+    pstd::optional<LightLiSample> ls = light.SampleLi(ctx, uLight, lambda, true);
+    if (!ls || !ls->L || ls->pdf == 0)
+        return {};
+
+    // Evaluate BSDF for light sample and check light visibility
+    Vector3f wo = intr.wo, wi = ls->wi;
+    SampledSpectrum f = bsdf->f(wo, wi) * AbsDot(wi, intr.shading.n);
+    if (!f || !Unoccluded(intr, ls->pLight))
+        return {};
+
+    // Return light's contribution to reflected radiance
+    Float p_l = sampledLight->p * ls->pdf;
+    if (IsDeltaLight(light.Type()))
+        return ls->L * f / p_l;
+    else {
+        Float p_b = bsdf->PDF(wo, wi);
+        Float w_l = PowerHeuristic(1, p_l, 1, p_b);
+        return w_l * ls->L * f / p_l;
+    }
+}
+
+std::string SpectralPathIntegrator::ToString() const {
+    return StringPrintf("[ SpectralPathIntegrator maxDepth: %d lightSampler: %s regularize: %s ]",
+                        maxDepth, lightSampler, regularize);
+}
+
+std::unique_ptr<SpectralPathIntegrator> SpectralPathIntegrator::Create(
+    const ParameterDictionary &parameters, Camera camera, Sampler sampler,
+    Primitive aggregate, std::vector<Light> lights, const FileLoc *loc) {
+    int maxDepth = parameters.GetOneInt("maxdepth", 5);
+    std::string lightStrategy = parameters.GetOneString("lightsampler", "bvh");
+    bool regularize = parameters.GetOneBool("regularize", false);
+    // Get number of wavelength dependent waves to generate per single ray
+    int numCABands = parameters.GetOneInt("numCABands", 4);
+    if(numCABands != 1){
+        Warning("Using spectral rendering. For every pixel sample we will trace %dx more rays. Rendering will be %d times slower.",numCABands,numCABands);
+    }
+    return std::make_unique<SpectralPathIntegrator>(maxDepth, camera, sampler, aggregate, lights,
+                                            lightStrategy, regularize, numCABands);
+}
+
+
+
 STAT_PERCENT("Integrator/Acceptance rate", acceptedMutations, totalMutations);
 
 // MLTIntegrator Method Definitions
@@ -3653,6 +4135,9 @@ std::unique_ptr<Integrator> Integrator::Create(
                                                      aggregate, lights, loc);
     else if (name == "volpath")
         integrator = VolPathIntegrator::Create(parameters, camera, sampler, aggregate,
+                                               lights, loc);
+    else if (name == "spectralpath")
+        integrator = SpectralPathIntegrator::Create(parameters, camera, sampler, aggregate,
                                                lights, loc);
     else if (name == "bdpt")
         integrator =

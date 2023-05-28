@@ -378,6 +378,43 @@ class BDPTIntegrator : public RayIntegrator {
     mutable std::vector<Film> weightFilms;
 };
 
+// SpectralPathIntegrator Definition
+class SpectralPathIntegrator : public RayIntegrator {
+  public:
+    // SpectralPathIntegrator Public Methods
+    SpectralPathIntegrator(int maxDepth, Camera camera, Sampler sampler, Primitive aggregate,
+                   std::vector<Light> lights,
+                   const std::string &lightSampleStrategy = "bvh",
+                   bool regularize = false,
+                   int numCABands = 4);
+
+    SampledSpectrum Li(RayDifferential ray, SampledWavelengths &lambda, Sampler sampler,
+                       ScratchBuffer &scratchBuffer,
+                       VisibleSurface *visibleSurface) const;
+
+    static std::unique_ptr<SpectralPathIntegrator> Create(const ParameterDictionary &parameters,
+                                                  Camera camera, Sampler sampler,
+                                                  Primitive aggregate,
+                                                  std::vector<Light> lights,
+                                                  const FileLoc *loc);
+
+    std::string ToString() const;
+
+    void Render();
+
+  private:
+    // SpectralPathIntegrator Private Methods
+    SampledSpectrum SampleLd(const SurfaceInteraction &intr, const BSDF *bsdf,
+                             SampledWavelengths &lambda, Sampler sampler) const;
+
+    // SpectralPathIntegrator Private Members
+    int maxDepth;
+    LightSampler lightSampler;
+    bool regularize;
+    const int numCABands; // How many wavelength-dependent rays, per standard ray, to trace across the spectrum
+
+};
+
 // MLTIntegrator Definition
 class MLTSampler;
 

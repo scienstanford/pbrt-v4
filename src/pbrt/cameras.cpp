@@ -1549,7 +1549,8 @@ HumanEyeCamera::HumanEyeCamera(CameraBaseParameters baseParameters,
                                Float retinaRadius, Float retinaSemiDiam,
                                pstd::vector<Spectrum> iorSpectra,
                                pstd::vector<Point3f> surfaceLookupTable,
-                               bool diffractionEnabled, Allocator alloc)
+                               bool diffractionEnabled, 
+                               Allocator alloc)
     : CameraBase(baseParameters),
       lensEls(alloc),
       lookupTable(surfaceLookupTable, alloc),
@@ -1640,12 +1641,13 @@ pstd::optional<CameraRay> HumanEyeCamera::GenerateRay(CameraSample sample,
         lensU, lensV,
         discDistance);  // We aim the ray at a flat disk, will that cause problems later?
 
-    // Float tempWavelength = ray->wavelength;
     Ray ray;
     ray.o = startingPoint;  // initialize ray origin
     ray.d = Normalize(Vector3f(pointOnLens - ray.o));
-    // ray->wavelength = tempWavelength;  //so that wavelength information is retained.
+    ray.wavelength = lambda[0];
 
+    // re-calculate correct lambda
+    lambda = SampledWavelengths::SampleUniform(0.5);
     // DEBUG
     /*
         // Scene to retina
@@ -1848,10 +1850,12 @@ pstd::optional<CameraRay> HumanEyeCamera::GenerateRay(CameraSample sample,
 
     // Move the origin to the front of the eye. This can be important for small distances
     // and accommodation measurements.
+    Float current_wavelength = ray.wavelength; // keep wavelength after renderfromcamera
     ray.o.z = ray.o.z - frontThickness;
     ray = RenderFromCamera(ray);
     ray.d = Normalize(ray.d);
     ray.medium = medium;
+    ray.wavelength = current_wavelength;
 
     // No weighting for now...we should add it in!
     // LensRearZ() is used for omni/realistic, not for humaneye yet.
@@ -2304,7 +2308,8 @@ HumanEyeCamera *HumanEyeCamera::Create(const ParameterDictionary &parameters,
     // Flags
     bool flipRad = parameters.GetOneBool("flipLensRadius", 0.0);
     bool mmUnits = parameters.GetOneBool("mmUnits", 1.0);
-    bool diffractionEnabled = parameters.GetOneBool("diffractionEnabled", 0.0);
+    
+    bool diffractionEnabled = parameters.GetOneBool("diffractionEnabled", false);
 
     // Scale units depending on the units of the scene
     Float lensScaling;
@@ -3785,7 +3790,7 @@ OmniCamera *OmniCamera::Create(const ParameterDictionary &parameters,
     // Chromatic aberration flag
     bool caFlag = parameters.GetOneBool("chromaticAberrationEnabled", false);
     // Diffraction limit calculation flag
-    bool diffractionEnabled = parameters.GetOneBool("diffractionEnabled", 0.0);
+    bool diffractionEnabled = parameters.GetOneBool("diffractionEnabled", false);
 
     if (microlensSimulationRadius != 0) {
         Warning("We only currently support simulating one microlens per pixel, switching "

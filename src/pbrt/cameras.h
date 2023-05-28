@@ -624,7 +624,7 @@ class HumanEyeCamera : public CameraBase {
                    Float retinaDistance, Float retinaRadius, Float retinaSemiDiam,
                    pstd::vector<Spectrum> iorSpectra,
                    pstd::vector<Point3f> surfaceLookupTable,
-                     bool diffractionEnabled,
+                   bool diffractionEnabled, 
                    Allocator alloc);
     static HumanEyeCamera *Create(const ParameterDictionary &parameters,
                                   const CameraTransform &cameraTransform, Film film,
@@ -822,7 +822,7 @@ class HumanEyeCamera : public CameraBase {
     pstd::vector<Spectrum> iorSpectra;
 
     // Flags for conventions
-    bool diffractionEnabled;
+    const bool diffractionEnabled;
     Float lensScaling;
 
     // Private methods for tracing through lens
