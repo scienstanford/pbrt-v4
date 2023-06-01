@@ -28,7 +28,6 @@
 #include <pbrt/rtf/passnopass.h>
 
 #include <algorithm>
-#include <iostream>
 #include <math.h>
 #include <cmath>
 #include <gsl/gsl_roots.h> // For solving biconic surface intersections.
@@ -1724,9 +1723,7 @@ pstd::optional<CameraRay> HumanEyeCamera::GenerateRay(CameraSample sample,
 
             if (diffractionEnabled) {
                 // DEBUG: Check that direction did change
-                //                    std::cout << "ray->d = (" << ray->d.x << "," <<
-                //                    ray->d.y << "," << ray->d.z << ")" << std::endl;
-
+                // printf("Before: %f, %f, %f \n", ray.d.x, ray.d.y, ray.d.z);
                 // Adjust ray direction using HURB diffraction
                 Vector3f newDiffractedDir;
                 diffractHURB(intersectPoint, lensEls[i].semiDiameter, ray.wavelength,
@@ -1734,8 +1731,7 @@ pstd::optional<CameraRay> HumanEyeCamera::GenerateRay(CameraSample sample,
                 ray.d = newDiffractedDir;
 
                 // DEBUG: Check that direction did change
-                //                    std::cout << "ray->d = (" << ray->d.x << "," <<
-                //                    ray->d.y << "," << ray->d.z << ")" << std::endl;
+                // printf("After: %f, %f, %f \n", ray.d.x,ray.d.y,ray.d.z);
             }
 
             startingPoint = intersectPoint;
@@ -2112,10 +2108,12 @@ void HumanEyeCamera::diffractHURB(Point3f intersect, Float apertureRadius,
     // If the scene is in meters, lensScaling = 0.001 and dist2Edge will be in meters.
     // if scene is in millimeters, lensScaling = 1 and dist2Edge will be in millimeters.
     // TL: Changed 2 to sqrt(2) to better match MTF's with airy disk
+    // lensScaling = 0.001; // I'm not sure why this param is reset to be 0 here, I set it to be 0.001 again.
+    // I think every scene we have now is using meters. 
     double sigmaS =
-        atan(1 / (1.41 * dist2EdgeS * 2 * Pi / (wavelength * 1e-6 * lensScaling)));
+        atan(1 / (1.41 * dist2EdgeS * 2 * Pi / (wavelength * 1e-6 * 0.001)));
     double sigmaL =
-        atan(1 / (1.41 * dist2EdgeL * 2 * Pi / (wavelength * 1e-6 * lensScaling)));
+        atan(1 / (1.41 * dist2EdgeL * 2 * Pi / (wavelength * 1e-6 * 0.001)));
 
     // Sample from bivariate gaussian
     double initS = 0;
@@ -2312,11 +2310,9 @@ HumanEyeCamera *HumanEyeCamera::Create(const ParameterDictionary &parameters,
     bool diffractionEnabled = parameters.GetOneBool("diffractionEnabled", false);
 
     // Scale units depending on the units of the scene
-    Float lensScaling;
+    Float lensScaling = 0.001;
     if (mmUnits) {
         lensScaling = 1;
-    } else {
-        lensScaling = 0.001;
     }
 
     pupilDiameter = pupilDiameter * lensScaling;
@@ -3165,7 +3161,6 @@ Point2f OmniCamera::MicrolensIndex(const Point2f p) const {
     Vector2f df = Vector2f(d.x, d.y);
     // Vector2f lensSpace = mapMul(normFilm, df);
     Vector2f lensSpace = Vector2f(normFilm.x * df.x, normFilm.y * df.y);
-    // printf("GPU DEBUG: lensSpace: %f, %f \n", lensSpace.x, lensSpace.y);
     return Point2f(pstd::floor(lensSpace.x), pstd::floor(lensSpace.y));
 }
 
@@ -3227,9 +3222,7 @@ OmniCamera::MicrolensElement OmniCamera::MicrolensElementFromIndex(
     const Point2f idx) const {
     MicrolensElement element;
     element.index = idx;
-    // printf("GPU debug : MicrolensElementFromIndex- get center\n");
     element.center = MicrolensCenterFromIndex(idx);
-    // printf("GPU debug : MicrolensElementFromIndex- succcess get center\n");
     const Point2f offsets[4] = {{0, 0}, {0, 1}, {1, 0}, {1, 1}};
     Point2f corners[4];
     for (int i = 0; i < 4; ++i) {
@@ -3237,8 +3230,7 @@ OmniCamera::MicrolensElement OmniCamera::MicrolensElementFromIndex(
         Point2f cornerIdx = idx - Vector2i(offsets[i]);
         for (const auto &off : offsets) {
             Point2f neighborCenter = MicrolensCenterFromIndex(cornerIdx + off);
-            // printf("GPU debug : MicrolensElementFromIndex- deeper- succcess get
-            // center\n");
+
             corners[i] += neighborCenter;
         }
         corners[i] *= (Float)0.25;
@@ -3248,7 +3240,6 @@ OmniCamera::MicrolensElement OmniCamera::MicrolensElementFromIndex(
     // A Rectangle is used to bound the area of the microlens
 
     element.centeredBounds = ConvexQuadf(corners[0], corners[1], corners[2], corners[3]);
-    // printf("GPU debug : MicrolensElementFromIndex-    convexquad\n");
     return element;
 }
 
@@ -3261,7 +3252,6 @@ OmniCamera::MicrolensElement OmniCamera::ComputeMicrolensElement(
     Point2f pointOnMicrolens2(
         pointOnMicrolens.x,
         pointOnMicrolens.y);  // Keep only (x,y) values
-                              // printf("GPU debug : ComputeMicrolensElement");
     return MicrolensElementFromIndex(MicrolensIndex(
         pointOnMicrolens2));  // Generate a microlensElement from this information
 }
@@ -3357,7 +3347,6 @@ pstd::optional<CameraRay> OmniCamera::GenerateRay(CameraSample sample,
     Ray rFilm(pFilm, eps->pPupil - pFilm);
 
     Ray ray;
-    // printf("GPU DEBUG: Going into fulll lens system\n");
 
     Float weight = TraceFullLensSystemFromFilm(rFilm, &ray);
 
