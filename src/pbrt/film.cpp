@@ -744,33 +744,6 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     // Convert image to RGB and compute final pixel values
     LOG_VERBOSE("Converting image to RGB and computing final weighted pixel values");
     PixelFormat format = writeFP16 ? PixelFormat::Half : PixelFormat::Float;
-    Image image(format, Point2i(pixelBounds.Diagonal()),
-                {"R",
-                 "G",
-                 "B",
-                 "Albedo.R",
-                 "Albedo.G",
-                 "Albedo.B",
-                 "P.X",
-                 "P.Y",
-                 "P.Z",
-                 "dzdx",
-                 "dzdy",
-                 "N.X",
-                 "N.Y",
-                 "N.Z",
-                 "Ns.X",
-                 "Ns.Y",
-                 "Ns.Z",
-                 "u",
-                 "v",
-                 "Variance.R",
-                 "Variance.G",
-                 "Variance.B",
-                 "RelativeVariance.R",
-                 "RelativeVariance.G",
-                 "RelativeVariance.B"});
-
     // Only RGB is exported by default; Others are optional;
     vector<string> channelNames = {"R", "G", "B"};
     // zhenyi
@@ -785,12 +758,12 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
                                     "Radiance.C31"};
     string BasisChannelNames[5] = {"Coef.C01", "Coef.C02", "Coef.C03", "Coef.C04", "Coef.C05"};
     string AlbedoChannelNames[3] = {"Albedo.R", "Albedo.G", "Albedo.B"};
-    string PositionChannelNames[3] = {"Px", "Py", "Pz"};
+    string PositionChannelNames[3] = {"P.X", "P.Y", "P.Z"};
     string MaterialChannelNames[1] = {"MaterialId"};
     string InstanceChannelNames[1] = {"InstanceId"};
-    string NormalChannelNames[3] = {"Nx", "Ny", "Nz"};
-    string NsChannelNames[3] = {"Nsx", "Nsy", "Nxz"};
-    string DzChannelNames[2] = {"Dzx", "Dzy"};
+    string NormalChannelNames[3] = {"N.X", "N.Y", "N.Z"};
+    string NsChannelNames[3] = {"Ns.X", "Ns.Y", "Nx.Z"};
+    string DzChannelNames[2] = {"dzdx", "dzdy"};
     string VarianceChannelNames[3] = {"Variance.R", "Variance.G", "Variance.B"};
     string RelativeVarianceChannelNames[3] = {"RelativeVariance.R", "RelativeVariance.G", "RelativeVariance.B"};
     // check channel flag;
@@ -865,18 +838,6 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     int num_y = pixelBounds.pMax[1];
     // float spectralData[num_x * num_y][NSpectrumSamples];
     Eigen::MatrixXf spectralData(num_x * num_y, NSpectrumSamples);
-
-    ImageChannelDesc pDesc = image.GetChannelDesc({"P.X", "P.Y", "P.Z"});
-    ImageChannelDesc dzDesc = image.GetChannelDesc({"dzdx", "dzdy"});
-    ImageChannelDesc nDesc = image.GetChannelDesc({"N.X", "N.Y", "N.Z"});
-    ImageChannelDesc nsDesc = image.GetChannelDesc({"Ns.X", "Ns.Y", "Ns.Z"});
-    ImageChannelDesc uvDesc = image.GetChannelDesc({"u", "v"});
-    ImageChannelDesc albedoRgbDesc =
-        image.GetChannelDesc({"Albedo.R", "Albedo.G", "Albedo.B"});
-    ImageChannelDesc varianceDesc =
-        image.GetChannelDesc({"Variance.R", "Variance.G", "Variance.B"});
-    ImageChannelDesc relVarianceDesc = image.GetChannelDesc(
-        {"RelativeVariance.R", "RelativeVariance.G", "RelativeVariance.B"});
 
     std::atomic<int> nClamped{0};
     ParallelFor2D(pixelBounds, [&](Point2i p) {

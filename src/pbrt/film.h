@@ -381,6 +381,7 @@ class GBufferFilm : public FilmBase {
 
   private:
    // Copied from spectralFilm, hard coded nBuckets, lambdaMin and lambdaMax --
+    PBRT_CPU_GPU
     int LambdaToBucket(Float lambda) const {
         int nBuckets = 31;
         DCHECK_RARE(1e6f, lambda < 395 || lambda > 705);
