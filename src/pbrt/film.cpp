@@ -744,6 +744,32 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     // Convert image to RGB and compute final pixel values
     LOG_VERBOSE("Converting image to RGB and computing final weighted pixel values");
     PixelFormat format = writeFP16 ? PixelFormat::Half : PixelFormat::Float;
+    Image image(format, Point2i(pixelBounds.Diagonal()),
+                {"R",
+                 "G",
+                 "B",
+                 "Albedo.R",
+                 "Albedo.G",
+                 "Albedo.B",
+                 "P.X",
+                 "P.Y",
+                 "P.Z",
+                 "dzdx",
+                 "dzdy",
+                 "N.X",
+                 "N.Y",
+                 "N.Z",
+                 "Ns.X",
+                 "Ns.Y",
+                 "Ns.Z",
+                 "u",
+                 "v",
+                 "Variance.R",
+                 "Variance.G",
+                 "Variance.B",
+                 "RelativeVariance.R",
+                 "RelativeVariance.G",
+                 "RelativeVariance.B"});
 
     // Only RGB is exported by default; Others are optional;
     vector<string> channelNames = {"R", "G", "B"};
@@ -840,10 +866,10 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     // float spectralData[num_x * num_y][NSpectrumSamples];
     Eigen::MatrixXf spectralData(num_x * num_y, NSpectrumSamples);
 
-    ImageChannelDesc pDesc = image.GetChannelDesc({"Px", "Py", "Pz"});
+    ImageChannelDesc pDesc = image.GetChannelDesc({"P.X", "P.Y", "P.Z"});
     ImageChannelDesc dzDesc = image.GetChannelDesc({"dzdx", "dzdy"});
-    ImageChannelDesc nDesc = image.GetChannelDesc({"Nx", "Ny", "Nz"});
-    ImageChannelDesc nsDesc = image.GetChannelDesc({"Nsx", "Nsy", "Nsz"});
+    ImageChannelDesc nDesc = image.GetChannelDesc({"N.X", "N.Y", "N.Z"});
+    ImageChannelDesc nsDesc = image.GetChannelDesc({"Ns.X", "Ns.Y", "Ns.Z"});
     ImageChannelDesc uvDesc = image.GetChannelDesc({"u", "v"});
     ImageChannelDesc albedoRgbDesc =
         image.GetChannelDesc({"Albedo.R", "Albedo.G", "Albedo.B"});

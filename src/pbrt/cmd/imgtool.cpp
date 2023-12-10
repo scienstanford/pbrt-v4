@@ -503,7 +503,7 @@ int assemble(std::vector<std::string> args) {
             }
             if (Union(*metadata.pixelBounds, fullBounds) != fullBounds) {
                 Warning("%s: pixel bounds (%d, %d) - (%d, %d) in EXR file isn't inside "
-                        "the the full image (0, 0) - (%d, %d). "
+                        "the full image (0, 0) - (%d, %d). "
                         "Ignoring this file.",
                         file, metadata.pixelBounds->pMin.x, metadata.pixelBounds->pMin.y,
                         metadata.pixelBounds->pMax.x, metadata.pixelBounds->pMax.y,
@@ -2466,10 +2466,11 @@ int denoise_optix(std::vector<std::string> args) {
     CUDA_CHECK(cudaFree(nullptr));
 
     int nLayers = 3;
+    bool oldNormalNaming = false;
     ImageChannelDesc desc[3] = {
         image.GetChannelDesc({"R", "G", "B"}),
         image.GetChannelDesc({"Albedo.R", "Albedo.G", "Albedo.B"}),
-        image.GetChannelDesc({"Nsx", "Nsy", "Nsz"})};
+        image.GetChannelDesc({"Ns.X", "Ns.Y", "Ns.Z"})};
     if (!desc[0]) {
         fprintf(stderr, "%s: image doesn't have R, G, B channels.", inFilename.c_str());
         return 1;
@@ -2481,10 +2482,16 @@ int denoise_optix(std::vector<std::string> args) {
         nLayers = 1;
     }
     if (!desc[2]) {
-        Warning("%s: image doesn't have Nsx, Nsy, Nsz channels. "
-                "Denoising quality may suffer.",
-                inFilename);
-        nLayers = 1;
+        // Try the old naming scheme
+        desc[2] = image.GetChannelDesc({"Nsx", "Nsy", "Nsz"});
+        if (desc[2])
+            oldNormalNaming = true;
+        else {
+            Warning("%s: image doesn't have Ns.X, Ns.Y, Ns.Z channels. "
+                    "Denoising quality may suffer.",
+                    inFilename);
+            nLayers = 1;
+        }
     }
 
     Denoiser denoiser((Vector2i)image.Resolution(), nLayers == 3);
@@ -2517,7 +2524,10 @@ int denoise_optix(std::vector<std::string> args) {
     Normal3f *normalGPU = nullptr;
     if (nLayers == 3) {
         albedoGPU = (RGB *)copyChannelsToGPU({"Albedo.R", "Albedo.G", "Albedo.B"});
-        normalGPU = (Normal3f *)copyChannelsToGPU({"Nsx", "Nsy", "Nsz"}, true);
+        if (oldNormalNaming)
+            normalGPU = (Normal3f *)copyChannelsToGPU({"Nsx", "Nsy", "Nsz"}, true);
+        else
+            normalGPU = (Normal3f *)copyChannelsToGPU({"Ns.X", "Ns.Y", "Ns.Z"}, true);
     }
 
     RGB *rgbResultGPU;

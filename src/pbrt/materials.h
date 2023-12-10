@@ -95,7 +95,7 @@ inline PBRT_CPU_GPU void NormalMap(const Image &normalMap,
     ns = Normalize(ns);
 
     // Transform tangent-space normal to rendering space
-    Frame frame = Frame::FromZ(ctx.shading.n);
+    Frame frame = Frame::FromXZ(Normalize(ctx.shading.dpdu), Vector3f(ctx.shading.n));
     ns = frame.FromLocal(ns);
 
     // Find $\dpdu$ and $\dpdv$ that give shading normal
@@ -379,8 +379,8 @@ class HairMaterial {
     template <typename TextureEvaluator>
     PBRT_CPU_GPU HairBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx,
                                   SampledWavelengths &lambda) const {
-        Float bm = std::max<Float>(1e-2, texEval(beta_m, ctx));
-        Float bn = std::max<Float>(1e-2, texEval(beta_n, ctx));
+        Float bm = std::max<Float>(1e-2, std::min<Float>(1.0, texEval(beta_m, ctx)));
+        Float bn = std::max<Float>(1e-2, std::min<Float>(1.0, texEval(beta_n, ctx)));
         Float a = texEval(alpha, ctx);
         Float e = texEval(eta, ctx);
 
