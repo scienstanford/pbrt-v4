@@ -359,7 +359,7 @@ class GBufferFilm : public FilmBase {
         RGB rgb(pixel.rgbSum[0], pixel.rgbSum[1], pixel.rgbSum[2]);
 
         // Normalize pixel with weight sum
-        Float weightSum = pixel.weightSum;
+        Float weightSum = pixel.rgbWeightSum;
         if (weightSum != 0)
             rgb /= weightSum;
 
@@ -376,15 +376,22 @@ class GBufferFilm : public FilmBase {
     Image GetImage(ImageMetadata *metadata, Float splatScale = 1);
 
     std::string ToString() const;
-
+    // spectralFilm also resets more properties here, need to check whether we need later. --Zhenyi
     PBRT_CPU_GPU void ResetPixel(Point2i p) { std::memset(&pixels[p], 0, sizeof(Pixel)); }
 
   private:
+   // Copied from spectralFilm, hard coded nBuckets, lambdaMin and lambdaMax --
+    int LambdaToBucket(Float lambda) const {
+        int nBuckets = 31;
+        DCHECK_RARE(1e6f, lambda < 395 || lambda > 705);
+        int bucket = nBuckets * (lambda - 395) / (705 - 395);
+        return Clamp(bucket, 0, nBuckets - 1);
+    }
     // GBufferFilm::Pixel Definition
     struct Pixel {
         Pixel() = default;
         double rgbSum[3] = {0., 0., 0.};
-        double weightSum = 0., gBufferWeightSum = 0.;
+        double rgbWeightSum = 0., gBufferWeightSum = 0.;
         AtomicDouble rgbSplat[3];
         Point3f pSum;
         Float dzdxSum = 0, dzdySum = 0;
@@ -393,6 +400,7 @@ class GBufferFilm : public FilmBase {
         double rgbAlbedoSum[3] = {0., 0., 0.};
         VarianceEstimator<Float> rgbVariance[3];
         SampledSpectrum L;
+        SampledSpectrum weightSums;
         AtomicDouble *LSplat;
         float materialId; // zhenyi
         float instanceId; // zhenyi

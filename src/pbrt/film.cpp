@@ -646,7 +646,7 @@ void GBufferFilm::AddSample(Point2i pFilm, SampledSpectrum L,
 
     for (int c = 0; c < 3; ++c)
         p.rgbSum[c] += rgb[c] * weight;
-    p.weightSum += weight;
+    p.rgbWeightSum += weight;
 
     Float lm = L.MaxComponentValue();
     if (lm > maxComponentValue)
@@ -656,7 +656,9 @@ void GBufferFilm::AddSample(Point2i pFilm, SampledSpectrum L,
 
     // zhenyi: Add spectrum values into pixel
     for (int i = 0; i < NSpectrumSamples; ++i) {
-        p.L[i] += L[i];
+        int b = LambdaToBucket(lambda[i]);
+        p.L[b] += L[i];
+        p.weightSums[b] += weight;
     }
     // zhenyi: add material ID;
     p.materialId = visibleSurface->materialId;
@@ -724,7 +726,8 @@ void GBufferFilm::AddSplat(Point2f p, SampledSpectrum v,
                 pixel.rgbSplat[i].Add(wt * rgb[i]);
 
             for (int i = 0; i < NSpectrumSamples; ++i){
-                pixel.LSplat[i].Add(wt * v[i]);
+                int b = LambdaToBucket(lambda[i]);
+                pixel.LSplat[b].Add(wt * v[i]);
             }
         }
 
@@ -857,7 +860,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
                       pixel.rgbAlbedoSum[2]);
 
         // Normalize pixel with weight sum
-        Float weightSum = pixel.weightSum, gBufferWeightSum = pixel.gBufferWeightSum;
+        Float weightSum = pixel.rgbWeightSum, gBufferWeightSum = pixel.gBufferWeightSum;
         Point3f pt = pixel.pSum;
         Point2f uv = pixel.uvSum;
         Float dzdx = pixel.dzdxSum, dzdy = pixel.dzdySum;
@@ -868,6 +871,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
             albedoRgb /= weightSum;
             L /=weightSum;
         }
+
         if (gBufferWeightSum != 0) {
             pt /= gBufferWeightSum;
             uv /= gBufferWeightSum;
@@ -883,10 +887,22 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
 
         rgb = outputRGBFromSensorRGB * rgb;
 
+        // Clamp to max representable fp16 to avoid Infs
+        if (writeFP16) {
+            for (int c = 0; c < 3; ++c) {
+                if (rgb[c] > 65504) {
+                    rgb[c] = 65504;
+                    ++nClamped;
+                }
+            }
+        }
+
+
         // Add splat value at pixel for radiance
         if (pixel.LSplat !=0) {
             for (int c = 0; c < NSpectrumSamples; ++c){
-                L[c] += splatScale * pixel.LSplat[c] / filterIntegral;
+                L[c] = L[c] / pixel.weightSums[c] +
+                splatScale * pixel.LSplat[c] / filterIntegral;
             }
         }
 
@@ -897,15 +913,6 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
             }
         }
 
-        if (writeFP16 && std::max({rgb.r, rgb.g, rgb.b}) > 65504) {
-            if (rgb.r > 65504)
-                rgb.r = 65504;
-            if (rgb.g > 65504)
-                rgb.g = 65504;
-            if (rgb.b > 65504)
-                rgb.b = 65504;
-            ++nClamped;
-        }
 
         Point2i pOffset(p.x - pixelBounds.pMin.x, p.y - pixelBounds.pMin.y);
 
