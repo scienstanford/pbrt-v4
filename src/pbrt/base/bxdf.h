@@ -158,7 +158,6 @@ class ThinDielectricBxDF;
 class HairBxDF;
 class MeasuredBxDF;
 class ConductorBxDF;
-class RetroreflectiveBxDF;
 class NormalizedFresnelBxDF;
 class CoatedDiffuseBxDF;
 class CoatedConductorBxDF;
@@ -167,7 +166,7 @@ class CoatedConductorBxDF;
 class BxDF
     : public TaggedPointer<DiffuseTransmissionBxDF, DiffuseBxDF, CoatedDiffuseBxDF,
                            CoatedConductorBxDF, DielectricBxDF, ThinDielectricBxDF,
-                           HairBxDF, MeasuredBxDF, ConductorBxDF, RetroreflectiveBxDF,
+                           HairBxDF, MeasuredBxDF, ConductorBxDF, 
                            NormalizedFresnelBxDF> {
   public:
     // BxDF Interface

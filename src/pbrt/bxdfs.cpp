@@ -271,11 +271,6 @@ std::string ConductorBxDF::ToString() const {
                         k);
 }
 
-std::string RetroreflectiveBxDF::ToString() const {
-    return StringPrintf("[ RetroreflectiveBxDF mfDistrib: %s eta: %s k: %s ]", mfDistrib, eta,
-                        k);
-}
-
 // HairBxDF Method Definitions
 HairBxDF::HairBxDF(Float h, Float eta, const SampledSpectrum &sigma_a, Float beta_m,
                    Float beta_n, Float alpha)

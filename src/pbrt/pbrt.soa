@@ -51,7 +51,6 @@ soa VisibleSurface {
     Point2f uv;
     Float time;
     Vector3f dpdx, dpdy;
-    int materialId;
     int instanceId; 
     SampledSpectrum albedo;
 };

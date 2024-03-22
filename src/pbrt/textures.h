@@ -527,13 +527,8 @@ class ImageTextureBase {
     // ImageTextureBase Public Methods
     ImageTextureBase(TextureMapping2D mapping, std::string filename,
                      MIPMapFilterOptions filterOptions, WrapMode wrapMode, Float scale,
-                     bool invert, ColorEncoding encoding,
-                     std::vector<std::vector<float>> basis, Allocator alloc)
-        : mapping(mapping),
-          filename(filename),
-          scale(scale),
-          invert(invert),
-          basis(basis) {
+                     bool invert, ColorEncoding encoding, Allocator alloc)
+        : mapping(mapping), filename(filename), scale(scale), invert(invert) {
         // Get _MIPMap_ from texture cache if present
         TexInfo texInfo(filename, filterOptions, wrapMode, encoding);
         std::unique_lock<std::mutex> lock(textureCacheMutex);
@@ -564,7 +559,6 @@ class ImageTextureBase {
     std::string filename;
     Float scale;
     bool invert;
-    std::vector<std::vector<float>> basis;
     MIPMap *mipmap;
 
   private:
@@ -578,9 +572,8 @@ class FloatImageTexture : public ImageTextureBase {
   public:
     FloatImageTexture(TextureMapping2D m, const std::string &filename,
                       MIPMapFilterOptions filterOptions, WrapMode wm, Float scale,
-                      bool invert, ColorEncoding encoding,
-                      std::vector<std::vector<float>> basis, Allocator alloc)
-        : ImageTextureBase(m, filename, filterOptions, wm, scale, invert, encoding, basis,
+                      bool invert, ColorEncoding encoding, Allocator alloc)
+        : ImageTextureBase(m, filename, filterOptions, wm, scale, invert, encoding,
                            alloc) {}
     PBRT_CPU_GPU
     Float Evaluate(TextureEvalContext ctx) const {
@@ -611,10 +604,9 @@ class SpectrumImageTexture : public ImageTextureBase {
     SpectrumImageTexture(TextureMapping2D mapping, std::string filename,
                          MIPMapFilterOptions filterOptions, WrapMode wrapMode,
                          Float scale, bool invert, ColorEncoding encoding,
-                         SpectrumType spectrumType, std::vector<std::vector<float>> basis,
-                         Allocator alloc)
+                         SpectrumType spectrumType, Allocator alloc)
         : ImageTextureBase(mapping, filename, filterOptions, wrapMode, scale, invert,
-                           encoding, basis, alloc),
+                           encoding, alloc),
           spectrumType(spectrumType) {}
 
     PBRT_CPU_GPU
@@ -638,7 +630,7 @@ class GPUSpectrumImageTexture {
     GPUSpectrumImageTexture(std::string filename, TextureMapping2D mapping,
                             cudaTextureObject_t texObj, Float scale, bool invert,
                             bool isSingleChannel, const RGBColorSpace *colorSpace,
-                            cudaTextureObject_t texBasis, SpectrumType spectrumType)
+                            SpectrumType spectrumType)
         : mapping(mapping),
           filename(filename),
           texObj(texObj),
@@ -646,7 +638,6 @@ class GPUSpectrumImageTexture {
           invert(invert),
           isSingleChannel(isSingleChannel),
           colorSpace(colorSpace),
-          texBasis(texBasis),
           spectrumType(spectrumType) {}
 
     PBRT_CPU_GPU
@@ -658,55 +649,27 @@ class GPUSpectrumImageTexture {
         // flip y coord since image has (0,0) at upper left, texture at lower
         // left
         TexCoord2D c = mapping.Map(ctx);
-        int nChannels = int(tex1D<float>(texBasis, 0));
-        if (nChannels != 0) {
-          int offset = int(tex1D<float>(texBasis, 2));
-          SampledSpectrum s;
-          SampledSpectrum basisSpectrum;
-          float tex_spectrum[3];
-                          float4 pixel_spectrum = tex2DGrad<float4>(texObj, c.st[0], 1 - c.st[1],
-                                              make_float2(c.dsdx, c.dsdy),
-                                              make_float2(c.dtdx, c.dtdy));
-          // for (int c = 0; c < nChannels; c++) {
-          //     tex_spectrum[c] =
-          //         scale * tex2DLayered<float>(texObj, st[0], 1 - st[1], c);
-          // }
-          tex_spectrum[0] = pixel_spectrum.x;
-          tex_spectrum[1] = pixel_spectrum.y;
-          tex_spectrum[2] = pixel_spectrum.z;
-          for (int c = 0; c < nChannels; c++) {
-              SampledSpectrum basisSpectrum;
-              for (int nWave = 0; nWave < NSpectrumSamples; nWave++) {
-                  basisSpectrum[nWave] =
-                      tex1D<float>(texBasis, 3 + nWave + c * NSpectrumSamples);
-              }
-              // get spectrum texture coef
-              s = basisSpectrum * (tex_spectrum[c] - offset) + s;
-          }
-          return s;
+        RGB rgb;
+        if (isSingleChannel) {
+            float tex = scale * tex2DGrad<float>(texObj, c.st[0], 1 - c.st[1],
+                                                 make_float2(c.dsdx, c.dsdy),
+                                                 make_float2(c.dtdx, c.dtdy));
+            rgb = RGB(tex, tex, tex);
         } else {
-            RGB rgb;
-            if (isSingleChannel) {
-                float tex = scale * tex2DGrad<float>(texObj, c.st[0], 1 - c.st[1],
-                                                     make_float2(c.dsdx, c.dsdy),
-                                                     make_float2(c.dtdx, c.dtdy));
-                rgb = RGB(tex, tex, tex);
-            } else {
-                float4 tex = tex2DGrad<float4>(texObj, c.st[0], 1 - c.st[1],
-                                               make_float2(c.dsdx, c.dsdy),
-                                               make_float2(c.dtdx, c.dtdy));
-                rgb = scale * RGB(tex.x, tex.y, tex.z);
-            }
-            if (invert)
-                rgb = ClampZero(RGB(1, 1, 1) - rgb);
-            if (spectrumType == SpectrumType::Unbounded)
-                return RGBUnboundedSpectrum(*colorSpace, rgb).Sample(lambda);
-            else if (spectrumType == SpectrumType::Albedo) {
-                rgb = Clamp(rgb, 0, 1);
-                return RGBAlbedoSpectrum(*colorSpace, rgb).Sample(lambda);
-            } else
-                return RGBIlluminantSpectrum(*colorSpace, rgb).Sample(lambda);
+            float4 tex = tex2DGrad<float4>(texObj, c.st[0], 1 - c.st[1],
+                                           make_float2(c.dsdx, c.dsdy),
+                                           make_float2(c.dtdx, c.dtdy));
+            rgb = scale * RGB(tex.x, tex.y, tex.z);
         }
+        if (invert)
+            rgb = ClampZero(RGB(1, 1, 1) - rgb);
+        if (spectrumType == SpectrumType::Unbounded)
+            return RGBUnboundedSpectrum(*colorSpace, rgb).Sample(lambda);
+        else if (spectrumType == SpectrumType::Albedo) {
+            rgb = Clamp(rgb, 0, 1);
+            return RGBAlbedoSpectrum(*colorSpace, rgb).Sample(lambda);
+        } else
+            return RGBIlluminantSpectrum(*colorSpace, rgb).Sample(lambda);
 #endif
     }
 
@@ -725,7 +688,6 @@ class GPUSpectrumImageTexture {
     Float scale;
     bool invert, isSingleChannel;
     const RGBColorSpace *colorSpace;
-    cudaTextureObject_t texBasis;
     SpectrumType spectrumType;
 };
 

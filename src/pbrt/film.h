@@ -384,8 +384,10 @@ class GBufferFilm : public FilmBase {
     PBRT_CPU_GPU
     int LambdaToBucket(Float lambda) const {
         int nBuckets = 31;
-        DCHECK_RARE(1e6f, lambda < 395 || lambda > 705);
-        int bucket = nBuckets * (lambda - 395) / (705 - 395);
+        Float Lambda_min = 395;
+        Float Lambda_max = 705;
+        DCHECK_RARE(1e6f, lambda < Lambda_min || lambda > Lambda_max);
+        int bucket = nBuckets * (lambda - Lambda_min) / (Lambda_max - Lambda_min);
         return Clamp(bucket, 0, nBuckets - 1);
     }
     // GBufferFilm::Pixel Definition

@@ -208,7 +208,7 @@ VisibleSurface::VisibleSurface(const SurfaceInteraction &si, SampledSpectrum alb
     time = si.time;
     dpdx = si.dpdx;
     dpdy = si.dpdy;
-    materialId  = si.material.materialId; // zhenyi
+    // materialId  = si.material.materialId; // zhenyi
     instanceId  = si.instanceId; // zhenyi
 }
 
@@ -661,7 +661,7 @@ void GBufferFilm::AddSample(Point2i pFilm, SampledSpectrum L,
         p.weightSums[b] += weight;
     }
     // zhenyi: add material ID;
-    p.materialId = visibleSurface->materialId;
+    // p.materialId = visibleSurface->materialId;
     p.instanceId = visibleSurface->instanceId;
 }
 
@@ -698,24 +698,25 @@ GBufferFilm::GBufferFilm(FilmBaseParameters p, const AnimatedTransform &outputFr
     outputRGBFromSensorRGB = colorSpace->RGBFromXYZ * sensor->XYZFromSensorRGB;
 }
 
-void GBufferFilm::AddSplat(Point2f p, SampledSpectrum v,
+void GBufferFilm::AddSplat(Point2f p, SampledSpectrum L,
                            const SampledWavelengths &lambda) {
     // NOTE: same code as RGBFilm::AddSplat()...
-    CHECK(!v.HasNaNs());
-    RGB rgb = sensor->ToSensorRGB(v, lambda);
+    CHECK(!L.HasNaNs());
+    RGB rgb = sensor->ToSensorRGB(L, lambda);
     Float m = std::max({rgb.r, rgb.g, rgb.b});
     if (m > maxComponentValue)
         rgb *= maxComponentValue / m;
 
     // Spectral clamping and normalization.
-    Float lm = v.MaxComponentValue();
+    Float lm = L.MaxComponentValue();
     if (lm > maxComponentValue)
-        v *= maxComponentValue / lm;
-    v = SafeDiv(v, lambda.PDF()) / NSpectrumSamples;
+        L *= maxComponentValue / lm;
+    L = SafeDiv(L, lambda.PDF()) / NSpectrumSamples;
 
     Point2f pDiscrete = p + Vector2f(0.5, 0.5);
-    Bounds2i splatBounds(Point2i(Floor(pDiscrete - filter.Radius())),
-                         Point2i(Floor(pDiscrete + filter.Radius())) + Vector2i(1, 1));
+    Vector2f radius = filter.Radius();
+    Bounds2i splatBounds(Point2i(Floor(pDiscrete - radius)),
+                         Point2i(Floor(pDiscrete + radius)) + Vector2i(1, 1));
 
     splatBounds = Intersect(splatBounds, pixelBounds);
     for (Point2i pi : splatBounds) {
@@ -727,7 +728,7 @@ void GBufferFilm::AddSplat(Point2f p, SampledSpectrum v,
 
             for (int i = 0; i < NSpectrumSamples; ++i){
                 int b = LambdaToBucket(lambda[i]);
-                pixel.LSplat[b].Add(wt * v[i]);
+                pixel.LSplat[b].Add(wt * L[i]);
             }
         }
 
@@ -759,7 +760,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     string BasisChannelNames[5] = {"Coef.C01", "Coef.C02", "Coef.C03", "Coef.C04", "Coef.C05"};
     string AlbedoChannelNames[3] = {"Albedo.R", "Albedo.G", "Albedo.B"};
     string PositionChannelNames[3] = {"P.X", "P.Y", "P.Z"};
-    string MaterialChannelNames[1] = {"MaterialId"};
+    // string MaterialChannelNames[1] = {"MaterialId"};
     string InstanceChannelNames[1] = {"InstanceId"};
     string NormalChannelNames[3] = {"N.X", "N.Y", "N.Z"};
     string NsChannelNames[3] = {"Ns.X", "Ns.Y", "Nx.Z"};
@@ -791,10 +792,10 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
             channelNames.push_back(PositionChannelNames[i]);
         }
     }
-    if (writeMaterial)
-    {
-        channelNames.push_back(MaterialChannelNames[0]);
-    }
+    // if (writeMaterial)
+    // {
+    //     channelNames.push_back(MaterialChannelNames[0]);
+    // }
     if (writeInstance)
     {
         channelNames.push_back(InstanceChannelNames[0]);
@@ -842,7 +843,7 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
     std::atomic<int> nClamped{0};
     ParallelFor2D(pixelBounds, [&](Point2i p) {
         Pixel &pixel = pixels[p];
-        RGB rgb(pixel.rgbSum[0], pixel.rgbSum[1], pixel.rgbSum[2]);
+        RGB rgb = GetPixelRGB(p, splatScale);
         RGB albedoRgb(pixel.rgbAlbedoSum[0], pixel.rgbAlbedoSum[1],
                       pixel.rgbAlbedoSum[2]);
 
@@ -950,10 +951,10 @@ Image GBufferFilm::GetImage(ImageMetadata *metadata, Float splatScale) {
             image.SetChannels(pOffset, pDesc, {pt.x, pt.y, pt.z});
         }
         if (writeMaterial)
-        {
-            ImageChannelDesc materialDesc = image.GetChannelDesc(MaterialChannelNames);
-            image.SetChannels(pOffset, materialDesc, {pixel.materialId});
-        }
+        // {
+        //     ImageChannelDesc materialDesc = image.GetChannelDesc(MaterialChannelNames);
+        //     image.SetChannels(pOffset, materialDesc, {pixel.materialId});
+        // }
         if (writeInstance)
         {
             ImageChannelDesc instanceDesc = image.GetChannelDesc(InstanceChannelNames);

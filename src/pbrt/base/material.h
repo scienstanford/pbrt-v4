@@ -22,7 +22,6 @@ struct MaterialEvalContext;
 class CoatedDiffuseMaterial;
 class CoatedConductorMaterial;
 class ConductorMaterial;
-class RetroreflectiveMaterial;
 class DielectricMaterial;
 class DiffuseMaterial;
 class DiffuseTransmissionMaterial;
@@ -35,7 +34,7 @@ class MixMaterial;
 // Material Definition
 class Material
     : public TaggedPointer<  // Material Types
-          CoatedDiffuseMaterial, CoatedConductorMaterial, ConductorMaterial,RetroreflectiveMaterial,
+          CoatedDiffuseMaterial, CoatedConductorMaterial, ConductorMaterial,
           DielectricMaterial, DiffuseMaterial, DiffuseTransmissionMaterial, HairMaterial,
           MeasuredMaterial, SubsurfaceMaterial, ThinDielectricMaterial, MixMaterial
 
@@ -68,7 +67,7 @@ class Material
 
     PBRT_CPU_GPU inline bool HasSubsurfaceScattering() const;
         
-    uint32_t materialId; // zhenyi
+    // uint32_t materialId; // zhenyi
 };
 
 }  // namespace pbrt
