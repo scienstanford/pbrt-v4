@@ -1,4 +1,4 @@
-pbrt, Version 4 (Early Release)
+pbrt, Version 4 (ISET version)
 ===============================
 
 [<img src="https://github.com/mmp/pbrt-v4/workflows/cpu-linux-build-and-test/badge.svg">](https://github.com/mmp/pbrt-v4/actions?query=workflow%3Acpu-linux-build-and-test)
